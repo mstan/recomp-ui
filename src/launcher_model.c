@@ -7,6 +7,7 @@
 #include "launcher_system.h"
 
 #include "crc32.h"
+#include "memcard_format.h"
 #include "sha256.h"
 #include "ips_patch.h"
 
@@ -113,6 +114,12 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+
+    // ---- memory-card slots default to enabled (0 == "unset": a host struct
+    // that predates this field, or was zero-initialized, reads as both cards
+    // plugged in — matching the RmlUi launcher's default) ----
+    if (!m->s.memcard_enabled[0]) m->s.memcard_enabled[0] = 1;
+    if (!m->s.memcard_enabled[1]) m->s.memcard_enabled[1] = 1;
 
     // ---- infer the SystemProfile this game belongs to (panel composition +
     // per-system specs) from the ABI caps launcher_profile_apply() already set ----
@@ -487,6 +494,21 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path) {
     if (slot < 0 || slot > 1) return;
     safe_copy(m->s.memcard_path[slot], sizeof(m->s.memcard_path[slot]), path ? path : "");
+    // A newly browsed-in card is not known to be blank; only
+    // launcher_model_new_memcard() re-arms this flag.
+    m->memcard_freshly_formatted[slot] = false;
+}
+
+void launcher_model_toggle_memcard(LauncherModel* m, int slot) {
+    if (slot < 0 || slot > 1) return;
+    m->s.memcard_enabled[slot] = m->s.memcard_enabled[slot] ? 0 : 1;
+}
+
+void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path) {
+    if (slot < 0 || slot > 1 || !path || !path[0]) return;
+    if (recompui_memcard_format_file(path) != 0) return;  // I/O failure: leave as-is
+    launcher_model_set_memcard_path(m, slot, path);
+    m->memcard_freshly_formatted[slot] = true;   // known-blank: panel shows 0 / 15
 }
 
 // ---- SRAM save management (mirrors the RmlUi launcher's Import/Clear) --------

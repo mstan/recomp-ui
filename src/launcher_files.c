@@ -53,3 +53,20 @@ bool launcher_pick_file(const char* title, const char* const* patterns, int num_
     snprintf(out_path, out_cap, "%s", sel);
     return true;
 }
+
+bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
+                             const char* desc, char* out_path, size_t out_cap) {
+    if (!out_path || out_cap == 0) return false;
+    out_path[0] = '\0';
+
+    const char* sel = tinyfd_saveFileDialog(
+        title ? title : "Save file",
+        "",
+        num_patterns > 0 ? num_patterns : 0,
+        num_patterns > 0 ? patterns : NULL,
+        desc);
+    if (!sel || !sel[0]) return false;
+
+    snprintf(out_path, out_cap, "%s", sel);
+    return true;
+}

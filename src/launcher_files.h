@@ -36,6 +36,14 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap);
 bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
                         const char* desc, char* out_path, size_t out_cap);
 
+// Open the OS "save file" dialog — for choosing a DESTINATION path that need
+// not already exist (e.g. picking where to write a freshly formatted PS1
+// memory-card image). `patterns`/`num_patterns` may be NULL/0 for "all
+// files"; `desc` is the filter's display description (may be NULL). Returns
+// true and fills `out_path` on success.
+bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
+                             const char* desc, char* out_path, size_t out_cap);
+
 #ifdef __cplusplus
 }
 #endif
