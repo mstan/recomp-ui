@@ -8,6 +8,7 @@
 
 #include "crc32.h"
 #include "sha256.h"
+#include "ips_patch.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@ static int clampi(int v, int lo, int hi) {
 }
 
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
+static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -69,6 +71,7 @@ void launcher_model_init(LauncherModel* m,
         m->widescreen_supported = game->widescreen_supported != 0;
         m->msu1_supported       = game->msu1_supported != 0;
         m->msu1_note            = game->msu1_note;
+        m->msu1_patch_path      = game->msu1_patch_path;
         m->saves_supported      = game->sram_path != NULL;
         m->sram_path            = game->sram_path;
         /* 0 = unset (caller predates the field) -> assume 2 players. */
@@ -235,6 +238,7 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
     if (!m->rom_size[0]) safe_copy(m->rom_size, sizeof(m->rom_size), "--");
 
     run_verify(m);
+    update_msu1_patch_available(m);
 }
 
 // Disc-verdict (verify.mode==1 systems, e.g. PSX): run the SystemProfile's
@@ -522,6 +526,96 @@ void launcher_model_toggle_msu1(LauncherModel* m) {
 
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir) {
     safe_copy(m->s.msu1_dir, sizeof(m->s.msu1_dir), dir ? dir : "");
+}
+
+// ---- MSU-1 IPS auto-patching (mirrors the RmlUi launcher's do_patch() /
+// msu1_patch_available predicate in snesrecomp's launcher_gui.cpp) -----------
+
+// Recomputed on every ROM change: the dashboard prompt only makes sense when
+// this game HAS a patch, the loaded file verifies against the vanilla CRC
+// (patching an already-patched or wrong ROM would corrupt it), and the user
+// hasn't already dismissed it this run.
+static void update_msu1_patch_available(LauncherModel* m) {
+    m->msu1_patch_available = m->msu1_supported && m->msu1_patch_path &&
+                              m->msu1_patch_path[0] && m->rom_present &&
+                              m->crc_match && !m->msu1_patch_skipped;
+}
+
+static bool lm_read_whole_file(const char* path, uint8_t** out_data, size_t* out_len) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n < 0) { fclose(f); return false; }
+    uint8_t* buf = (uint8_t*)malloc(n ? (size_t)n : 1);
+    if (!buf) { fclose(f); return false; }
+    if (n > 0 && fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return false; }
+    fclose(f);
+    *out_data = buf;
+    *out_len  = (size_t)n;
+    return true;
+}
+
+// Build "<dir>/<stem>.msu1.<ext>" beside `rom_path` (matches the RmlUi
+// launcher's std::filesystem stem()/extension() splice exactly).
+static void lm_msu1_target_path(const char* rom_path, char* out, size_t out_cap) {
+    const char* base = rom_path;
+    for (const char* q = rom_path; *q; ++q)
+        if (*q == '/' || *q == '\\') base = q + 1;
+    const char* dot = strrchr(base, '.');
+    size_t dir_len  = (size_t)(base - rom_path);
+    size_t stem_len = dot ? (size_t)(dot - base) : strlen(base);
+    const char* ext = dot ? dot : "";
+    snprintf(out, out_cap, "%.*s%.*s.msu1%s",
+             (int)dir_len, rom_path, (int)stem_len, base, ext);
+}
+
+void launcher_model_apply_msu1_patch(LauncherModel* m) {
+    if (!m->msu1_patch_available) return;
+    if (!m->rom_present || !m->msu1_patch_path || !m->msu1_patch_path[0]) return;
+
+    uint8_t* src = NULL;   size_t src_len = 0;
+    uint8_t* patch = NULL; size_t patch_len = 0;
+    if (!lm_read_whole_file(m->rom_full, &src, &src_len)) return;
+    if (!lm_read_whole_file(m->msu1_patch_path, &patch, &patch_len)) { free(src); return; }
+
+    uint8_t* out = NULL; size_t out_len = 0;
+    bool ok = ips_apply(src, src_len, patch, patch_len, &out, &out_len);
+    free(src);
+    free(patch);
+    if (!ok) {
+        fprintf(stderr, "launcher: IPS patch failed (%s)\n", m->msu1_patch_path);
+        return;
+    }
+
+    char target[600];
+    lm_msu1_target_path(m->rom_full, target, sizeof(target));
+    FILE* f = fopen(target, "wb");
+    if (!f) {
+        fprintf(stderr, "launcher: cannot write %s\n", target);
+        free(out);
+        return;
+    }
+    bool wrote = fwrite(out, 1, out_len, f) == out_len;
+    fclose(f);
+    free(out);
+    if (!wrote) { fprintf(stderr, "launcher: short write to %s\n", target); return; }
+
+    fprintf(stderr, "launcher: wrote MSU-1 patched ROM: %s\n", target);
+    // Switch the model onto the patched file and re-verify (this also
+    // recomputes msu1_patch_available — the patched ROM's CRC will no longer
+    // match the vanilla expected_crc, so it naturally clears). Belt-and-braces:
+    // also mark skipped so the prompt never reappears if a game's expected_crc
+    // happens to also match the patched image.
+    m->msu1_patch_skipped = true;
+    launcher_model_set_rom(m, target);
+}
+
+void launcher_model_skip_msu1_patch(LauncherModel* m) {
+    if (!m->msu1_patch_available) return;
+    m->msu1_patch_skipped = true;
+    update_msu1_patch_available(m);
 }
 
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {

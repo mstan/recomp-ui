@@ -99,6 +99,16 @@ typedef struct {
     bool        widescreen_supported;
     bool        msu1_supported;      // sram-like: show the MSU-1 module when true
     const char* msu1_note;           // borrowed; which patch, shown in the card
+    // ---- MSU-1 IPS auto-patching (dashboard "Patch ROM"/"Skip" flow) ----
+    // Borrowed IPS file path; NULL => this game has no auto-patch (msu1_note-only
+    // games still show the Settings->Audio MSU-1 toggle, just no dashboard prompt).
+    const char* msu1_patch_path;
+    // Computed each time the ROM changes (launcher_model_set_rom): true iff
+    // msu1_supported && msu1_patch_path && the loaded ROM verifies against the
+    // game's vanilla CRC && the user hasn't dismissed the prompt this session.
+    // Mirrors the RmlUi launcher's `msu1_patch_available` predicate exactly.
+    bool        msu1_patch_available;
+    bool        msu1_patch_skipped;  // session-only "Play Unpatched" dismissal
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
     const char* sram_path;           // borrowed; NULL when the game has no SRAM
 
@@ -276,6 +286,17 @@ void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* pat
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
+
+// ---- MSU-1 IPS auto-patching (dashboard GAME-panel "Patch ROM"/"Skip") ----
+// Apply msu1_patch_path onto the currently loaded (vanilla) ROM, writing
+// "<stem>.msu1.<ext>" beside it, then adopt the patched file as the current
+// ROM (re-verifies CRC/SHA, same as launcher_model_set_rom). No-op unless
+// msu1_patch_available is true.
+void launcher_model_apply_msu1_patch(LauncherModel* m);
+// Hide the "MSU-1 patch available" prompt for the rest of this run (does not
+// persist to disk — the prompt returns next launch unless the patch is
+// actually applied). No-op if the prompt wasn't showing.
+void launcher_model_skip_msu1_patch(LauncherModel* m);
 
 // ---- controllers ----
 // PSX-style pad mode: 0=Hybrid, 1=Analog, 2=D-Pad. Gated: no-op when
