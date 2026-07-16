@@ -42,7 +42,7 @@ set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 enable_language(CXX)
 
 function(recomp_target_launcher_ui TGT)
-    cmake_parse_arguments(RUI "" "BOXART;PAD" "" ${ARGN})
+    cmake_parse_arguments(RUI "" "BOXART;PAD;BRAND" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -112,6 +112,14 @@ function(recomp_target_launcher_ui TGT)
         add_custom_command(TARGET ${TGT} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     ${RUI_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/boxart.tga
+            VERBATIM)
+    endif()
+    # Per-console brand mark (top-left, next to the game title): overrides the
+    # default brand_mark.tga (e.g. the PlayStation shapes for PSX). 32-bit TGA.
+    if(RUI_BRAND AND EXISTS ${RUI_BRAND})
+        add_custom_command(TARGET ${TGT} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${RUI_BRAND} $<TARGET_FILE_DIR:${TGT}>/assets/img/brand_mark.tga
             VERBATIM)
     endif()
 endfunction()
