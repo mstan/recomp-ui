@@ -460,6 +460,11 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
 }
 
+void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path) {
+    if (slot < 0 || slot > 1) return;
+    safe_copy(m->s.memcard_path[slot], sizeof(m->s.memcard_path[slot]), path ? path : "");
+}
+
 void launcher_model_toggle_msu1(LauncherModel* m) {
     if (!m->msu1_supported) return;
     m->s.msu1_enabled = !m->s.msu1_enabled;

@@ -117,6 +117,10 @@ static const ButtonDef kPsxPadButtons[] = {
 
 // ---- panel composition arrays (NULL-terminated) --------------------------------
 static const char* const kPanelsDashboardCommon[] = { "game", "controller", NULL };
+// PSX only: adds the standalone "save" panel (WIDE, memory-card block-grid
+// UI) below the game/controller row. SNES keeps kPanelsDashboardCommon
+// unchanged — its SRAM row stays folded into the GAME card exactly as today.
+static const char* const kPanelsDashboardPsx[] = { "game", "controller", "save", NULL };
 
 static const char* const kPanelsSettingsSnes[]  = { "video", "audio", "hotkeys", NULL };
 static const char* const kPanelsSettingsPsx[]   = { "video", "audio", "system", "hotkeys", NULL };
@@ -160,10 +164,11 @@ static const SystemProfile kSystemProfilePsx = {
         "pad.tga", "pad_analog.tga", "pad_digital.tga",
         /* max_players */ 2, /* has_pad_mode */ 1,
     },
-    // MEMCARD is PSX's real target shape (2 slots), but the block-grid UI isn't
-    // built yet — the shared row-drawer renders it identically to SAVE_SRAM's
-    // compact picker row today (see panel_save in launcher_imgui.cpp), so output
-    // is unchanged until memcard UI lands.
+    // MEMCARD is PSX's real target shape (2 slots): the standalone "save" panel
+    // (see kPanelsDashboardPsx above) renders a dual-slot picker + 15-block
+    // usage grid per slot (panel_save_draw in launcher_imgui.cpp). `probe` stays
+    // NULL until a host wires up real per-block card scanning; the panel still
+    // renders a full, real placeholder grid in the meantime (never a TODO).
     /* save */    { SAVE_MEMCARD, 2, NULL },
     /* video */   {
         /*window_scale*/0, /*fullscreen*/1, /*linear_filter*/0, /*widescreen*/0,
@@ -185,7 +190,7 @@ static const SystemProfile kSystemProfilePsx = {
                                    (1u << LNG_HK_VOLUME_DOWN)    |
                                    (1u << LNG_HK_DISPLAY_PERF)   |
                                    (1u << LNG_HK_TOGGLE_RENDERER)),
-    /* panels_dashboard  */ kPanelsDashboardCommon,
+    /* panels_dashboard  */ kPanelsDashboardPsx,
     /* panels_settings   */ kPanelsSettingsPsx,
     /* panels_controller */ kPanelsControllerCommon,
 };

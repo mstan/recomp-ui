@@ -51,6 +51,12 @@ typedef struct RecompLauncherCSettings {
     int  turbo_loads;         // bool
     int  language_index;      // selected index into GameInfo.languages
     char bios_path[512];      // BIOS file path (empty = default)
+
+    // ---- PSX-style memory-card save slots (SAVE_MEMCARD; see launcher_system.h
+    // SaveSpec) — appended at the end to keep this struct additive/ABI-stable.
+    // Per-slot card-image file path (empty = none picked yet), editable via the
+    // Save panel's Browse/New controls; mirrors bios_path's pattern exactly.
+    char memcard_path[2][512];
 } RecompLauncherCSettings;
 
 typedef struct RecompLauncherCGameInfo {
