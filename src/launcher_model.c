@@ -166,10 +166,18 @@ void launcher_model_init(LauncherModel* m,
     m->cfg_player = 0;
 
     // Placeholder display until launcher_binds_load() fills real values from
-    // keybinds.ini / config.ini [KeyMap].
-    for (int b = 0; b < LNG_BTN_COUNT; ++b) {
-        safe_copy(m->binds[0][b], sizeof(m->binds[0][b]), kP1Defaults[b]);
-        safe_copy(m->binds[1][b], sizeof(m->binds[1][b]), "(unbound)");
+    // keybinds.ini / config.ini [KeyMap]. Walk the ACTIVE profile's button
+    // count (SNES 12, PSX 16, ...) so every rebind slot the page will render
+    // gets a placeholder — kP1Defaults only names the SNES-shaped first 12.
+    {
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        int bc = prof ? prof->controller.button_count : LNG_BTN_COUNT;
+        if (bc > LNG_MAX_BUTTONS) bc = LNG_MAX_BUTTONS;
+        for (int b = 0; b < bc; ++b) {
+            safe_copy(m->binds[0][b], sizeof(m->binds[0][b]),
+                      b < LNG_BTN_COUNT ? kP1Defaults[b] : "(unbound)");
+            safe_copy(m->binds[1][b], sizeof(m->binds[1][b]), "(unbound)");
+        }
     }
     for (int h = 0; h < LNG_HK_COUNT; ++h)
         m->hotkeys[h][0] = '\0';
@@ -510,8 +518,11 @@ void launcher_model_skip_cancel(LauncherModel* m) {
     m->skip_modal_open = false;
 }
 
-void launcher_model_begin_capture(LauncherModel* m, LngButton b) {
-    if (b < 0 || b >= LNG_BTN_COUNT) return;
+void launcher_model_begin_capture(LauncherModel* m, int b) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int bc = prof ? prof->controller.button_count : LNG_BTN_COUNT;
+    if (bc > LNG_MAX_BUTTONS) bc = LNG_MAX_BUTTONS;
+    if (b < 0 || b >= bc) return;
     m->hk_capturing = false;
     m->capturing    = true;
     m->capture_btn  = b;

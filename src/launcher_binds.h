@@ -22,9 +22,11 @@ extern "C" {
 // config_path may be NULL (=> "config.ini" in the exe dir).
 void launcher_binds_load(LauncherModel* m, const char* config_path);
 
-// A player button was rebound to `scancode` (an SDL_Scancode). Persist to
+// A player button was rebound to `scancode` (an SDL_Scancode). `b` is a
+// generic index into the active profile's ControllerSpec.buttons[]
+// (0..button_count-1), matching LauncherModel.capture_btn. Persist to
 // keybinds.ini and refresh the model's display string.
-void launcher_binds_set_button(LauncherModel* m, int player, LngButton b, int scancode);
+void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode);
 
 // Reset one player's keyboard bindings to defaults and persist.
 void launcher_binds_reset_player(LauncherModel* m, int player);

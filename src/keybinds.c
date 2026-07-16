@@ -38,6 +38,10 @@
         .down   = SDL_SCANCODE_DOWN, \
         .left   = SDL_SCANCODE_LEFT, \
         .right  = SDL_SCANCODE_RIGHT, \
+        .l2     = SDL_SCANCODE_Q, \
+        .r2     = SDL_SCANCODE_E, \
+        .l3     = SDL_SCANCODE_UNKNOWN, \
+        .r3     = SDL_SCANCODE_UNKNOWN, \
     }, \
     /* Player 2 unbound by default. Add bindings in the INI to enable. */ \
     .p2 = { \
@@ -47,6 +51,8 @@
         .start = SDL_SCANCODE_UNKNOWN, .select = SDL_SCANCODE_UNKNOWN, \
         .up    = SDL_SCANCODE_UNKNOWN, .down  = SDL_SCANCODE_UNKNOWN, \
         .left  = SDL_SCANCODE_UNKNOWN, .right = SDL_SCANCODE_UNKNOWN, \
+        .l2    = SDL_SCANCODE_UNKNOWN, .r2    = SDL_SCANCODE_UNKNOWN, \
+        .l3    = SDL_SCANCODE_UNKNOWN, .r3    = SDL_SCANCODE_UNKNOWN, \
     }, \
 }
 
@@ -71,6 +77,10 @@ static const ButtonDef s_buttons[] = {
     { "down",   offsetof(PlayerBinds, down)   },
     { "left",   offsetof(PlayerBinds, left)   },
     { "right",  offsetof(PlayerBinds, right)  },
+    { "l2",     offsetof(PlayerBinds, l2)     },
+    { "r2",     offsetof(PlayerBinds, r2)     },
+    { "l3",     offsetof(PlayerBinds, l3)     },
+    { "r3",     offsetof(PlayerBinds, r3)     },
     { NULL, 0 }
 };
 
@@ -149,11 +159,14 @@ static void write_defaults(const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return;
     fprintf(f,
-        "# SNES Controller Keybinds\n"
+        "# Controller Keybinds\n"
         "# Edit values to customize. Restart the game to apply.\n"
         "# Use SDL key names. Common: A B C ... Z, 0-9, F1-F12, Up Down Left Right,\n"
         "# Return, Tab, Space, Left Shift, Right Shift, Left Ctrl, Right Ctrl,\n"
         "# Backspace, Escape, Backslash. Use \"None\" to leave a button unbound.\n"
+        "#\n"
+        "# l2/r2/l3/r3 are only used by systems with a deeper button set than\n"
+        "# SNES (e.g. PSX L2/R2 shoulders, L3/R3 stick clicks); harmless if unused.\n"
         "#\n"
         "# Player 2 is unbound by default — fill in keys to enable a second\n"
         "# keyboard player.\n"

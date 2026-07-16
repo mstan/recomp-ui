@@ -1134,9 +1134,10 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
 
 // CONTROLLER-view rebind page: input source + deadzone, and the keyboard
 // bindings grid — reached from the dashboard CONTROLLER panel's Configure
-// button. Per-system base button set today is the same LNG_BTN_* catalog for
-// every system (ControllerSpec.buttons in launcher_system.h documents this
-// as data; launcher_button_name() stays the single rendered source of truth).
+// button. The bindings grid walks the ACTIVE SystemProfile's
+// ControllerSpec.buttons[]/button_count (launcher_system.h) so each system
+// renders its own real vocabulary (SNES: A/B/X/Y/L/R/...; PSX: Triangle/
+// Circle/Cross/Square/L1/L2/R1/R2/L3/R3/...) instead of a hardcoded SNES set.
 void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const int p = m->cfg_player;
     if (begin_panel("cfg_src", 0)) {
@@ -1172,21 +1173,39 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
 
         // Responsive grid: fit as many label+chip columns as the width allows
         // (1..4) instead of one tall column with dead space to the right.
-        const float cell_w = px(270.0f);
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        const ControllerSpec& spec = prof->controller;
+
+        // Label column width is sized to the WIDEST label this system's spec
+        // actually uses (e.g. PSX's "Triangle") instead of a constant tuned
+        // for SNES's shorter names ("Select") — otherwise longer per-system
+        // vocab overlaps the bind-chip button next to it.
+        float label_col_w = px(70.0f);
+        for (int b = 0; b < spec.button_count; ++b) {
+            float w = ImGui::CalcTextSize(spec.buttons[b].label).x + px(20.0f);
+            if (w > label_col_w) label_col_w = w;
+        }
+        const float cell_w = label_col_w + px(170.0f);
         int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
         if (cols < 1) cols = 1;
         if (cols > 4) cols = 4;
-        if (ImGui::BeginTable("binds", cols)) {
-            for (int b = 0; b < LNG_BTN_COUNT; ++b) {
+        // Fixed-width columns, explicitly sized to cell_w: the default
+        // stretch policy divides available width evenly across `cols`
+        // regardless of our computed cell_w, which reintroduces the very
+        // overlap/clip this sizing pass exists to avoid.
+        if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
+            for (int c = 0; c < cols; ++c)
+                ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
+            for (int b = 0; b < spec.button_count; ++b) {
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(col(th.text_muted), "%-6s", launcher_button_name((LngButton)b));
-                ImGui::SameLine(px(70));
-                const bool cap = m->capturing && m->capture_btn == (LngButton)b;
+                ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
+                ImGui::SameLine(label_col_w);
+                const bool cap = m->capturing && m->capture_btn == b;
                 if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                 if (ImGui::Button(cap ? "[ press a key... ]" : m->binds[p][b], ImVec2(px(160), 0)))
-                    launcher_model_begin_capture(m, (LngButton)b);
+                    launcher_model_begin_capture(m, b);
                 if (cap) ImGui::PopStyleColor();
                 ImGui::PopID();
             }

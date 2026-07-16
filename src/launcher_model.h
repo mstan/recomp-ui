@@ -47,13 +47,27 @@ typedef enum {
     LNG_ACTION_QUIT        // user quit
 } LngAction;
 
-// Representative subset of the SNES pad for the rebind UI.
+// Representative subset of the SNES pad for the rebind UI. This enum is the
+// SNES-specific naming still used for keybinds.ini's engine-side defaults
+// (kP1Defaults/kButtonNames in launcher_model.c, kKbIndexSnes in
+// launcher_binds.c) — indices 0..11 are byte-identical to before this enum
+// was joined by per-system rebind vocab. The rebind PAGE itself no longer
+// walks this enum: it walks the active SystemProfile's ControllerSpec.buttons
+// (launcher_system.h), addressing buttons by a generic 0..button_count-1
+// index (see LNG_MAX_BUTTONS) so non-SNES systems (PSX: 16 buttons) render
+// their own vocabulary instead of this SNES catalog.
 typedef enum {
     LNG_BTN_UP = 0, LNG_BTN_DOWN, LNG_BTN_LEFT, LNG_BTN_RIGHT,
     LNG_BTN_A, LNG_BTN_B, LNG_BTN_X, LNG_BTN_Y,
     LNG_BTN_L, LNG_BTN_R, LNG_BTN_START, LNG_BTN_SELECT,
     LNG_BTN_COUNT
 } LngButton;
+
+// Upper bound on a SystemProfile's ControllerSpec.button_count — sizes the
+// generic per-player bind-label storage below. SNES uses 12 (LNG_BTN_COUNT),
+// PSX uses 16 (LNG_PSX_PAD_BUTTON_COUNT, launcher_system.h); this leaves
+// headroom for future systems without another struct-layout change.
+#define LNG_MAX_BUTTONS 20
 
 // System hotkeys — mirrors the engine's config.ini [KeyMap] keys exactly, so
 // editing them here surgically rewrites the same lines config.c parses.
@@ -168,10 +182,10 @@ typedef struct {
 
     // rebind capture state machine
     bool      capturing;         // capturing a player button
-    LngButton capture_btn;
+    int       capture_btn;       // generic index into the active profile's ControllerSpec.buttons[] (0..button_count-1)
     bool      hk_capturing;      // capturing a system hotkey
     LngHotkey capture_hk;
-    char      binds[2][LNG_BTN_COUNT][32];  // per-player keyboard binding labels
+    char      binds[2][LNG_MAX_BUTTONS][32];  // per-player keyboard binding labels, indexed like capture_btn
     char      hotkeys[LNG_HK_COUNT][32];    // [KeyMap] value strings, e.g. "Ctrl+R"
 } LauncherModel;
 
@@ -265,7 +279,10 @@ void launcher_model_skip_confirm(LauncherModel* m);
 void launcher_model_skip_cancel(LauncherModel* m);
 
 // ---- rebind capture (player buttons) ----
-void launcher_model_begin_capture(LauncherModel* m, LngButton b);
+// `b` is a generic index into the active profile's ControllerSpec.buttons[]
+// (0..button_count-1) — NOT necessarily an LngButton value once the active
+// system isn't SNES-shaped (e.g. PSX has 16 buttons).
+void launcher_model_begin_capture(LauncherModel* m, int b);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);

@@ -102,6 +102,19 @@ static const ButtonDef kSnesPadButtons[] = {
 };
 #define LNG_SNES_PAD_BUTTON_COUNT ((int)(sizeof(kSnesPadButtons) / sizeof(kSnesPadButtons[0])))
 
+// PSX DualShock/digital-pad base set (16) — real vocabulary for the PSX
+// rebind page (was borrowing kSnesPadButtons; see kSystemProfilePsx below).
+// `code` is just the button's own index (0..15): the rebind page and bind
+// persistence (launcher_binds.c) both address buttons by this spec index,
+// not by any engine-side enum.
+static const ButtonDef kPsxPadButtons[] = {
+    { "Up", 0 }, { "Down", 1 }, { "Left", 2 }, { "Right", 3 },
+    { "Triangle", 4 }, { "Circle", 5 }, { "Cross", 6 }, { "Square", 7 },
+    { "L1", 8 }, { "L2", 9 }, { "R1", 10 }, { "R2", 11 },
+    { "L3", 12 }, { "R3", 13 }, { "Start", 14 }, { "Select", 15 },
+};
+#define LNG_PSX_PAD_BUTTON_COUNT ((int)(sizeof(kPsxPadButtons) / sizeof(kPsxPadButtons[0])))
+
 // ---- panel composition arrays (NULL-terminated) --------------------------------
 static const char* const kPanelsDashboardCommon[] = { "game", "controller", NULL };
 
@@ -143,7 +156,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* theme    */ "psx",
     /* rom_noun */ "Disc",
     /* controller */ {
-        kSnesPadButtons, LNG_SNES_PAD_BUTTON_COUNT,   // same rebind base set today (unchanged)
+        kPsxPadButtons, LNG_PSX_PAD_BUTTON_COUNT,     // real PSX pad vocabulary (Triangle/Circle/Cross/Square/L1-2/R1-2/L3/R3)
         "pad.tga", "pad_analog.tga", "pad_digital.tga",
         /* max_players */ 2, /* has_pad_mode */ 1,
     },
