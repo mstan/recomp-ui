@@ -29,6 +29,12 @@
 extern "C" {
 #endif
 
+// Opaque forward decl: the model carries a pointer to its inferred
+// SystemProfile (launcher_system.h) so panels can read per-system specs
+// (pad art, save kind, hotkeys mask, panel composition) without every TU that
+// touches LauncherModel needing the full SystemProfile definition.
+struct SystemProfile;
+
 typedef enum {
     LNG_VIEW_DASHBOARD = 0,
     LNG_VIEW_SETTINGS,
@@ -109,6 +115,14 @@ typedef struct {
     const char* rom_noun;             // "ROM" default; e.g. "Disc" for PSX
     const char* const* language_labels;  // borrowed; NULL/num_languages==0 => no Localization menu
     int      num_languages;
+
+    // ---- inferred SystemProfile (launcher_system.h) ----
+    // Derived once in launcher_model_init() from the ABI GameInfo's `platform`
+    // field (falling back to a capability-flag heuristic) — see
+    // launcher_system_infer(). Drives which panels compose into each view and
+    // supplies per-system specs (pad art, save kind, hotkeys mask). Never
+    // NULL after init.
+    const struct SystemProfile* profile;
 
     bool     rom_present;
     char     rom_full[512];          // absolute path (what we hand to the game)

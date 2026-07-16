@@ -4,6 +4,7 @@
 // into any game or either prototype backend.
 
 #include "launcher_model.h"
+#include "launcher_system.h"
 
 #include "crc32.h"
 #include "sha256.h"
@@ -105,6 +106,10 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+
+    // ---- infer the SystemProfile this game belongs to (panel composition +
+    // per-system specs) from the ABI caps launcher_profile_apply() already set ----
+    m->profile = launcher_system_infer(game);
 
     // ---- gate pad_mode per player ----
     if (m->pad_mode_supported) {

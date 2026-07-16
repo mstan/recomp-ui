@@ -16,6 +16,8 @@
 #include "launcher_files.h"
 #include "launcher_debug.h"
 #include "launcher_binds.h"
+#include "launcher_panels.h"
+#include "launcher_system.h"
 
 #include "launcher_sdlcompat.h"   // pulls the right SDL header + event shim
 
@@ -35,6 +37,7 @@
 #endif
 #include "imgui_impl_opengl3.h"
 
+#include <cstring>
 #include <string>
 
 extern "C" const char* launcher_backend_name(void) { return "Dear ImGui"; }
@@ -53,6 +56,29 @@ LauncherPad g_pads[LNG_MAX_PADS];   // live gamepad list (repolled every frame)
 int         g_pad_count = 0;
 
 char        g_pick_buf[512] = {};    // ROM picker result
+
+// Context flag the dashboard composer sets just before invoking the "game"
+// panel's registered draw() — the LauncherPanelDrawFn signature (Model*,
+// const Theme*) has no room for the layout-context fill_h flag that
+// draw_game_panel needs (fill the column height in the wide 2-column
+// dashboard vs hug its content in the narrow stacked layout). Same pattern as
+// the other per-frame context globals below (g_scale, g_th, g_pads).
+bool g_game_fill_h = false;
+
+// ---- panel registry lookup helper ------------------------------------------
+// Resolve `id` against a SystemProfile's NULL-terminated composition array:
+// the panel must both be LISTED (this system composes it at all) and
+// AVAILABLE (this game instance offers it) to be drawn. Returns nullptr
+// otherwise — the caller simply skips that slot.
+const LauncherPanel* find_composed(const char* const* ids, const char* id, LauncherModel* m) {
+    if (!ids || !id) return nullptr;
+    for (int i = 0; ids[i]; ++i) {
+        if (strcmp(ids[i], id) != 0) continue;
+        const LauncherPanel* p = launcher_panel_find(id);
+        return (p && launcher_panel_available(p, m)) ? p : nullptr;
+    }
+    return nullptr;
+}
 
 // ---- DPI: rebuild fonts + re-derive style from an unscaled baseline ----------
 void apply_scale(const LauncherTheme& th, float scale, const char* font_path) {
@@ -287,6 +313,7 @@ bool begin_container(const char* id, ImVec2 size, ImGuiChildFlags flags = ImGuiC
 void end_container() { ImGui::EndChild(); ImGui::PopStyleColor(); }
 
 void state_mark(bool ok, const LauncherTheme& th);   // fwd
+void draw_save_row(LauncherModel* m, const LauncherTheme& th);   // fwd (Save module row-drawer)
 
 // One metadata row inside a 3-column table: label | value | optional check.
 // `show_mark` puts a mint check / amber cross in its own column instead of a
@@ -473,28 +500,53 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 
     // SAVES lives in the GAME card as a compact row (no separate card / eyebrow).
     // Present only for games with battery SRAM — data-driven, never by name.
+    // Content lives in draw_save_row() (the Save module's shared row-drawer,
+    // also used standalone by panel_save's own card — see below); folding it
+    // in here, uncarded, is what preserves today's exact GAME-card layout.
     if (m->saves_supported) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushStyleColor(ImGuiCol_Separator, col(th.border));
         ImGui::Separator();
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, px(6)));
-        const char* sp = m->sram_path ? m->sram_path : "";
-        const char* base = sp;
-        for (const char* q = sp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Save");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(px(76));
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(base[0] ? base : "(none yet)");
-        const float bw = px(84);
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
-        ImGui::Button("Import", ImVec2(bw, px(30)));
-        ImGui::SameLine(0, px(th.spacing_sm));
-        ImGui::Button("Clear", ImVec2(bw, px(30)));
+        draw_save_row(m, th);
     }
+    end_panel();
+}
+
+// Save module (docs/ARCHITECTURE.md): one reusable picker row — label + path +
+// Import/Clear. SAVE_SRAM and (until the block-grid UI lands) SAVE_MEMCARD
+// both render this same compact row: kind-switched data, one widget.
+void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
+    const char* sp = m->sram_path ? m->sram_path : "";
+    const char* base = sp;
+    for (const char* q = sp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Save");
+    ImGui::PopStyleColor();
+    ImGui::SameLine(px(76));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(base[0] ? base : "(none yet)");
+    const float bw = px(84);
+    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
+    ImGui::Button("Import", ImVec2(bw, px(30)));
+    ImGui::SameLine(0, px(th.spacing_sm));
+    ImGui::Button("Clear", ImVec2(bw, px(30)));
+}
+
+// ---- panel adapters: LauncherPanelDrawFn = void(LauncherModel*, const LauncherTheme*) ----
+void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
+    draw_game_panel(m, *th, g_game_fill_h);
+}
+
+// Standalone SAVE card (own eyebrow) — not composed by any SystemProfile yet
+// (SAVES still folds into GAME per draw_game_panel, matching today's pixel
+// layout exactly), registered so the module is a complete, addressable unit
+// per the architecture and ready for a future standalone composition.
+int avail_save(const LauncherModel* m) { return m->saves_supported; }
+void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
+    if (begin_panel("save", 0)) { eyebrow("SAVES"); draw_save_row(m, *th); }
     end_panel();
 }
 
@@ -615,29 +667,44 @@ void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     }
 }
 
-// The dashboard COMPOSES whichever modules this game supports — it does not
-// hardcode a fixed set. GAME is always present; the side column stacks
-// CONTROLLERS plus any optional modules (SAVES only when the game has SRAM).
-// A different game simply contributes a different module set.
+void panel_controller_draw(LauncherModel* m, const LauncherTheme* th) {
+    draw_controllers_row(m, *th);
+}
+
+// The dashboard COMPOSES whichever panels this game's SystemProfile lists in
+// panels_dashboard — it does not hardcode a fixed set. GAME is always
+// present; the side column stacks CONTROLLERS plus any optional modules
+// (SAVES only when the game has SRAM, folded into the GAME card — see
+// draw_save_row). A different system's profile simply contributes a
+// different panel list.
 void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const LauncherPanel* game_p = find_composed(prof->panels_dashboard, "game", m);
+    const LauncherPanel* ctrl_p = find_composed(prof->panels_dashboard, "controller", m);
+
     if (logical_w >= 820) {
         const float gap = px(th.spacing_md);
         // Art-led left column sized to the box art; side column takes the rest.
-        begin_container("dash_l", ImVec2(px(400), 0));
-        draw_game_panel(m, th, true);
-        end_container();
+        if (game_p) {
+            g_game_fill_h = true;
+            begin_container("dash_l", ImVec2(px(400), 0));
+            game_p->draw(m, &th);
+            end_container();
+        }
 
-        ImGui::SameLine(0, gap);
-        begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
-            // One self-contained card per player. SAVES now lives in the GAME
-            // card and MSU-1 in Settings > Audio, so the side column is just
-            // the controller card(s).
-            draw_controllers_row(m, th);
-        end_container();
+        if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+        if (ctrl_p) {
+            begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
+                // One self-contained card per player. SAVES now lives in the GAME
+                // card and MSU-1 in Settings > Audio, so the side column is just
+                // the controller card(s).
+                ctrl_p->draw(m, &th);
+            end_container();
+        }
     } else {
-        draw_game_panel(m, th);
-        ImGui::Spacing();
-        draw_controllers_row(m, th);
+        if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
+        if (game_p && ctrl_p) ImGui::Spacing();
+        if (ctrl_p) ctrl_p->draw(m, &th);
     }
 }
 
@@ -781,6 +848,25 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 }
 
+// Video/Display module (docs/ARCHITECTURE.md): base window-scale/fullscreen
+// row set, specialized per system — SNES adds linear-filter + widescreen,
+// PSX adds the full deep surface (window size/renderer/supersampling/aspect/
+// texture-filter/AA/screen-model/frame-interp/skip-fmv/turbo/fullscreen).
+// draw_display_controls() gates each row on the model's has_* caps (sourced
+// from the ABI, unchanged); this adapter supplies the card chrome, choosing
+// AutoResizeY (deep surface, more rows than the fixed band fits) vs a fixed
+// row_h band with no_scroll (legacy minimal surface) — exactly the sizing
+// draw_settings used to pick inline, now co-located with its own content.
+void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
+    if (any_deep_display(m)) {
+        if (begin_panel("disp", 0, false)) draw_display_controls(m, *th);
+        end_panel();
+    } else {
+        if (begin_panel("disp", 0, true, /*no_scroll*/true)) draw_display_controls(m, *th);
+        end_panel();
+    }
+}
+
 void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("AUDIO");
     row_label("Sample rate", th);
@@ -846,6 +932,91 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 }
 
+// Audio module adapter — same AutoResizeY-vs-fixed-row_h sizing pattern as
+// panel_video_draw, decided from the same "deep" predicate draw_settings used
+// to compute inline.
+void panel_audio_draw(LauncherModel* m, const LauncherTheme* th) {
+    const bool deep_audio = m->has_spu_hq || m->has_deadzone_pct || m->num_languages > 0;
+    if (deep_audio) {
+        if (begin_panel("audio", 0, false)) draw_audio_controls(m, *th);
+        end_panel();
+    } else {
+        if (begin_panel("audio", 0, true, /*no_scroll*/true)) draw_audio_controls(m, *th);
+        end_panel();
+    }
+}
+
+// SYSTEM module: BIOS path picker — a full-width row of its own, composed
+// only for systems whose profile lists "system" (PSX) AND only shown for a
+// game instance that needs one (has_bios) — composition + availability, both
+// layers, matching the architecture.
+int avail_system(const LauncherModel* m) { return m->has_bios; }
+void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
+    eyebrow("SYSTEM");
+    row_label("BIOS", th);
+    const float bw = px(78);
+    float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+    if (avail < px(50)) avail = px(50);
+    const char* bp = m->s.bios_path[0] ? m->s.bios_path : "(default)";
+    char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(col(th.text), "%s", elided);
+    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+    if (ImGui::Button("Browse", ImVec2(bw, px(28)))) {
+        char buf[512];
+        static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
+        if (launcher_pick_file("Select BIOS file", kBiosPatterns, 2,
+                               "BIOS image (.bin .rom)", buf, sizeof(buf)))
+            launcher_model_set_bios_path(m, buf);
+    }
+}
+void panel_system_draw(LauncherModel* m, const LauncherTheme* th) {
+    if (begin_panel("system", 0)) draw_system_controls(m, *th);
+    end_panel();
+}
+
+// Hotkeys module: the universal emulator-hotkeys catalog, opt-in per system
+// via SystemProfile.hotkeys_mask (both snes and psx opt into every catalog
+// entry today — LNG_HOTKEYS_ALL — so the grid is unchanged; a future system
+// with a narrower mask would simply see fewer rows).
+void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
+    eyebrow("HOTKEYS");
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const uint32_t mask = prof ? prof->hotkeys_mask : LNG_HOTKEYS_ALL;
+    // Same responsive grid treatment as the bindings list.
+    const float cell_w = px(280.0f);
+    int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
+    cols = cols < 1 ? 1 : (cols > 3 ? 3 : cols);
+    if (ImGui::BeginTable("hk", cols)) {
+        for (int h = 0; h < LNG_HK_COUNT; ++h) {
+            if (!(mask & (1u << h))) continue;
+            ImGui::TableNextColumn();
+            ImGui::PushID(h);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(col(th.text_muted), "%-13s", launcher_hotkey_name((LngHotkey)h));
+            ImGui::SameLine(px(130));
+            const bool cap = m->hk_capturing && m->capture_hk == (LngHotkey)h;
+            const char* lbl = cap ? "[ press... ]"
+                            : m->hotkeys[h][0] ? m->hotkeys[h] : "(unbound)";
+            if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+            if (ImGui::Button(lbl, ImVec2(px(130), 0)))
+                launcher_model_begin_hk_capture(m, (LngHotkey)h);
+            if (cap) ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+}
+void panel_hotkeys_draw(LauncherModel* m, const LauncherTheme* th) {
+    if (begin_panel("hotkeys", 0)) draw_hotkeys_controls(m, *th);
+    end_panel();
+}
+
+// The settings VIEW composes whichever panels this game's SystemProfile
+// lists in panels_settings, in order: DISPLAY (MAIN) + AUDIO (SIDE) share the
+// top band, then any WIDE panels (SYSTEM, HOTKEYS) stack full-width below —
+// exactly today's fixed layout, now driven by the composition array + the
+// registry's available() gate instead of hardcoded calls.
 void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     // Row 1: DISPLAY | AUDIO share the top band. For the legacy minimal
     // surface (no deep caps set — e.g. SNES) both cards are pinned to the
@@ -854,6 +1025,10 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     // that fixed height fits — rather than clip (or reintroduce a stray
     // scrollbar via no_scroll on an overflowing fixed-height card), those
     // cards switch to AutoResizeY so they simply grow to fit their content.
+    // (Same "deep" predicates panel_video_draw/panel_audio_draw use for their
+    // OWN inner card — computed twice, independently, so outer/inner sizing
+    // never has to be threaded through the generic draw(model,theme) signature.)
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
     const float gap  = px(th.spacing_md);
     const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
     const float row_h = px(198.0f);   // legacy fixed band height
@@ -861,84 +1036,35 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const bool deep_display = any_deep_display(m);
     const bool deep_audio   = m->has_spu_hq || m->has_deadzone_pct || m->num_languages > 0;
 
-    if (deep_display) {
-        begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
-        if (begin_panel("disp", 0, false)) draw_display_controls(m, th);
-        end_panel();
+    const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
+    const LauncherPanel* audio_p   = find_composed(prof->panels_settings, "audio", m);
+    const LauncherPanel* system_p  = find_composed(prof->panels_settings, "system", m);
+    const LauncherPanel* hotkeys_p = find_composed(prof->panels_settings, "hotkeys", m);
+
+    if (video_p) {
+        if (deep_display) begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+        else               begin_container("set_l", ImVec2(half, row_h));
+        video_p->draw(m, &th);
         end_container();
-    } else {
-        begin_container("set_l", ImVec2(half, row_h));
-        if (begin_panel("disp", 0, true, /*no_scroll*/true)) draw_display_controls(m, th);
-        end_panel();
+    }
+    if (video_p && audio_p) ImGui::SameLine(0, gap);
+    if (audio_p) {
+        if (deep_audio) begin_container("set_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
+        else             begin_container("set_r", ImVec2(0, row_h));
+        audio_p->draw(m, &th);
         end_container();
     }
 
-    ImGui::SameLine(0, gap);
-
-    if (deep_audio) {
-        begin_container("set_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
-        if (begin_panel("audio", 0, false)) draw_audio_controls(m, th);
-        end_panel();
-        end_container();
-    } else {
-        begin_container("set_r", ImVec2(0, row_h));
-        if (begin_panel("audio", 0, true, /*no_scroll*/true)) draw_audio_controls(m, th);
-        end_panel();
-        end_container();
-    }
-
-    // SYSTEM: BIOS path picker — a full-width row of its own, shown only for
-    // games that need a BIOS image (PSX).
-    if (m->has_bios) {
-        if (begin_panel("system", 0)) {
-            eyebrow("SYSTEM");
-            row_label("BIOS", th);
-            const float bw = px(78);
-            float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
-            if (avail < px(50)) avail = px(50);
-            const char* bp = m->s.bios_path[0] ? m->s.bios_path : "(default)";
-            char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text), "%s", elided);
-            ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
-            if (ImGui::Button("Browse", ImVec2(bw, px(28)))) {
-                char buf[512];
-                static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
-                if (launcher_pick_file("Select BIOS file", kBiosPatterns, 2,
-                                       "BIOS image (.bin .rom)", buf, sizeof(buf)))
-                    launcher_model_set_bios_path(m, buf);
-            }
-        } end_panel();
-    }
-
-    if (begin_panel("hotkeys", 0)) {
-        eyebrow("HOTKEYS");
-        // Same responsive grid treatment as the bindings list.
-        const float cell_w = px(280.0f);
-        int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
-        cols = cols < 1 ? 1 : (cols > 3 ? 3 : cols);
-        if (ImGui::BeginTable("hk", cols)) {
-            for (int h = 0; h < LNG_HK_COUNT; ++h) {
-                ImGui::TableNextColumn();
-                ImGui::PushID(h);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(col(th.text_muted), "%-13s", launcher_hotkey_name((LngHotkey)h));
-                ImGui::SameLine(px(130));
-                const bool cap = m->hk_capturing && m->capture_hk == (LngHotkey)h;
-                const char* lbl = cap ? "[ press... ]"
-                                : m->hotkeys[h][0] ? m->hotkeys[h] : "(unbound)";
-                if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                if (ImGui::Button(lbl, ImVec2(px(130), 0)))
-                    launcher_model_begin_hk_capture(m, (LngHotkey)h);
-                if (cap) ImGui::PopStyleColor();
-                ImGui::PopID();
-            }
-            ImGui::EndTable();
-        }
-    } end_panel();
+    if (system_p)  system_p->draw(m, &th);
+    if (hotkeys_p) hotkeys_p->draw(m, &th);
 }
 
-void draw_controller(LauncherModel* m, const LauncherTheme& th) {
+// CONTROLLER-view rebind page: input source + deadzone, and the keyboard
+// bindings grid — reached from the dashboard CONTROLLER panel's Configure
+// button. Per-system base button set today is the same LNG_BTN_* catalog for
+// every system (ControllerSpec.buttons in launcher_system.h documents this
+// as data; launcher_button_name() stays the single rendered source of truth).
+void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const int p = m->cfg_player;
     if (begin_panel("cfg_src", 0)) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
@@ -998,6 +1124,39 @@ void draw_controller(LauncherModel* m, const LauncherTheme& th) {
         if (m->capturing) ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
     } end_panel();
 }
+
+void panel_controller_config_draw(LauncherModel* m, const LauncherTheme* th) {
+    draw_controller_config_view(m, *th);
+}
+
+// The CONTROLLER view composes whichever panel(s) this game's SystemProfile
+// lists in panels_controller — today always the single "controller_config"
+// page (source+deadzone card, then the bindings grid card), matching the
+// architecture's "Binds ... page reached from the Controller panel's
+// Configure" note.
+void draw_controller(LauncherModel* m, const LauncherTheme& th) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const LauncherPanel* p = find_composed(prof->panels_controller, "controller_config", m);
+    if (p) p->draw(m, &th);
+}
+
+// ---- panel registry: id -> {view, slot, available, draw} --------------------
+// The single implementation table for every panel this backend draws. A
+// SystemProfile's panels_dashboard/panels_settings/panels_controller arrays
+// (launcher_system.h) list which of these ids compose into each view, in
+// slot order; draw_dashboard/draw_settings/draw_controller above look each id
+// up here via find_composed() and draw whatever's both listed and available().
+const LauncherPanel kPanelRegistry[] = {
+    { "game",              LNG_VIEW_DASHBOARD,  LNG_SLOT_MAIN, nullptr,      panel_game_draw },
+    { "controller",        LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, nullptr,      panel_controller_draw },
+    { "save",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_save,   panel_save_draw },
+    { "video",             LNG_VIEW_SETTINGS,   LNG_SLOT_MAIN, nullptr,      panel_video_draw },
+    { "audio",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, nullptr,      panel_audio_draw },
+    { "system",            LNG_VIEW_SETTINGS,   LNG_SLOT_WIDE, avail_system, panel_system_draw },
+    { "hotkeys",           LNG_VIEW_SETTINGS,   LNG_SLOT_WIDE, nullptr,      panel_hotkeys_draw },
+    { "controller_config", LNG_VIEW_CONTROLLER, LNG_SLOT_WIDE, nullptr,      panel_controller_config_draw },
+    { nullptr,              LNG_VIEW_DASHBOARD,  0,             nullptr,      nullptr },   // sentinel
+};
 
 // Footer: a fixed-height band with the neon divider pinned to its TOP and the
 // CTA vertically centred inside it. Laid out from an explicit origin (not the
@@ -1177,6 +1336,26 @@ std::string asset(const char* rel) {
 }
 
 } // namespace
+
+// ---- launcher_panels.h contract implementation -------------------------------
+// The panel registry is defined above (kPanelRegistry, anonymous namespace) —
+// only this backend's draw functions can populate it (they call ImGui::*), so
+// this is the sole implementation, matching today's single-backend reality.
+extern "C" const LauncherPanel* launcher_panels_all(void) {
+    return kPanelRegistry;   // {id=NULL}-sentinel-terminated
+}
+
+extern "C" const LauncherPanel* launcher_panel_find(const char* id) {
+    if (!id) return nullptr;
+    for (int i = 0; kPanelRegistry[i].id; ++i)
+        if (strcmp(kPanelRegistry[i].id, id) == 0) return &kPanelRegistry[i];
+    return nullptr;
+}
+
+extern "C" bool launcher_panel_available(const LauncherPanel* p, const LauncherModel* m) {
+    if (!p) return false;
+    return p->available ? (p->available(m) != 0) : true;
+}
 
 extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                                           LauncherModel* m,
