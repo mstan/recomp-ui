@@ -65,9 +65,10 @@ typedef enum {
 
 // Upper bound on a SystemProfile's ControllerSpec.button_count — sizes the
 // generic per-player bind-label storage below. SNES uses 12 (LNG_BTN_COUNT),
-// PSX uses 16 (LNG_PSX_PAD_BUTTON_COUNT, launcher_system.h); this leaves
+// PSX uses 24 (LNG_PSX_PAD_BUTTON_COUNT, launcher_system.h: 16 physical
+// DualShock inputs + 8 keyboard->analog-stick direction binds); this leaves
 // headroom for future systems without another struct-layout change.
-#define LNG_MAX_BUTTONS 20
+#define LNG_MAX_BUTTONS 24
 
 // System hotkeys — mirrors the engine's config.ini [KeyMap] keys exactly, so
 // editing them here surgically rewrites the same lines config.c parses.

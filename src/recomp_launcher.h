@@ -85,6 +85,19 @@ typedef struct RecompLauncherCGameInfo {
      * surgical edits). NULL => "config.ini" in cwd (exe-anchored by main).
      * Games pass their --config override here so hotkey edits follow it. */
     const char*    config_path;
+    /* Keyboard-bind file path the Controller rebind page persists to. NULL
+     * => "keybinds.ini" in cwd (exe-anchored), matching each runtime's own
+     * default (recompui_keybinds_init(NULL) / psx_keybinds_init(NULL)) so the
+     * launcher and the game agree on one file without a host having to set
+     * this. The ON-DISK FORMAT is chosen automatically from the active
+     * SystemProfile (launcher_system.h) — not from a separate flag here:
+     * PSX games get psxrecomp's own psx_keybinds.c format (24 keys, section
+     * [player1]/[player2], names up/down/.../rs_right) so rebinds actually
+     * reach the game; every other console keeps this launcher's generic
+     * keybinds.c format exactly as before. Pass a host-specific path only
+     * when the game's cwd won't match the launcher's (e.g. a differently
+     * anchored --keybinds override). */
+    const char*    keybinds_path;
 
     // Controller pad-mode (PlayStation-style analog/digital emulation). Consoles
     // without pad modes (SNES) leave pad_mode_supported = 0 and the selector + the

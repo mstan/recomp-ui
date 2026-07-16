@@ -102,16 +102,24 @@ static const ButtonDef kSnesPadButtons[] = {
 };
 #define LNG_SNES_PAD_BUTTON_COUNT ((int)(sizeof(kSnesPadButtons) / sizeof(kSnesPadButtons[0])))
 
-// PSX DualShock/digital-pad base set (16) — real vocabulary for the PSX
+// PSX DualShock/digital-pad base set (24) — real vocabulary for the PSX
 // rebind page (was borrowing kSnesPadButtons; see kSystemProfilePsx below).
-// `code` is just the button's own index (0..15): the rebind page and bind
+// `code` is just the button's own index (0..23): the rebind page and bind
 // persistence (launcher_binds.c) both address buttons by this spec index,
-// not by any engine-side enum.
+// not by any engine-side enum. The first 16 are the physical DualShock
+// inputs; the last 8 are the keyboard->analog-stick DIRECTION binds
+// (psxrecomp's runtime/launcher/psx_keybinds.h PSX_KB_LS_UP..PSX_KB_RS_RIGHT)
+// that drive the left/right analog stick from the keyboard in analog pad
+// modes. Mirrors the game's full 24-button kButtons vocabulary so every bind
+// psx_keybinds.c understands is reachable from this launcher's rebind page
+// (see launcher_binds.c's PSX-native keybind bridge for the persistence side).
 static const ButtonDef kPsxPadButtons[] = {
     { "Up", 0 }, { "Down", 1 }, { "Left", 2 }, { "Right", 3 },
     { "Triangle", 4 }, { "Circle", 5 }, { "Cross", 6 }, { "Square", 7 },
     { "L1", 8 }, { "L2", 9 }, { "R1", 10 }, { "R2", 11 },
     { "L3", 12 }, { "R3", 13 }, { "Start", 14 }, { "Select", 15 },
+    { "L-Stick Up", 16 }, { "L-Stick Down", 17 }, { "L-Stick Left", 18 }, { "L-Stick Right", 19 },
+    { "R-Stick Up", 20 }, { "R-Stick Down", 21 }, { "R-Stick Left", 22 }, { "R-Stick Right", 23 },
 };
 #define LNG_PSX_PAD_BUTTON_COUNT ((int)(sizeof(kPsxPadButtons) / sizeof(kPsxPadButtons[0])))
 
