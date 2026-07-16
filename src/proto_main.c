@@ -88,9 +88,28 @@ int main(int argc, char** argv) {
         gi.sram_path   = "saves/save.srm";
     }
 
+    // Harness-only: exercises the MSU-1 dashboard "Patch ROM"/"Skip" flow
+    // (launcher_model_apply_msu1_patch / launcher_model_skip_msu1_patch, drawn
+    // in draw_game_panel — launcher_imgui.cpp). Points at a tiny fixture ROM
+    // + IPS patch (test_data/) whose expected_crc matches the vanilla fixture
+    // byte-for-byte, so msu1_patch_available comes up true without a real
+    // game. See test_data/README-ish note in the fixture generator this was
+    // produced from (ips_apply unit test) for the exact byte layout.
+    const char* demo_msu_rom = NULL;
+    const char* demo_msu = SDL_getenv("LNG_DEMO_MSU");
+    if (demo_msu && demo_msu[0] == '1') {
+        gi.msu1_supported   = 1;
+        gi.msu1_note        = "This demo ROM has a tiny synthetic MSU-1 IPS patch "
+                              "(test_data/msu1_demo.ips) for harness verification.";
+        gi.msu1_patch_path  = "test_data/msu1_demo.ips";
+        gi.has_expected_crc = 1;
+        gi.expected_crc     = 0xA2B10169u;   // CRC32 of test_data/msu1_demo_vanilla.rom
+        demo_msu_rom = "test_data/msu1_demo_vanilla.rom";
+    }
+
     LauncherModel model;
     const char* rom = SDL_getenv("LNG_ROM");
-    if (!rom || !rom[0]) rom = "test.rom";
+    if (!rom || !rom[0]) rom = demo_msu_rom ? demo_msu_rom : "test.rom";
     launcher_model_init(&model, &s, &gi, rom);
     launcher_binds_load(&model, NULL);   // keybinds.ini + config.ini [KeyMap]
     fprintf(stderr, "[proto] rom=%s present=%d crc_match=%d sha_match=%d verified=%d size=%s\n",

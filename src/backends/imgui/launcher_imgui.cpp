@@ -528,6 +528,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         float reserve = px(198.0f);
         if (disc_verdict) reserve += px(96.0f);           // taller: icon+headline + 3-row checklist
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
+        if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
+                                                              // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
         if (art_h > px(320.0f)) art_h = px(320.0f);   // allow a larger hero box art
         if (art_h < px(216.0f)) art_h = px(216.0f);   // keep it big enough to balance the side column
@@ -572,6 +574,42 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     if (ImGui::Button(change_label, ImVec2(availw, px(34))))
         if (launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf)))
             launcher_model_set_rom(m, g_pick_buf);
+
+    // MSU-1 patch-available sub-block: this game ships an IPS patch that
+    // converts the verified vanilla ROM into its MSU-1 streamed-audio variant.
+    // Ported from the RmlUi launcher's dashboard "MSU-1 patch available" card
+    // (snesrecomp/runner/src/launcher/launcher_gui.cpp: msu1_patch_available +
+    // do_patch()/patch_rom/skip_patch). "warn" amber styling — this is a
+    // choice the player should notice, not a routine control.
+    if (m->msu1_patch_available) {
+        ImGui::Dummy(ImVec2(0, px(10)));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, col(th.panel_hovered));
+        ImGui::PushStyleColor(ImGuiCol_Border, col(th.warn));
+        if (ImGui::BeginChild("msu1_patch_block", ImVec2(availw, 0),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            ImGui::TextColored(col(th.warn), "MSU-1 patch available");
+            const float inner_w = ImGui::GetContentRegionAvail().x;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + inner_w);
+            ImGui::TextColored(col(th.text_muted), "%s",
+                (m->msu1_note && m->msu1_note[0])
+                    ? m->msu1_note
+                    : "An MSU-1 patch exists for this game. Patch a copy beside "
+                      "your ROM (the original is never modified)?");
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, px(8)));
+            // Stacked full-width buttons, not side-by-side: "Skip (Play Unpatched)"
+            // is long enough that splitting the row in half clips its label at
+            // common card widths (verified via the LNG_DEMO_MSU harness).
+            if (ImGui::Button("Patch ROM", ImVec2(inner_w, px(32))))
+                launcher_model_apply_msu1_patch(m);
+            ImGui::Dummy(ImVec2(0, px(th.spacing_xs)));
+            if (ImGui::Button("Skip (Play Unpatched)", ImVec2(inner_w, px(32))))
+                launcher_model_skip_msu1_patch(m);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
 
     // SAVES lives in the GAME card as a compact row (no separate card / eyebrow).
     // Present only for games with battery SRAM — data-driven, never by name.

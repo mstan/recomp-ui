@@ -62,6 +62,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/crc32.c
         ${RUI_SRC}/sha256.c
         ${RUI_SRC}/keybinds.c
+        ${RUI_SRC}/ips_patch.c          # MSU-1 IPS auto-patching (launcher_model.c)
         # Dear ImGui backend (the shipping UI) + vendored ImGui (C++)
         ${RUI_SRC}/backends/imgui/launcher_imgui.cpp
         ${RUI_IMGUI}/imgui.cpp
