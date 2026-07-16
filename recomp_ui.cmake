@@ -53,6 +53,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/launcher_gl.c
         ${RUI_SRC}/launcher_input.c
         ${RUI_SRC}/launcher_files.c
+        ${RUI_SRC}/memcard_format.c   # standalone PS1 blank memory-card image writer
         ${RUI_SRC}/launcher_debug.c
         ${RUI_SRC}/launcher_binds.c
         ${RUI_SRC}/launcher_ng_capi.c          # implements recomp_launcher_run_window()

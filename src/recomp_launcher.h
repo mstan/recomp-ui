@@ -58,6 +58,11 @@ typedef struct RecompLauncherCSettings {
     // Per-slot card-image file path (empty = none picked yet), editable via the
     // Save panel's Browse/New controls; mirrors bios_path's pattern exactly.
     char memcard_path[2][512];
+    // Per-slot enable/disable (mirrors the RmlUi PSX launcher's per-card
+    // "Enabled" switch / SIO-port concept: a disabled slot reports no card
+    // present). 0 = unset (host predates this field) -> the model defaults it
+    // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
+    int  memcard_enabled[2];
 } RecompLauncherCSettings;
 
 typedef struct RecompLauncherCGameInfo {

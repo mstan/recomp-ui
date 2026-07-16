@@ -641,6 +641,8 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     ImGui::PushID(slot);
 
+    const bool enabled = m->s.memcard_enabled[slot] != 0;
+
     image_fit(g_memcard, 20, 20);
     ImGui::SameLine(0, px(8));
     ImGui::AlignTextToFramePadding();
@@ -650,20 +652,42 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     char label[40];
     if (base[0]) snprintf(label, sizeof(label), "%s", base);
     else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
 
+    // Per-slot Enable/Disable switch, right-aligned on the header row —
+    // mirrors the RmlUi launcher's `.switch`/`toggle_mc1`/`toggle_mc2` (a
+    // disabled slot is an empty SIO port once a host wires that up). The
+    // header stays full-strength; only the body below dims when disabled.
+    {
+        const char* tglabel = "Enabled";
+        const float tgw = ImGui::GetFrameHeight() + px(6.0f) + ImGui::CalcTextSize(tglabel).x;
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - tgw);
+        bool enabled_box = enabled;
+        if (ImGui::Checkbox(tglabel, &enabled_box))
+            launcher_model_toggle_memcard(m, slot);
+    }
+
+    // Dim the rest of the slot body when disabled (mirrors the RmlUi
+    // launcher's `.card-body.disabled { opacity: 0.4; }` — visual only, the
+    // Browse/New controls stay clickable so the slot can be re-configured
+    // while off).
+    const float body_alpha = enabled ? 1.0f : 0.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+
     const bool have_probe = prof && prof->save.probe && prof->save.probe(m, slot);
     const uint16_t used = have_probe ? m->memcard_blocks_used[slot]
+                          : m->memcard_freshly_formatted[slot] ? (uint16_t)0
                                      : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
-    // Block count sits on the RIGHT of the header row; the 15-block grid is on
-    // the LEFT (its own full-width row below), with slightly larger cells.
+    // Block count sits right-aligned on its OWN row (the header row's right
+    // side is now the Enabled switch); the 15-block grid is its own
+    // full-width row below, with slightly larger cells.
     char cap[20]; snprintf(cap, sizeof(cap), "%d / 15 blocks", used_count);
     const float capw = ImGui::CalcTextSize(cap).x;
-    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - capw);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - capw);
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::TextUnformatted(cap);
     ImGui::PopStyleColor();
@@ -700,11 +724,15 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     ImGui::SameLine(0, px(th.spacing_sm));
     if (ImGui::Button("New", ImVec2(bw, px(32)))) {
         char buf[512];
-        if (launcher_pick_file("Create new memory card", kCardPatterns, 3,
-                               "PS1 memory card (.mcd)", buf, sizeof(buf)))
-            launcher_model_set_memcard_path(m, slot, buf);
+        // "New" picks a DESTINATION (the file need not exist yet — a save
+        // dialog, not the open dialog Browse uses), then writes a real,
+        // freshly formatted blank 128KB card there and adopts it.
+        if (launcher_pick_save_file("Create new memory card", kCardPatterns, 3,
+                                    "PS1 memory card (.mcd)", buf, sizeof(buf)))
+            launcher_model_new_memcard(m, slot, buf);
     }
 
+    ImGui::PopStyleVar();  // body_alpha
     ImGui::PopID();
 }
 

@@ -109,6 +109,13 @@ typedef struct {
     // today), in which case the Save panel renders a representative placeholder
     // grid instead of reading this field.
     uint16_t    memcard_blocks_used[2];
+    // Set true by launcher_model_new_memcard() right after it formats+adopts
+    // a blank card for that slot, cleared as soon as the slot's path changes
+    // again (browse-in, or the model is re-initialized). While no real
+    // SaveProbeFn is wired (memcard_blocks_used stays unpopulated), this lets
+    // the panel show "0 / 15 blocks" for a card it just knows is blank,
+    // instead of falling back to the representative placeholder count.
+    bool        memcard_freshly_formatted[2];
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.
@@ -272,6 +279,14 @@ void launcher_model_clear_sram(LauncherModel* m);
 
 // ---- PSX memory-card slots (SAVE_MEMCARD only; no-op guarded by slot range) ----
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path);
+// Enable/disable one card slot (mirrors the RmlUi launcher's per-card switch;
+// a disabled slot's SIO port reports no card present to the host once wired).
+void launcher_model_toggle_memcard(LauncherModel* m, int slot);
+// "New" action: format a real, mountable blank 128KB PS1 memory-card image at
+// `path` (recompui_memcard_format_file(), memcard_format.h — no dependency on
+// any host project's runtime headers), then adopt it as the slot's path. A
+// no-op (path left untouched) if the format write fails.
+void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path);
 
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);
