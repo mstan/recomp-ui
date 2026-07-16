@@ -559,7 +559,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     if (ImGui::BeginTable("meta", 2, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
         ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
-        kv_row("Region", m->region[0] ? m->region : "", th, false, false);
+        // The disc-verdict block already reports Region in its checklist, so
+        // don't repeat it here (it would show a redundant/blank second row).
+        if (!disc_verdict)
+            kv_row("Region", m->region[0] ? m->region : "", th, false, false);
         kv_row("File",   m->rom_file, th, false, false);
         ImGui::EndTable();
     }
