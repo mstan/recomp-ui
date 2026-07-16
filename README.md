@@ -1,87 +1,155 @@
 # recomp-ui
 
-A self-contained, console-agnostic Dear ImGui pre-boot launcher, extracted
-from the SNES-recomp "launcher_ng" launcher. Any recomp ecosystem (SNES, NES,
-N64, PSX, ...) can consume this repo as a git submodule to get the exact same
-launcher UI/behavior with zero UI code of its own.
+A shared, **console-agnostic pre-boot launcher** for static-recompilation game
+ports. One Dear ImGui launcher core serves every recomp ecosystem — SNES, PSX,
+N64, Genesis, NES, and beyond — so each game gets a polished settings/ROM/
+controller front-end with **zero UI code of its own**.
 
-## What it is
+It is the reusable extraction of the SNES-recomp "launcher_ng" launcher,
+generalized behind a small C ABI. Consume it as a git submodule, hand it your
+game's facts through a plain-C struct, and it renders the right UI for that
+console.
 
-- A view-model (`src/launcher_model.*`) that owns all launcher state and
-  behavior (panels, controls, rebind capture), free of any UI toolkit.
-- A Dear ImGui render backend (`src/backends/imgui/launcher_imgui.cpp`) that
-  draws that model: Dashboard (ROM info + CRC/SHA badges + Change ROM),
-  Settings (window scale, filter, sample rate, volume, hotkeys), Controller
-  (input source, deadzone, keyboard rebinds), and Footer (Skip-on-Boot, PLAY).
-- A plain C ABI (`src/recomp_launcher.h`) so a host's C `main()` can call into
-  the C++ launcher without speaking C++:
+Proven in production driving two very different consoles from the **same
+binary core**:
 
-  ```c
-  int recomp_launcher_run_window(const char* window_title,
-                                  RecompLauncherCSettings* io,
-                                  const RecompLauncherCGameInfo* game,
-                                  const char* assets_dir,
-                                  const char* initial_rom,
-                                  char* out_rom_path, size_t out_rom_path_len);
-  ```
+- **Mega Man X** (Super Nintendo) — CRT theme, SNES pad, ROM verification.
+- **Ape Escape** (PlayStation) — blue theme, DualShock + pad-modes, real disc
+  verification, memory cards, deep PSX video settings.
 
-- Bundled, self-contained helpers: `crc32.c/.h`, `sha256.c/.h` (ROM
-  verification) and `keybinds.c/.h` (SDL-scancode keyboard-binding store,
-  `keybinds.ini`, backing the rebind UI). The host does not need to already
-  provide these.
-- Vendored Dear ImGui (MIT) + `tinyfiledialogs` under `src/third_party/` —
-  no network fetch, fully offline builds.
+---
+
+## Architecture: composition + inheritance
+
+recomp-ui is **one** launcher composed differently per console — never a
+per-console fork, never a mega-`if`. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+- **Composition** decides *which* cards appear. A `SystemProfile` lists the
+  panels each view (dashboard / settings / controller) gets. "PSX has memory
+  cards, SNES has SRAM, this game has neither" = include/omit the panel.
+- **Inheritance** decides *how* a card behaves. Each module — Controller, Save,
+  Video, Verify, Hotkeys — has one base implementation specialized per console
+  by a small data **spec**. "Every game has a controller; its art/buttons/count
+  differ" = one base card, per-system data.
+
+Adding a console is (ideally) **one `SystemProfile` row** in
+[`src/launcher_system.h`](src/launcher_system.h). The console difference is pure
+data passed through the C ABI — theme, platform label, box art, pad image,
+which panels — so there is no `../snes` / `../psx` source fork.
+
+The DRY heart is [`src/launcher_model.h`](src/launcher_model.h): all launcher
+STATE + BEHAVIOR, free of any UI toolkit, built purely from the C ABI structs —
+so behavior is identical across every game.
+
+---
 
 ## Consuming it
 
-Add this repo as a git submodule, then from the host's CMake project:
+### 1. Vendor the repo (git submodule)
+
+```sh
+git submodule add https://github.com/mstan/recomp-ui.git recomp-ui
+```
+
+### 2. Wire it into your CMake target
 
 ```cmake
-set(RECOMP_UI_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-ui)
-include(${RECOMP_UI_ROOT}/recomp_ui.cmake)
-recomp_target_launcher_ui(<your_target> [BOXART <path/to/boxart.tga>])
+include(${CMAKE_SOURCE_DIR}/recomp-ui/recomp_ui.cmake)
+recomp_target_launcher_ui(my-game-runtime
+    BOXART ${CMAKE_SOURCE_DIR}/art/boxart.tga   # optional: game box art
+    PAD    ${CMAKE_SOURCE_DIR}/art/pad.tga       # optional: per-console controller image
+    BRAND  ${CMAKE_SOURCE_DIR}/art/brand.tga)    # optional: per-console top-left mark
 ```
 
-That call:
-- adds all launcher sources (core + Dear ImGui backend + vendored ImGui +
-  tinyfiledialogs + bundled crc32/sha256/keybinds) to `<your_target>`,
-- sets the include directories,
-- defines `RECOMP_LAUNCHER` (un-gate your own launcher call site with
-  `#ifdef RECOMP_LAUNCHER`) and `SDL_MAIN_HANDLED`,
-- stages `assets/fonts` + `assets/img` (and an optional per-game
-  `assets/img/boxart.tga`) next to the built exe post-build, matching the
-  runtime's `SDL_GetBasePath()` asset lookup.
+`recomp_ui.cmake` is fully self-contained: it bundles Dear ImGui, crc32/sha256/
+keybinds, tinyfiledialogs, an IPS applier, and a PS1 memcard formatter, and
+stages its fonts/images next to your exe. No network / FetchContent — builds
+offline. It defines `RECOMP_LAUNCHER` on the target and needs SDL2 + OpenGL.
 
-Your host's C `main()` seeds `RecompLauncherCSettings` /
-`RecompLauncherCGameInfo`, calls `recomp_launcher_run_window(...)`, and boots
-whichever ROM path it returns. See `src/proto_main.c` for a full worked
-example.
+### 3. Call it from your `main()`
 
-Requires: SDL2 (found via `find_package(SDL2)`), OpenGL, a C++17 compiler.
+```c
+#if defined(RECOMP_LAUNCHER)
+#include "recomp_launcher.h"
+#include "launcher_profile.h"
 
-## Building the standalone self-test
+RecompLauncherCSettings io = { /* seed from your config */ };
+RecompLauncherCGameInfo gi = {0};
+launcher_profile_apply("snes", &gi);   // "psx", "n64", ... — one call sets the console identity
+gi.name = "My Game";
+gi.expected_crc = 0x1B4B2E9C; gi.has_expected_crc = 1;
+/* ...per-game overrides... */
 
-This repo's own `CMakeLists.txt` builds `recomp-ui-launcher`, a standalone
-exe from `src/proto_main.c` that seeds a neutral placeholder game and runs
-the launcher UI, so the repo can verify itself without any host game:
+char out_rom[512];
+int rc = recomp_launcher_run_window("My Game — Launcher", &io, &gi,
+                                    ".", initial_rom, out_rom, sizeof(out_rom));
+// rc: 0 = LAUNCH (boot out_rom with the edited io), 1 = QUIT, 2 = UNAVAILABLE
+#endif
+```
+
+Keep whatever launcher you had (RmlUi / in-tree) as the default and gate the
+recomp-ui path behind `-DRECOMP_LAUNCHER` (or your own option) during migration.
+
+The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-C
+settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
+for console-specific verification the launcher re-runs on change — e.g. PSX disc
+identification (`disc_verify`) and memory-card inspection (`memcard_inspect`).
+
+---
+
+## Feature surface (per console, capability-gated)
+
+- **Game / verification** — box art, ROM CRC/SHA verification, or PSX disc
+  verdict (serial / region / ISO header) via the host `disc_verify` callback.
+- **Controllers** — none/keyboard/gamepad per player, per-console pad art +
+  button vocabulary, PSX analog/digital/hybrid pad modes, deadzone, keyboard
+  rebinding that writes each runtime's native keybind format.
+- **Video** — window scale/size, renderer, supersampling, aspect (4:3/16:9/21:9),
+  texture filtering, antialiasing (Off/2×/4×/8×), screen model, frame
+  interpolation, and more — each shown only when the console exposes it.
+- **Save** — SRAM Import/Clear (with `.bak` backup) or PS1 memory cards (per-slot
+  enable, Browse / New-formats-a-blank-card, real block-usage grid via the host
+  `memcard_inspect` callback).
+- **MSU-1** — dashboard IPS auto-patching for SNES MSU-1 titles.
+- **Hotkeys** — per-console subset of the emulator hotkey catalog, editable.
+- **Footer** — PLAY, skip-launcher-on-boot (+ confirm modal), gamepad navigation.
+
+---
+
+## Build & self-test
+
+recomp-ui builds a standalone harness that fabricates the same C ABI a real host
+passes, so you can iterate on the UI without a game:
 
 ```sh
-cmake -G Ninja -S . -B build -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-cmake --build build
+cmake -G Ninja -S . -B build
+cmake --build build -j
+# Preview a console: LNG_VARIANT = psx | snes | ...
+LNG_VARIANT=psx ./build/recomp-ui-launcher
 ```
 
-It also understands `LNG_SCRIPT` (a `;`-separated scripted-input / screenshot
-harness — see `src/launcher_debug.h`) for headless CI verification, e.g.:
+`LNG_SCRIPT` drives it headless for screenshot regression, e.g.
+`LNG_SCRIPT="wait:40;view:settings;shot:out.png;quit"` (see
+[`src/launcher_debug.h`](src/launcher_debug.h)).
 
-```sh
-LNG_SCRIPT="wait:40;shot:out.png;quit" ./build/recomp-ui-launcher.exe
-```
+Requires SDL2 (`find_package(SDL2)`), OpenGL, a C++17 compiler.
+
+---
 
 ## Layout
 
 ```
-src/            launcher core (.c/.h), Dear ImGui backend, third_party/, C ABI header
-assets/         fonts/ + img/ shipped with the launcher
-recomp_ui.cmake reusable recomp_target_launcher_ui() integration helper
-CMakeLists.txt  standalone self-test build (recomp-ui-launcher)
+src/                launcher core (.c/.h), Dear ImGui backend, C ABI header
+src/launcher_system.h   SystemProfile — one row per console
+src/launcher_model.*    UI-toolkit-free view-model (state + behavior)
+src/third_party/        vendored Dear ImGui, stb, tinyfiledialogs
+assets/                 fonts/ + img/ shipped with the launcher
+recomp_ui.cmake         reusable recomp_target_launcher_ui() integration helper
+docs/ARCHITECTURE.md    composition + inheritance design
+CMakeLists.txt          standalone self-test build (recomp-ui-launcher)
 ```
+
+## License
+
+Bundled third-party code (Dear ImGui, stb, tinyfiledialogs) retains its own
+licenses under `src/third_party/`.
