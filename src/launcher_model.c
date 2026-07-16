@@ -58,6 +58,7 @@ static int clampi(int v, int lo, int hi) {
 
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
+static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -105,6 +106,8 @@ void launcher_model_init(LauncherModel* m,
         m->rom_noun             = game->rom_noun ? game->rom_noun : "ROM";
         m->language_labels      = game->language_labels;
         m->num_languages        = game->num_languages;
+        m->disc_verify_cb       = game->disc_verify;      // real disc verdict (PSX), or NULL
+        m->memcard_inspect_cb   = game->memcard_inspect;  // real memcard summary (PSX), or NULL
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -172,6 +175,11 @@ void launcher_model_init(LauncherModel* m,
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
     launcher_model_set_rom(m, initial_rom);
+
+    // Inspect both memory-card slots up front (real block usage/validity when a
+    // host memcard_inspect callback is wired; no-op otherwise).
+    lm_inspect_memcard(m, 0);
+    lm_inspect_memcard(m, 1);
 
     m->view      = LNG_VIEW_DASHBOARD;
     m->action    = LNG_ACTION_NONE;
@@ -257,6 +265,18 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
 static void run_verify(LauncherModel* m) {
     if (!m->profile || m->profile->verify.mode != 1) return;
     memset(&m->verify, 0, sizeof(m->verify));
+    // Host disc-verify callback (REAL serial/region/ISO/verdict) takes
+    // precedence — re-run here on every ROM/disc change.
+    if (m->disc_verify_cb && m->rom_present) {
+        RecompLauncherCDiscVerify dv; memset(&dv, 0, sizeof(dv));
+        if (m->disc_verify_cb(m->rom_full, &dv)) {
+            safe_copy(m->verify.serial, sizeof(m->verify.serial), dv.serial);
+            safe_copy(m->verify.region, sizeof(m->verify.region), dv.region);
+            m->verify.iso_ok  = dv.iso_ok != 0;
+            m->verify.verdict = dv.verdict;
+            return;
+        }
+    }
     VerifyProbeFn probe = m->profile->verify.probe;
     bool ok = probe && probe(m, &m->verify);
     if (ok) return;
@@ -491,12 +511,31 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
 }
 
+// Re-inspect one memory-card slot via the host callback (if any), caching the
+// result (block bitmask + validity) on the model. Clears the inspected flag
+// when there's no callback or no path, so the panel falls back to the
+// freshly-formatted/placeholder display.
+static void lm_inspect_memcard(LauncherModel* m, int slot) {
+    if (slot < 0 || slot > 1) return;
+    m->memcard_inspected[slot] = false;
+    m->memcard_valid[slot]     = false;
+    if (!m->memcard_inspect_cb || !m->s.memcard_path[slot][0]) return;
+    RecompLauncherCMemcard mc; memset(&mc, 0, sizeof(mc));
+    if (!m->memcard_inspect_cb(m->s.memcard_path[slot], &mc)) return;
+    uint16_t bits = 0;
+    for (int i = 0; i < 15; ++i) if (mc.block_used[i]) bits |= (uint16_t)(1u << i);
+    m->memcard_blocks_used[slot] = bits;
+    m->memcard_valid[slot]       = mc.valid != 0;
+    m->memcard_inspected[slot]   = true;
+}
+
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path) {
     if (slot < 0 || slot > 1) return;
     safe_copy(m->s.memcard_path[slot], sizeof(m->s.memcard_path[slot]), path ? path : "");
     // A newly browsed-in card is not known to be blank; only
     // launcher_model_new_memcard() re-arms this flag.
     m->memcard_freshly_formatted[slot] = false;
+    lm_inspect_memcard(m, slot);   // refresh real block usage/validity for the new path
 }
 
 void launcher_model_toggle_memcard(LauncherModel* m, int slot) {

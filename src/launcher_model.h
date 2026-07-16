@@ -127,6 +127,14 @@ typedef struct {
     // the panel show "0 / 15 blocks" for a card it just knows is blank,
     // instead of falling back to the representative placeholder count.
     bool        memcard_freshly_formatted[2];
+    bool        memcard_valid[2];      // last inspect: image is a valid 128KB "MC" card
+    bool        memcard_inspected[2];  // a host memcard_inspect callback populated blocks/valid
+
+    // ---- host verification/inspection callbacks (borrowed from GameInfo) ----
+    // When non-NULL these drive the REAL disc verdict + memcard block usage
+    // (re-run on every disc/card change) instead of the placeholder synthesis.
+    int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
+    int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.

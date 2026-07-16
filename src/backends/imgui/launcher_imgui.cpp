@@ -714,10 +714,18 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     const float body_alpha = enabled ? 1.0f : 0.4f;
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
 
-    const bool have_probe = prof && prof->save.probe && prof->save.probe(m, slot);
-    const uint16_t used = have_probe ? m->memcard_blocks_used[slot]
-                          : m->memcard_freshly_formatted[slot] ? (uint16_t)0
-                                     : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
+    // Block usage source, most-authoritative first: a host memcard_inspect
+    // callback (REAL card contents) → a card we just formatted blank (0) → a
+    // SystemProfile SaveProbeFn → a representative placeholder pattern.
+    uint16_t used;
+    if (m->memcard_inspected[slot])
+        used = m->memcard_blocks_used[slot];
+    else if (m->memcard_freshly_formatted[slot])
+        used = 0;
+    else if (prof && prof->save.probe && prof->save.probe(m, slot))
+        used = m->memcard_blocks_used[slot];
+    else
+        used = (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
     // Block count sits right-aligned on its OWN row (the header row's right

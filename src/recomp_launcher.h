@@ -65,6 +65,22 @@ typedef struct RecompLauncherCSettings {
     int  memcard_enabled[2];
 } RecompLauncherCSettings;
 
+// ---- host verification/inspection results (filled by the callbacks below) ----
+// Plain-C structs so a host can implement the callbacks with zero launcher
+// internal types. Mirror what the RmlUi launcher computed inline.
+typedef struct RecompLauncherCDiscVerify {
+    char serial[16];   // e.g. "SCUS-94423"; "" = unknown/unread
+    char region[8];    // e.g. "NTSC-U"; "" = unknown
+    int  iso_ok;       // ISO9660 / system header present
+    int  verdict;      // 0 none, 1 ok, 2 warn, 3 bad
+} RecompLauncherCDiscVerify;
+
+typedef struct RecompLauncherCMemcard {
+    int           valid;          // 128 KB + "MC" magic present
+    int           used_blocks;    // 0..15
+    unsigned char block_used[15]; // per-block: 1 = occupied
+} RecompLauncherCMemcard;
+
 typedef struct RecompLauncherCGameInfo {
     const char*    name;
     const char*    region;
@@ -137,6 +153,16 @@ typedef struct RecompLauncherCGameInfo {
     // Languages (Localization menu shown only when num_languages > 0).
     const char* const* language_labels;  // e.g. {"English","Japanese"}
     int  num_languages;
+
+    // ---- host verification/inspection callbacks (optional; PSX uses them) ----
+    // When set, the launcher shows REAL disc/memcard facts and RE-runs the
+    // callback whenever the user changes the disc / a memory card (matching the
+    // RmlUi launcher). NULL => the launcher falls back to a placeholder verdict
+    // / empty card summary. `disc_verify` gets the current disc path; return 1
+    // if `out` was filled. `memcard_inspect` gets one slot's card path; return
+    // 1 if `out` was filled.
+    int (*disc_verify)(const char* disc_path, RecompLauncherCDiscVerify* out);
+    int (*memcard_inspect)(const char* card_path, RecompLauncherCMemcard* out);
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
