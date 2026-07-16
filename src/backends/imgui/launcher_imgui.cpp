@@ -131,12 +131,15 @@ void draw_crt_background(ImVec2 origin, ImVec2 size) {
     bg->AddRectFilledMultiColor(origin, ImVec2(origin.x + size.x, origin.y + px(90)),
                                 imcol(th.accent, 0.10f), imcol(th.accent, 0.10f),
                                 imcol(th.accent, 0.0f),  imcol(th.accent, 0.0f));
-    // scanlines over everything, very subtle
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-    float step = px(3.0f); if (step < 2.0f) step = 2.0f;
-    ImU32 sl = imcol(th.scanline);
-    for (float y = origin.y; y < origin.y + size.y; y += step)
-        fg->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + size.x, y), sl, 1.0f);
+    // scanlines over everything, very subtle — only for CRT-style themes (the PSX
+    // theme sets scanlines = 0 for a flat, disc-era look).
+    if (th.scanlines) {
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        float step = px(3.0f); if (step < 2.0f) step = 2.0f;
+        ImU32 sl = imcol(th.scanline);
+        for (float y = origin.y; y < origin.y + size.y; y += step)
+            fg->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + size.x, y), sl, 1.0f);
+    }
 }
 
 // Neon glow: concentric rounded rects fading outward behind [min,max].
@@ -857,9 +860,11 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         ImGui::SetWindowFontScale(1.55f);
         ImGui::TextUnformatted(m->game_name);
         ImGui::SetWindowFontScale(1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::TextUnformatted("SUPER NINTENDO");
-        ImGui::PopStyleColor();
+        if (m->platform && m->platform[0]) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextUnformatted(m->platform);
+            ImGui::PopStyleColor();
+        }
     ImGui::EndGroup();
     {   // right-aligned nav button
         const char* label = (m->view == LNG_VIEW_DASHBOARD) ? "Settings" : "< Back";

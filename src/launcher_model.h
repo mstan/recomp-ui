@@ -62,6 +62,7 @@ typedef struct {
     // ---- static game facts (borrowed from RecompLauncherCGameInfo) ----
     const char* game_name;          // e.g. "Mega Man X"
     const char* region;             // e.g. "USA"
+    const char* platform;           // console subtitle, e.g. "PLAYSTATION" (NULL => none)
     bool        widescreen_supported;
     bool        msu1_supported;      // sram-like: show the MSU-1 module when true
     const char* msu1_note;           // borrowed; which patch, shown in the card

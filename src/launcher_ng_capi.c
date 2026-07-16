@@ -39,7 +39,7 @@ int recomp_launcher_run_window(const char* window_title,
     launcher_model_init(&model, io, game, initial_rom);
     launcher_binds_load(&model, game ? game->config_path : NULL);
 
-    LauncherTheme theme = launcher_theme_default();
+    LauncherTheme theme = launcher_theme_by_name(game ? game->theme : NULL);
 
     LngAction act = launcher_backend_run(&plat, &model, &theme);
 

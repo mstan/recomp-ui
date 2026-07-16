@@ -54,6 +54,7 @@ void launcher_model_init(LauncherModel* m,
     if (game) {
         m->game_name            = game->name ? game->name : "Unknown Game";
         m->region               = game->region ? game->region : "";
+        m->platform             = game->platform;   // NULL => no subtitle
         m->widescreen_supported = game->widescreen_supported != 0;
         m->msu1_supported       = game->msu1_supported != 0;
         m->msu1_note            = game->msu1_note;
@@ -68,6 +69,7 @@ void launcher_model_init(LauncherModel* m,
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
+        m->platform     = NULL;
         m->player_count = 2;
     }
 

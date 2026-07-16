@@ -52,6 +52,10 @@ typedef struct RecompLauncherCGameInfo {
     const char*    msu1_note;          /* shown under MSU-1 settings (which patch) */
     const char*    msu1_patch_path;
     const char*    sram_path;          /* "saves/<title>.srm" (exe-anchored) for SAVES panel */
+    const char*    platform;           /* console subtitle under the title, e.g. "PLAYSTATION",
+                                          "SUPER NINTENDO". NULL => no subtitle. */
+    const char*    theme;              /* built-in theme name: "psx" for the PlayStation look,
+                                          NULL/other => default CRT-console theme. */
     /* config.ini path the hotkey editor reads/writes ([KeyMap] section only,
      * surgical edits). NULL => "config.ini" in cwd (exe-anchored by main).
      * Games pass their --config override here so hotkey edits follow it. */

@@ -1,4 +1,5 @@
 // proto_main.c — standalone self-test driver for recomp-ui.
+#include <stdlib.h>
 //
 // Console-agnostic by construction: it fabricates the SAME C ABI structs any
 // consuming host passes (here seeded with a neutral placeholder game), then
@@ -47,6 +48,10 @@ int main(int argc, char** argv) {
     gi.msu1_supported       = 0;
     gi.sram_path            = NULL;
     gi.num_players          = 1;
+    // Preview a theme/subtitle from the environment (getenv, not SDL_getenv, so it
+    // works before SDL is initialized): LNG_THEME=psx, LNG_PLATFORM="PLAYSTATION".
+    gi.theme                = getenv("LNG_THEME");
+    gi.platform             = getenv("LNG_PLATFORM");
 
     // Flip these to preview the 2-player + SRAM module set (what a save-game
     // capable, 2-player host contributes), e.g. LNG_DEMO_FULL=1.
@@ -72,7 +77,7 @@ int main(int argc, char** argv) {
             rom, model.rom_present, model.crc_match, model.sha_match,
             launcher_model_rom_verified(&model), model.rom_size);
 
-    LauncherTheme theme = launcher_theme_default();
+    LauncherTheme theme = launcher_theme_by_name(gi.theme);
 
     char title[128];
     snprintf(title, sizeof(title), "Recomp UI — Launcher [%s]", launcher_backend_name());

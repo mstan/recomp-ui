@@ -39,6 +39,7 @@ typedef struct {
     float row_height;
     float font_body, font_title, font_small;
     float focus_ring_width;
+    int   scanlines;      // 1 = draw the CRT scanline overlay, 0 = flat (e.g. PSX)
 } LauncherTheme;
 
 static inline LngColor lng_rgba(float r, float g, float b, float a) {
@@ -75,7 +76,39 @@ static inline LauncherTheme launcher_theme_default(void) {
     t.row_height = 44.0f;                      // large rows: Steam Deck friendly
     t.font_body  = 18.0f; t.font_title = 34.0f; t.font_small = 13.0f;
     t.focus_ring_width = 2.5f;
+    t.scanlines  = 1;                          // CRT look: scanlines ON
     return t;
+}
+
+// "PlayStation" theme. A cooler, flatter take for PSX titles: deep blue-black
+// ground, ONE clean PlayStation-blue accent for brand + primary action, and NO
+// CRT scanlines (the disc era, not the cartridge/CRT-arcade era). Same layout
+// and design language as the default; only the palette + scanline flag differ.
+static inline LauncherTheme launcher_theme_psx(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.039f, 0.047f, 0.078f, 1.0f); // #0A0C14 blue-black
+    t.background2     = lng_rgba(0.063f, 0.078f, 0.122f, 1.0f); // #10141F lifted center
+    t.panel           = lng_rgba(0.071f, 0.094f, 0.149f, 1.0f); // #121826 card
+    t.panel_hovered   = lng_rgba(0.110f, 0.153f, 0.251f, 1.0f); // #1C2740
+    t.control         = lng_rgba(0.086f, 0.114f, 0.180f, 1.0f); // #161D2E button
+    t.control_hovered = lng_rgba(0.129f, 0.176f, 0.271f, 1.0f); // #212D45
+    t.border          = lng_rgba(0.157f, 0.196f, 0.282f, 1.0f); // #283248 hairline
+    t.accent          = lng_rgba(0.180f, 0.490f, 1.000f, 1.0f); // #2E7DFF PlayStation blue
+    t.accent_dim      = lng_rgba(0.102f, 0.353f, 0.839f, 1.0f); // #1A5AD6 pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.text            = lng_rgba(0.910f, 0.925f, 0.961f, 1.0f); // #E8ECF5
+    t.text_muted      = lng_rgba(0.494f, 0.541f, 0.639f, 1.0f); // #7E8AA3
+    /* good/warn keep their semantic colors; focus stays cyan (reads clearly on blue). */
+    t.scanlines       = 0;                       // flat, no CRT scanlines
+    return t;
+}
+
+// Pick a built-in theme by name ("psx" -> PlayStation; anything else -> default CRT).
+static inline LauncherTheme launcher_theme_by_name(const char* name) {
+    if (name && (name[0] == 'p' || name[0] == 'P') &&
+        (name[1] == 's' || name[1] == 'S'))
+        return launcher_theme_psx();
+    return launcher_theme_default();
 }
 
 #ifdef __cplusplus
