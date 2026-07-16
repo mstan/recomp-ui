@@ -42,7 +42,7 @@ set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 enable_language(CXX)
 
 function(recomp_target_launcher_ui TGT)
-    cmake_parse_arguments(RUI "" "BOXART" "" ${ARGN})
+    cmake_parse_arguments(RUI "" "BOXART;PAD" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -95,9 +95,17 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/fonts/LatoLatin-Bold.ttf
                 $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/snes_pad.tga
+                ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/pad.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
+    # Per-console controller image: overrides the default pad.tga (e.g. a
+    # PlayStation DualShock for PSX). 24-bit TGA, top-left pixel = colorkey.
+    if(RUI_PAD AND EXISTS ${RUI_PAD})
+        add_custom_command(TARGET ${TGT} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${RUI_PAD} $<TARGET_FILE_DIR:${TGT}>/assets/img/pad.tga
+            VERBATIM)
+    endif()
     if(RUI_BOXART AND EXISTS ${RUI_BOXART})
         add_custom_command(TARGET ${TGT} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different

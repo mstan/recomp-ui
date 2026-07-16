@@ -965,9 +965,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     ImGui_ImplOpenGL3_Init("#version 330");
 
     g_boxart = launcher_texture_load(asset("assets/img/boxart.tga").c_str());
-    // snes_pad.tga is 24-bit (no alpha) with a flat backdrop baked in -> key it
+    // pad.tga is 24-bit (no alpha) with a flat backdrop baked in -> key it
     // out so the pad art sits transparently on the panel.
-    g_pad    = launcher_texture_load_colorkey(asset("assets/img/snes_pad.tga").c_str(), 24);
+    g_pad    = launcher_texture_load_colorkey(asset("assets/img/pad.tga").c_str(), 24);
     g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
