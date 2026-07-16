@@ -260,12 +260,18 @@ void eyebrow(const char* s) { eyebrow_tracked(s); }
 // A card: filled + bordered. Hugs its content by default; `fill_h` stretches it
 // to the remaining height (used by the dashboard columns so the layout doesn't
 // leave a big empty gap under short cards).
-bool begin_panel(const char* id, float logical_w = 0.0f, bool fill_h = false) {
+bool begin_panel(const char* id, float logical_w = 0.0f, bool fill_h = false,
+                 bool no_scroll = false) {
     ImGuiChildFlags flags = ImGuiChildFlags_Borders;
     if (!fill_h) flags |= ImGuiChildFlags_AutoResizeY;
-    // NoScrollbar: cards never scroll (sizing keeps content in-bounds).
-    ImGuiWindowFlags wflags = ImGuiWindowFlags_NoScrollbar |
-                              ImGuiWindowFlags_NoScrollWithMouse;
+    // A fill-height card (e.g. GAME) must SCROLL when the window is too short —
+    // otherwise its folded-in content (SAVES) clips out of reach. Only the
+    // fixed-size settings cards, which are sized to fit, suppress the scrollbar
+    // (no_scroll) to avoid a stray bar. Content-hugging cards (AutoResizeY) never
+    // overflow themselves, so scrollable-by-default is a no-op for them.
+    ImGuiWindowFlags wflags = no_scroll ? (ImGuiWindowFlags_NoScrollbar |
+                                           ImGuiWindowFlags_NoScrollWithMouse)
+                                        : 0;
     return ImGui::BeginChild(id, ImVec2(px(logical_w), 0.0f), flags, wflags);
 }
 void end_panel() { ImGui::EndChild(); }
@@ -615,7 +621,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float row_h = px(198.0f);
 
     begin_container("set_l", ImVec2(half, row_h));
-    if (begin_panel("disp", 0, true)) {
+    if (begin_panel("disp", 0, true, /*no_scroll*/true)) {
         eyebrow("DISPLAY");
         row_label("Window scale", th);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
@@ -634,7 +640,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SameLine(0, gap);
 
     begin_container("set_r", ImVec2(0, row_h));
-    if (begin_panel("audio", 0, true)) {
+    if (begin_panel("audio", 0, true, /*no_scroll*/true)) {
         eyebrow("AUDIO");
         row_label("Sample rate", th);
         if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
