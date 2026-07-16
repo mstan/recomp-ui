@@ -65,7 +65,13 @@ typedef struct {
 } VideoSpec;
 
 // ---- Verify module --------------------------------------------------------------
-typedef bool (*VerifyProbeFn)(const LauncherModel* m);   // unimplemented hook (NULL today)
+// Host-provided disc-verdict probe (mode==1 systems, e.g. PSX): given the
+// model (rom_full/rom_present etc.), fill `out` with the real serial/region/
+// ISO-header/verdict facts and return true. Return false (or pass probe ==
+// NULL, the default today) to have launcher_model_set_rom() synthesize a
+// placeholder verdict from available facts instead, so the disc-verdict UI
+// always has something real to render even before a host wires this up.
+typedef bool (*VerifyProbeFn)(const LauncherModel* m, VerifyResult* out);
 typedef struct { int mode; /* 0 rom-hash, 1 disc-verdict */ VerifyProbeFn probe; } VerifySpec;
 
 // ---- Hotkeys module: a bitmask over LngHotkey (launcher_model.h) --------------
@@ -152,7 +158,7 @@ static const SystemProfile kSystemProfilePsx = {
         /*texture_filter*/1, /*antialiasing*/1, /*spu_hq*/1, /*skip_fmv*/1, /*turbo_loads*/1,
         /*bios*/1, /*deadzone*/1,
     },
-    /* verify */  { 1, NULL },    // disc-verdict mode; probe unimplemented (falls back to rom-hash line)
+    /* verify */  { 1, NULL },    // disc-verdict mode; probe==NULL -> synthesized verdict (see launcher_model.c)
     // PSX's real hotkey catalog: the everyday transport controls only. Omits
     // LNG_HK_PAUSE_DIMMED (an SNES-engine-only attract-loop affordance) and
     // the window-resize pair (SNES-only integer-scale window; PSX sizes via
