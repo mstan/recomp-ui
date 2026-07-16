@@ -80,6 +80,18 @@ typedef struct {
     const uint8_t (*known_sha256)[32];
     size_t          num_known_sha256;
 
+    // ---- controller pad-mode caps (PlayStation-style analog/digital) ----
+    bool     pad_mode_supported;    // false => no selector/art swap; generic pad.tga
+    bool     pad_mode_selectable;   // false => selector hidden, mode forced to locked_pad_mode
+    bool     allow_hybrid;          // false => Hybrid option hidden
+    int      locked_pad_mode;       // forced mode when !pad_mode_selectable
+    bool     lock_device;           // true => hide the player controller cards entirely
+
+    // ---- aspect ratio caps ----
+    // bit0 = 4:3 (implied/always), bit1 = 16:9, bit2 = 21:9. 0 => legacy
+    // widescreen_supported bool drives display settings instead.
+    int      aspect_mask;
+
     bool     rom_present;
     char     rom_full[512];          // absolute path (what we hand to the game)
     char     rom_file[128];          // basename for display, e.g. "mmx.sfc"
@@ -143,6 +155,13 @@ void launcher_model_cycle_scale(LauncherModel* m);   // 1..6 wrap
 void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
 
+// ---- aspect ratio (PSX-style; only meaningful when aspect_mask != 0) ----
+// Cycle through the OFFERED aspects only (4:3 always offered; 16:9/21:9 per
+// aspect_mask). No-op when aspect_mask == 0 (legacy widescreen bool games).
+void launcher_model_cycle_aspect(LauncherModel* m);
+const char* launcher_model_aspect_label(const LauncherModel* m);  // "4:3 (Native)" etc.
+bool launcher_model_aspect_offered(const LauncherModel* m, int index);  // 0=4:3,1=16:9,2=21:9
+
 // ---- audio settings ----
 void launcher_model_cycle_freq(LauncherModel* m);    // 32000/44100/48000
 void launcher_model_volume_delta(LauncherModel* m, int delta);  // clamp 0..100
@@ -152,6 +171,10 @@ void launcher_model_toggle_msu1(LauncherModel* m);
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
 
 // ---- controllers ----
+// PSX-style pad mode: 0=Hybrid, 1=Analog, 2=D-Pad. Gated: no-op when
+// !pad_mode_selectable (mode is locked); snaps away from Hybrid when
+// !allow_hybrid.
+void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,

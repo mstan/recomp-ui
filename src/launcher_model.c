@@ -66,6 +66,13 @@ void launcher_model_init(LauncherModel* m,
         m->has_expected_crc     = game->has_expected_crc;
         m->known_sha256         = game->known_sha256;
         m->num_known_sha256     = game->num_known_sha256;
+
+        m->pad_mode_supported   = game->pad_mode_supported != 0;
+        m->pad_mode_selectable  = game->pad_mode_selectable != 0;
+        m->allow_hybrid         = game->allow_hybrid != 0;
+        m->locked_pad_mode      = clampi(game->locked_pad_mode, 0, 2);
+        m->lock_device          = game->lock_device != 0;
+        m->aspect_mask          = game->aspect_mask;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -74,6 +81,26 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+
+    // ---- gate pad_mode per player ----
+    if (m->pad_mode_supported) {
+        for (int p = 0; p < 2; ++p) {
+            if (!m->pad_mode_selectable) {
+                m->s.pad_mode[p] = m->locked_pad_mode;
+            } else if (!m->allow_hybrid && m->s.pad_mode[p] == 0) {
+                m->s.pad_mode[p] = 1;   // snap Hybrid -> Analog
+            }
+        }
+    }
+
+    // ---- validate/clamp aspect_index against the offered set ----
+    if (m->aspect_mask) {
+        int idx = clampi(m->s.aspect_index, 0, 2);
+        // walk down from the requested index to the nearest offered aspect;
+        // 4:3 (bit0, index 0) is always offered so this always terminates.
+        while (idx > 0 && !(m->aspect_mask & (1 << idx))) --idx;
+        m->s.aspect_index = idx;
+    }
 
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
@@ -180,6 +207,30 @@ void launcher_model_toggle_widescreen(LauncherModel* m) {
     m->s.widescreen = !m->s.widescreen;
 }
 
+bool launcher_model_aspect_offered(const LauncherModel* m, int index) {
+    if (index == 0) return true;   // 4:3 is always implied/available
+    if (index == 1) return (m->aspect_mask & 2) != 0;
+    if (index == 2) return (m->aspect_mask & 4) != 0;
+    return false;
+}
+
+void launcher_model_cycle_aspect(LauncherModel* m) {
+    if (!m->aspect_mask) return;   // gated: legacy widescreen-bool games no-op
+    int idx = clampi(m->s.aspect_index, 0, 2);
+    for (int i = 0; i < 3; ++i) {
+        idx = (idx + 1) % 3;
+        if (launcher_model_aspect_offered(m, idx)) { m->s.aspect_index = idx; return; }
+    }
+}
+
+const char* launcher_model_aspect_label(const LauncherModel* m) {
+    static const char* kLabels[3] = {
+        "4:3 (Native)", "16:9 (Widescreen)", "21:9 (Ultrawide)"
+    };
+    int idx = clampi(m->s.aspect_index, 0, 2);
+    return kLabels[idx];
+}
+
 void launcher_model_cycle_freq(LauncherModel* m) {
     int idx = 0;
     for (int i = 0; i < kFreqCount; ++i)
@@ -198,6 +249,14 @@ void launcher_model_toggle_msu1(LauncherModel* m) {
 
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir) {
     safe_copy(m->s.msu1_dir, sizeof(m->s.msu1_dir), dir ? dir : "");
+}
+
+void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
+    if (!m->pad_mode_supported || !m->pad_mode_selectable) return;   // gated/locked
+    player = clampi(player, 0, 1);
+    mode = clampi(mode, 0, 2);
+    if (mode == 0 && !m->allow_hybrid) mode = 1;   // Hybrid hidden -> snap to Analog
+    m->s.pad_mode[player] = mode;
 }
 
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {

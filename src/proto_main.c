@@ -36,6 +36,9 @@ int main(int argc, char** argv) {
     s.player_src[0]  = 1;      // keyboard
     s.player_src[1]  = 0;      // none
     s.skip_launcher  = 0;
+    s.pad_mode[0]    = 0;      // Hybrid
+    s.pad_mode[1]    = 0;
+    s.aspect_index   = 1;      // 16:9
 
     // Neutral placeholder game: no CRC/SHA pinning, no MSU-1, no SRAM. Just
     // enough to exercise every panel that doesn't require real game facts.
@@ -66,6 +69,23 @@ int main(int argc, char** argv) {
     if (demo && demo[0] == '2') {   // 2-player variant for layout testing
         gi.num_players = 2;
         gi.sram_path   = "saves/save.srm";
+    }
+
+    // Preview the PSX-style pad-mode selector + swapping controller art:
+    // LNG_PADMODE=1 -> selectable 3-way selector (Hybrid/Analog/D-Pad), 1 player.
+    const char* padmode = getenv("LNG_PADMODE");
+    if (padmode && padmode[0] == '1') {
+        gi.pad_mode_supported  = 1;
+        gi.pad_mode_selectable = 1;
+        gi.allow_hybrid        = 1;
+        gi.num_players         = 1;
+    }
+    // Preview the PSX-style aspect-ratio cycle control: LNG_ASPECT=1 -> offer
+    // 4:3 + 16:9 + 21:9 (widescreen_supported is irrelevant once aspect_mask
+    // is set — the model falls back to it only when aspect_mask == 0).
+    const char* aspect = getenv("LNG_ASPECT");
+    if (aspect && aspect[0] == '1') {
+        gi.aspect_mask = 0x7;   // bit0 4:3 | bit1 16:9 | bit2 21:9
     }
 
     LauncherModel model;

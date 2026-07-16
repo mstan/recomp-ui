@@ -46,7 +46,7 @@ float  px(float logical) { return logical * g_scale; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
-LauncherTexture g_boxart, g_pad, g_brand;
+LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand;
 ImTextureID tid(const LauncherTexture& t) { return (ImTextureID)(intptr_t)t.id; }
 
 LauncherPad g_pads[LNG_MAX_PADS];   // live gamepad list (repolled every frame)
@@ -494,6 +494,35 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     end_panel();
 }
 
+// PSX-style 3-way pad-mode selector: Hybrid / Analog / D-Pad segmented row.
+// Caller only draws this when pad_mode_supported && pad_mode_selectable (a
+// locked mode draws nothing — there's nothing to pick). The Hybrid segment is
+// itself hidden when !allow_hybrid, matching the real RmlUi PSX launcher.
+void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
+    struct Seg { int mode; const char* label; };
+    Seg segs[3];
+    int n = 0;
+    if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
+    segs[n++] = { 1, "Analog" };
+    segs[n++] = { 2, "D-Pad" };
+
+    const float gap = px(4.0f);
+    const float seg_w = (w - gap * (n - 1)) / n;
+    for (int i = 0; i < n; ++i) {
+        if (i) ImGui::SameLine(0, gap);
+        bool sel = m->s.pad_mode[p] == segs[i].mode;
+        ImGui::PushID(i);
+        ImGui::PushStyleColor(ImGuiCol_Button, sel ? col(th.accent) : col(th.control));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sel ? col(th.accent) : col(th.control_hovered));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(th.accent));
+        ImGui::PushStyleColor(ImGuiCol_Text, sel ? col(th.accent_text) : col(th.text));
+        if (ImGui::Button(segs[i].label, ImVec2(seg_w, px(28))))
+            launcher_model_set_pad_mode(m, p, segs[i].mode);
+        ImGui::PopStyleColor(4);
+        ImGui::PopID();
+    }
+}
+
 // Each player is its OWN self-contained card ("PLAYER 1" as its eyebrow), not a
 // floating column inside one big CONTROLLERS box. A 1-player game shows a
 // single card (no wasted width); a 2-player game shows two identical cards side
@@ -509,13 +538,25 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     const float inner = ImGui::GetContentRegionAvail().x;
     const float cw    = inner;   // controls span the card => flush by construction
 
-    // pad art centered in the card
+    // pad art centered in the card: PSX-style games swap analog/digital art
+    // with the mode; consoles without pad modes (SNES) always show the
+    // generic pad.tga.
     {
-        const float aw = px(96);
+        const bool digital = m->pad_mode_supported && m->s.pad_mode[p] == 2;
+        const LauncherTexture& art = m->pad_mode_supported
+            ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
+        const float aw = px(120);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - aw) * 0.5f);
-        image_fit(g_pad, 96, 57);
+        image_fit(art, 120, 70);
     }
     ImGui::Dummy(ImVec2(0, px(6)));
+
+    // Pad-mode selector: only when the game supports pad modes AND the mode
+    // is user-selectable (not locked to a single mode).
+    if (m->pad_mode_supported && m->pad_mode_selectable) {
+        pad_mode_selector(m, th, p, cw);
+        ImGui::Dummy(ImVec2(0, px(6)));
+    }
 
     ImGui::SetNextItemWidth(cw);
     if (ImGui::BeginCombo("##src", launcher_model_player_src_label(m, p))) {
@@ -554,6 +595,7 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 // Lays out the player cards: one card for a 1-player game, two side-by-side
 // for a 2-player game. Driven by the model, never hardcoded.
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
+    if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
     const int   n   = (m->player_count >= 2) ? 2 : 1;
     const float gap = px(th.spacing_md);
     const float availw = ImGui::GetContentRegionAvail().x;
@@ -629,7 +671,11 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
         row_label("Linear filtering", th);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
-        if (m->widescreen_supported) {   // module: only for games that support it
+        if (m->aspect_mask) {   // PSX-style: 4:3/16:9/21:9 cycle (supersedes the legacy checkbox)
+            row_label("Aspect ratio", th);
+            if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+                launcher_model_cycle_aspect(m);
+        } else if (m->widescreen_supported) {   // legacy module: only for games that support it
             row_label("Widescreen 16:9", th);
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
@@ -974,6 +1020,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // pad.tga is 24-bit (no alpha) with a flat backdrop baked in -> key it
     // out so the pad art sits transparently on the panel.
     g_pad    = launcher_texture_load_colorkey(asset("assets/img/pad.tga").c_str(), 24);
+    // pad_analog.tga / pad_digital.tga are already 32-bit with real alpha (no
+    // colorkey backdrop) -> the plain alpha-respecting loader, not colorkey.
+    g_pad_analog  = launcher_texture_load(asset("assets/img/pad_analog.tga").c_str());
+    g_pad_digital = launcher_texture_load(asset("assets/img/pad_digital.tga").c_str());
     g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
@@ -1022,6 +1072,8 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
     launcher_texture_free(&g_boxart);
     launcher_texture_free(&g_pad);
+    launcher_texture_free(&g_pad_analog);
+    launcher_texture_free(&g_pad_digital);
     launcher_texture_free(&g_brand);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();

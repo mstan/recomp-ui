@@ -96,6 +96,7 @@ function(recomp_target_launcher_ui TGT)
                 $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/pad.tga
+                ${RUI_ASSETS}/img/pad_analog.tga ${RUI_ASSETS}/img/pad_digital.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a

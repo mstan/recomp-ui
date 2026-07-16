@@ -33,6 +33,8 @@ typedef struct RecompLauncherCSettings {
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool
     char msu1_dir[512];
+    int  pad_mode[2];       // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital)
+    int  aspect_index;      // 0 = 4:3, 1 = 16:9, 2 = 21:9
 } RecompLauncherCSettings;
 
 typedef struct RecompLauncherCGameInfo {
@@ -60,6 +62,18 @@ typedef struct RecompLauncherCGameInfo {
      * surgical edits). NULL => "config.ini" in cwd (exe-anchored by main).
      * Games pass their --config override here so hotkey edits follow it. */
     const char*    config_path;
+
+    // Controller pad-mode (PlayStation-style analog/digital emulation). Consoles
+    // without pad modes (SNES) leave pad_mode_supported = 0 and the selector + the
+    // analog/digital art are never shown (the generic pad.tga is used).
+    int            pad_mode_supported;    // 0 = no pad-mode UI at all; 1 = show the selector + swapping art
+    int            pad_mode_selectable;   // 0 = hide selector, force locked_pad_mode (game.lock_mode)
+    int            allow_hybrid;          // 0 = hide the Hybrid option
+    int            locked_pad_mode;       // forced mode when !pad_mode_selectable
+    int            lock_device;           // 1 = hide the player controller cards entirely (fixed pad)
+    // Aspect ratios offered. bit0 = 4:3 (implied/always), bit1 = 16:9, bit2 = 21:9.
+    // 0 = fall back to the legacy widescreen_supported bool (SNES: 16:9 toggle).
+    int            aspect_mask;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
