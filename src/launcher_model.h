@@ -64,6 +64,19 @@ typedef enum {
     LNG_HK_COUNT
 } LngHotkey;
 
+// Disc-verdict result (SystemProfile.verify.mode == 1 systems, e.g. PSX).
+// Populated by the profile's VerifyProbeFn (launcher_system.h) — or
+// synthesized from available facts when the probe is NULL — every time the
+// ROM/disc path changes (see launcher_model_set_rom() in launcher_model.c).
+// Kept intentionally minimal: just enough for the checklist UI (Serial /
+// Region / ISO header) plus one overall verdict panels key their icon on.
+typedef struct {
+    char serial[16];   // e.g. "SCUS-94423"; "" => unknown/unread
+    char region[8];    // e.g. "NTSC-U"; "" => unknown/unread
+    bool iso_ok;        // ISO9660/system header sanity check passed
+    int  verdict;       // 0 none, 1 ok, 2 warn, 3 bad
+} VerifyResult;
+
 typedef struct {
     // ---- static game facts (borrowed from RecompLauncherCGameInfo) ----
     const char* game_name;          // e.g. "Mega Man X"
@@ -133,6 +146,11 @@ typedef struct {
     char     rom_sha_str[24];        // "9c2e…d41f"
     bool     crc_match;
     bool     sha_match;
+
+    // ---- disc-verdict result (verify.mode==1 systems only; PSX today) ----
+    // See VerifyResult above. Untouched (all-zero) for verify.mode==0 systems
+    // (SNES) — panels branch on m->profile->verify.mode, never on this alone.
+    VerifyResult verify;
 
     // ---- editable settings (working copy of the C ABI struct) ----
     RecompLauncherCSettings s;

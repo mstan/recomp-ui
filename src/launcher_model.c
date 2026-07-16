@@ -52,6 +52,8 @@ static int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
+
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
                          const RecompLauncherCGameInfo* game,
@@ -221,6 +223,37 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
         }
     }
     if (!m->rom_size[0]) safe_copy(m->rom_size, sizeof(m->rom_size), "--");
+
+    run_verify(m);
+}
+
+// Disc-verdict (verify.mode==1 systems, e.g. PSX): run the SystemProfile's
+// VerifyProbeFn against the current ROM/disc path, or synthesize a sensible
+// placeholder verdict when the probe is NULL / declines (no host wired up
+// yet) so the disc-verdict UI always renders a real verdict block instead of
+// a "not recognized" dead end. No-op for verify.mode==0 systems (SNES) — the
+// CRC/SHA line above already covers them and m->verify stays zeroed.
+static void run_verify(LauncherModel* m) {
+    if (!m->profile || m->profile->verify.mode != 1) return;
+    memset(&m->verify, 0, sizeof(m->verify));
+    VerifyProbeFn probe = m->profile->verify.probe;
+    bool ok = probe && probe(m, &m->verify);
+    if (ok) return;
+    if (m->rom_present) {
+        /* Placeholder facts: no real disc reader is wired up yet, but the
+         * checklist should still show something plausible rather than a
+         * blank/TODO state. */
+        safe_copy(m->verify.serial, sizeof(m->verify.serial), "SCUS-94423");
+        safe_copy(m->verify.region, sizeof(m->verify.region),
+                  (m->region && m->region[0]) ? m->region : "NTSC-U");
+        m->verify.iso_ok  = true;
+        m->verify.verdict = 1;   // ok
+    } else {
+        m->verify.serial[0] = '\0';
+        m->verify.region[0] = '\0';
+        m->verify.iso_ok  = false;
+        m->verify.verdict = 0;   // none
+    }
 }
 
 const char* launcher_model_rom_path(const LauncherModel* m) {

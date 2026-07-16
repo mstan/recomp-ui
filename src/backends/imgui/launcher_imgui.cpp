@@ -50,6 +50,9 @@ ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand;
+// Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
+// VerifyResult.verdict (0 none,1 ok,2 warn,3 bad); see draw_verdict_block().
+LauncherTexture g_verdict_ok, g_verdict_warn, g_verdict_bad, g_verdict_none;
 ImTextureID tid(const LauncherTexture& t) { return (ImTextureID)(intptr_t)t.id; }
 
 LauncherPad g_pads[LNG_MAX_PADS];   // live gamepad list (repolled every frame)
@@ -445,10 +448,76 @@ void state_mark(bool ok, const LauncherTheme& th) {
     ImGui::Dummy(ImVec2(s, s));
 }
 
+// Pick the verdict icon for VerifyResult.verdict (0 none,1 ok,2 warn,3 bad).
+const LauncherTexture& verdict_texture(int verdict) {
+    switch (verdict) {
+        case 1:  return g_verdict_ok;
+        case 2:  return g_verdict_warn;
+        case 3:  return g_verdict_bad;
+        default: return g_verdict_none;
+    }
+}
+
+// Disc-verdict block (verify.mode==1 systems, e.g. PSX): a verdict icon +
+// headline, followed by a Serial/Region/ISO-header checklist. Replaces the
+// CRC/SHA "verified" line that mode==0 (cart/ROM-hash) systems draw instead
+// (see draw_game_panel) — same slot in the card, different module. Reads
+// m->verify, populated by launcher_model_set_rom()/run_verify() in
+// launcher_model.c (real probe when the SystemProfile has one, a synthesized
+// placeholder verdict otherwise).
+void draw_verdict_block(const LauncherModel* m, const LauncherTheme& th, float availw) {
+    const VerifyResult& v = m->verify;
+    const char* headline =
+        v.verdict == 1 ? "Disc verified" :
+        v.verdict == 2 ? "Disc verified (warnings)" :
+        v.verdict == 3 ? "Disc verification failed" :
+                          "Disc not recognized";
+    // th has no dedicated "bad"/error slot (only good/warn) — reuse warn for
+    // the warn AND none cases (both are cautionary, matching the ROM-hash
+    // line's existing amber-for-"not recognized" convention) and fall back to
+    // a plain red only for the explicit "bad" verdict.
+    LngColor headline_color = (v.verdict == 1) ? th.good
+                              : (v.verdict == 3) ? lng_rgba(0.945f, 0.322f, 0.322f, 1.0f)
+                              : th.warn;
+
+    const LauncherTexture& icon = verdict_texture(v.verdict);
+    float ih = ImGui::GetTextLineHeight() * 1.35f;
+    float iw = (icon.id && icon.h > 0) ? ih * ((float)icon.w / (float)icon.h) : ih;
+    float w = iw + px(6) + ImGui::CalcTextSize(headline).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availw - w) * 0.5f);
+    if (icon.id) {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddImage(tid(icon), p, ImVec2(p.x + iw, p.y + ih));
+        ImGui::Dummy(ImVec2(iw, ih));
+    } else {
+        state_mark(v.verdict == 1, th);   // icon failed to load: vector fallback
+    }
+    ImGui::SameLine(0, px(6));
+    ImGui::TextColored(col(headline_color), "%s", headline);
+    ImGui::Dummy(ImVec2(0, px(8)));
+
+    // Checklist: Serial / Region / ISO header, each with its own pass/fail
+    // mark, derived straight from the minimal VerifyResult fields.
+    if (ImGui::BeginTable("verdict_checklist", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
+        ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("m", ImGuiTableColumnFlags_WidthFixed, px(28));
+        kv_row("Serial",     v.serial[0] ? v.serial : "\xE2\x80\x94", th, true, v.serial[0] != '\0');
+        kv_row("Region",     v.region[0] ? v.region : "\xE2\x80\x94", th, true, v.region[0] != '\0');
+        kv_row("ISO header", v.iso_ok ? "OK" : "Mismatch",             th, true, v.iso_ok);
+        ImGui::EndTable();
+    }
+}
+
 void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = false) {
     if (!begin_panel("game", 0, fill_h)) { end_panel(); return; }
     eyebrow("GAME");
     const float availw = ImGui::GetContentRegionAvail().x;
+
+    // Verify module: verify.mode==1 systems (PSX) render a disc-verdict block
+    // (icon + Serial/Region/ISO checklist) here instead of the CRC/SHA line;
+    // mode==0 systems (SNES/cart) keep the CRC/SHA line exactly as before.
+    const bool disc_verdict = m->profile && m->profile->verify.mode == 1;
 
     // Box art on top (centered), everything else BELOW it. Height is derived
     // from the space actually left after the metadata + button, so the art is
@@ -457,6 +526,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // Reserve space for everything under the art: verified line + 2 meta rows
         // + Change ROM, plus the SAVES block when this game has battery SRAM.
         float reserve = px(198.0f);
+        if (disc_verdict) reserve += px(96.0f);           // taller: icon+headline + 3-row checklist
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
         if (art_h > px(280.0f)) art_h = px(280.0f);
@@ -466,9 +536,11 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     ImGui::Dummy(ImVec2(0, px(10)));
 
     // Region + verification state, centered under the art.
-    const bool verified = launcher_model_rom_verified(m);
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
-    {
+    if (disc_verdict) {
+        draw_verdict_block(m, th, availw);
+    } else {
+        const bool verified = launcher_model_rom_verified(m);
         char line[64];
         if (!m->rom_present)   snprintf(line, sizeof(line), "No %s loaded", noun);
         else if (verified)     snprintf(line, sizeof(line), "%s verified", noun);
@@ -1385,6 +1457,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_pad_analog  = launcher_texture_load(asset("assets/img/pad_analog.tga").c_str());
     g_pad_digital = launcher_texture_load(asset("assets/img/pad_digital.tga").c_str());
     g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
+    g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
+    g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());
+    g_verdict_bad   = launcher_texture_load(asset("assets/img/verdict_bad.tga").c_str());
+    g_verdict_none  = launcher_texture_load(asset("assets/img/verdict_none.tga").c_str());
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
     float applied_scale = 0.0f;
@@ -1435,6 +1511,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_pad_analog);
     launcher_texture_free(&g_pad_digital);
     launcher_texture_free(&g_brand);
+    launcher_texture_free(&g_verdict_ok);
+    launcher_texture_free(&g_verdict_warn);
+    launcher_texture_free(&g_verdict_bad);
+    launcher_texture_free(&g_verdict_none);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();
