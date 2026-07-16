@@ -976,9 +976,10 @@ void panel_system_draw(LauncherModel* m, const LauncherTheme* th) {
 }
 
 // Hotkeys module: the universal emulator-hotkeys catalog, opt-in per system
-// via SystemProfile.hotkeys_mask (both snes and psx opt into every catalog
-// entry today — LNG_HOTKEYS_ALL — so the grid is unchanged; a future system
-// with a narrower mask would simply see fewer rows).
+// via SystemProfile.hotkeys_mask. SNES opts into LNG_HOTKEYS_ALL — the full
+// catalog, grid byte-identical to the original hardcoded panel. PSX opts into
+// a narrower everyday-transport subset (launcher_system.h), so its grid packs
+// only the set bits — no holes, columns re-wrap around the smaller count.
 void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("HOTKEYS");
     const SystemProfile* prof = (const SystemProfile*)m->profile;

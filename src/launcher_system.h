@@ -69,9 +69,9 @@ typedef bool (*VerifyProbeFn)(const LauncherModel* m);   // unimplemented hook (
 typedef struct { int mode; /* 0 rom-hash, 1 disc-verdict */ VerifyProbeFn probe; } VerifySpec;
 
 // ---- Hotkeys module: a bitmask over LngHotkey (launcher_model.h) --------------
-// LNG_HK_COUNT is 11 today; ALL bits set = every catalog hotkey opted in
-// (today's actual behavior for every system — the hotkeys panel shows the
-// full catalog regardless of console).
+// LNG_HK_COUNT is 11 today; ALL bits set = every catalog hotkey opted in.
+// SNES uses this (full legacy catalog, byte-identical to the original single
+// hardcoded panel); PSX opts into a tailored subset instead — see its row.
 #define LNG_HOTKEYS_ALL 0x7FFu
 
 typedef struct SystemProfile {
@@ -153,7 +153,19 @@ static const SystemProfile kSystemProfilePsx = {
         /*bios*/1, /*deadzone*/1,
     },
     /* verify */  { 1, NULL },    // disc-verdict mode; probe unimplemented (falls back to rom-hash line)
-    /* hotkeys_mask */ LNG_HOTKEYS_ALL,
+    // PSX's real hotkey catalog: the everyday transport controls only. Omits
+    // LNG_HK_PAUSE_DIMMED (an SNES-engine-only attract-loop affordance) and
+    // the window-resize pair (SNES-only integer-scale window; PSX sizes via
+    // window_scale + fullscreen instead) — see requirement in the hotkey
+    // catalog task. Everything else in the universal LngHotkey catalog applies.
+    /* hotkeys_mask */ (uint32_t)((1u << LNG_HK_FULLSCREEN)     |
+                                   (1u << LNG_HK_RESET)          |
+                                   (1u << LNG_HK_PAUSE)          |
+                                   (1u << LNG_HK_TURBO)          |
+                                   (1u << LNG_HK_VOLUME_UP)      |
+                                   (1u << LNG_HK_VOLUME_DOWN)    |
+                                   (1u << LNG_HK_DISPLAY_PERF)   |
+                                   (1u << LNG_HK_TOGGLE_RENDERER)),
     /* panels_dashboard  */ kPanelsDashboardCommon,
     /* panels_settings   */ kPanelsSettingsPsx,
     /* panels_controller */ kPanelsControllerCommon,
