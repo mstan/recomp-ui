@@ -1,0 +1,14 @@
+build/
+build*/
+*.dll
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.ninja
+.ninja_log
+recompui_test.png
