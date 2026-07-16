@@ -35,3 +35,21 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
     snprintf(out_path, out_cap, "%s", sel);
     return true;
 }
+
+bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
+                        const char* desc, char* out_path, size_t out_cap) {
+    if (!out_path || out_cap == 0) return false;
+    out_path[0] = '\0';
+
+    const char* sel = tinyfd_openFileDialog(
+        title ? title : "Select file",
+        "",
+        num_patterns > 0 ? num_patterns : 0,
+        num_patterns > 0 ? patterns : NULL,
+        desc,
+        0);
+    if (!sel || !sel[0]) return false;
+
+    snprintf(out_path, out_cap, "%s", sel);
+    return true;
+}

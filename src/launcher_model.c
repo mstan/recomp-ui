@@ -15,6 +15,12 @@
 static const int kFreqTable[] = { 32000, 44100, 48000 };
 static const int kFreqCount   = (int)(sizeof(kFreqTable) / sizeof(kFreqTable[0]));
 
+static const int kWindowWidths[]    = { 960, 1280, 1600, 1920 };
+static const int kWindowWidthCount  = (int)(sizeof(kWindowWidths) / sizeof(kWindowWidths[0]));
+static const int kInterpFpsTable[]  = { 0, 90, 120, 144, 165, 240 };
+static const int kInterpFpsCount    = (int)(sizeof(kInterpFpsTable) / sizeof(kInterpFpsTable[0]));
+static const char* kScreenKindNames[4] = { "Raw", "CRT", "Composite", "Trinitron" };
+
 static const char* kButtonNames[LNG_BTN_COUNT] = {
     "Up", "Down", "Left", "Right", "A", "B", "X", "Y",
     "L", "R", "Start", "Select"
@@ -73,11 +79,29 @@ void launcher_model_init(LauncherModel* m,
         m->locked_pad_mode      = clampi(game->locked_pad_mode, 0, 2);
         m->lock_device          = game->lock_device != 0;
         m->aspect_mask          = game->aspect_mask;
+
+        m->has_window_size      = game->has_window_size != 0;
+        m->has_renderer         = game->has_renderer != 0;
+        m->has_supersampling    = game->has_supersampling != 0;
+        m->has_antialiasing     = game->has_antialiasing != 0;
+        m->has_texture_filter   = game->has_texture_filter != 0;
+        m->has_screen_kind      = game->has_screen_kind != 0;
+        m->has_frame_interp     = game->has_frame_interp != 0;
+        m->has_spu_hq           = game->has_spu_hq != 0;
+        m->has_skip_fmv         = game->has_skip_fmv != 0;
+        m->has_turbo_loads      = game->has_turbo_loads != 0;
+        m->has_fullscreen_toggle = game->has_fullscreen_toggle != 0;
+        m->has_bios             = game->has_bios != 0;
+        m->has_deadzone_pct     = game->has_deadzone_pct != 0;
+        m->rom_noun             = game->rom_noun ? game->rom_noun : "ROM";
+        m->language_labels      = game->language_labels;
+        m->num_languages        = game->num_languages;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
         m->platform     = NULL;
         m->player_count = 2;
+        m->rom_noun     = "ROM";
     }
 
     if (io) m->s = *io;
@@ -100,6 +124,30 @@ void launcher_model_init(LauncherModel* m,
         // 4:3 (bit0, index 0) is always offered so this always terminates.
         while (idx > 0 && !(m->aspect_mask & (1 << idx))) --idx;
         m->s.aspect_index = idx;
+    }
+
+    // ---- clamp/seed the deeper PSX-style settings against their own ranges ----
+    if (m->has_window_size) {
+        int ok = 0;
+        for (int i = 0; i < kWindowWidthCount; ++i)
+            if (kWindowWidths[i] == m->s.window_width) { ok = 1; break; }
+        if (!ok) m->s.window_width = kWindowWidths[0];
+    }
+    if (m->has_supersampling) m->s.supersampling = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
+    if (m->has_screen_kind)   m->s.screen_kind   = clampi(m->s.screen_kind, 0, 3);
+    if (m->has_texture_filter) m->s.texture_filter = m->s.texture_filter ? 1 : 0;
+    if (m->has_renderer)      m->s.renderer      = m->s.renderer ? 1 : 0;
+    if (m->has_frame_interp) {
+        int ok = 0;
+        for (int i = 0; i < kInterpFpsCount; ++i)
+            if (kInterpFpsTable[i] == m->s.frame_interp_fps) { ok = 1; break; }
+        if (!ok) m->s.frame_interp_fps = 0;
+    }
+    if (m->num_languages > 0)
+        m->s.language_index = clampi(m->s.language_index, 0, m->num_languages - 1);
+    if (m->has_deadzone_pct) {
+        m->s.deadzone[0] = clampi((m->s.deadzone[0] / 5) * 5, 0, 50);
+        m->s.deadzone[1] = m->s.deadzone[0];
     }
 
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
@@ -240,6 +288,130 @@ void launcher_model_cycle_freq(LauncherModel* m) {
 
 void launcher_model_volume_delta(LauncherModel* m, int delta) {
     m->s.volume = clampi(m->s.volume + delta, 0, 100);
+}
+
+// ---- deeper PSX-style settings ---------------------------------------------
+
+void launcher_model_cycle_window_size(LauncherModel* m) {
+    int idx = 0;
+    for (int i = 0; i < kWindowWidthCount; ++i)
+        if (kWindowWidths[i] == m->s.window_width) { idx = i; break; }
+    m->s.window_width = kWindowWidths[(idx + 1) % kWindowWidthCount];
+}
+
+const char* launcher_model_window_size_label(const LauncherModel* m) {
+    static char buf[32];
+    int w = m->s.window_width > 0 ? m->s.window_width : kWindowWidths[0];
+    int aspect = clampi(m->s.aspect_index, 0, 2);
+    int h = (aspect == 1) ? (w * 9 / 16) : (aspect == 2) ? (w * 9 / 21) : (w * 3 / 4);
+    snprintf(buf, sizeof(buf), "%d \xC3\x97 %d", w, h);   // "×" (U+00D7)
+    return buf;
+}
+
+void launcher_model_toggle_renderer(LauncherModel* m) {
+    m->s.renderer = !m->s.renderer;
+}
+
+const char* launcher_model_renderer_label(const LauncherModel* m) {
+    return m->s.renderer ? "OpenGL" : "Software";
+}
+
+void launcher_model_cycle_supersampling(LauncherModel* m) {
+    int v = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
+    m->s.supersampling = (v % 4) + 1;
+}
+
+const char* launcher_model_supersampling_label(const LauncherModel* m) {
+    static char buf[8];
+    int v = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
+    snprintf(buf, sizeof(buf), "%dx", v);
+    return buf;
+}
+
+void launcher_model_toggle_aa(LauncherModel* m) {
+    m->s.antialiasing = !m->s.antialiasing;
+}
+
+void launcher_model_toggle_texture_filter(LauncherModel* m) {
+    m->s.texture_filter = !m->s.texture_filter;
+}
+
+const char* launcher_model_texture_filter_label(const LauncherModel* m) {
+    return m->s.texture_filter ? "Bilinear" : "Nearest";
+}
+
+void launcher_model_cycle_screen_kind(LauncherModel* m) {
+    m->s.screen_kind = (clampi(m->s.screen_kind, 0, 3) + 1) % 4;
+}
+
+const char* launcher_model_screen_kind_label(const LauncherModel* m) {
+    return kScreenKindNames[clampi(m->s.screen_kind, 0, 3)];
+}
+
+void launcher_model_toggle_frame_interp(LauncherModel* m) {
+    m->s.frame_interp = !m->s.frame_interp;
+}
+
+void launcher_model_cycle_interp_fps(LauncherModel* m) {
+    int idx = 0;
+    for (int i = 0; i < kInterpFpsCount; ++i)
+        if (kInterpFpsTable[i] == m->s.frame_interp_fps) { idx = i; break; }
+    m->s.frame_interp_fps = kInterpFpsTable[(idx + 1) % kInterpFpsCount];
+}
+
+const char* launcher_model_interp_fps_label(const LauncherModel* m) {
+    static char buf[24];
+    if (m->s.frame_interp_fps == 0) return "Display refresh";
+    snprintf(buf, sizeof(buf), "%d fps", m->s.frame_interp_fps);
+    return buf;
+}
+
+void launcher_model_toggle_spu_hq(LauncherModel* m) {
+    m->s.spu_hq = !m->s.spu_hq;
+}
+
+void launcher_model_toggle_skip_fmv(LauncherModel* m) {
+    m->s.auto_skip_fmv = !m->s.auto_skip_fmv;
+}
+
+void launcher_model_toggle_turbo_loads(LauncherModel* m) {
+    m->s.turbo_loads = !m->s.turbo_loads;
+}
+
+void launcher_model_toggle_fullscreen(LauncherModel* m) {
+    // Simple on/off PSX row: reuses the existing tri-state `fullscreen` field
+    // (0 off / 1 borderless / 2 exclusive) but only ever toggles between 0/1 —
+    // SNES's own fullscreen path (which offers exclusive mode) is untouched.
+    m->s.fullscreen = m->s.fullscreen ? 0 : 1;
+}
+
+void launcher_model_cycle_language(LauncherModel* m) {
+    if (m->num_languages <= 0) return;
+    m->s.language_index = (m->s.language_index + 1) % m->num_languages;
+}
+
+const char* launcher_model_language_label(const LauncherModel* m) {
+    if (m->num_languages <= 0 || !m->language_labels) return "";
+    int idx = clampi(m->s.language_index, 0, m->num_languages - 1);
+    return m->language_labels[idx] ? m->language_labels[idx] : "";
+}
+
+void launcher_model_cycle_deadzone_pct(LauncherModel* m) {
+    int v = clampi(m->s.deadzone[0], 0, 50);
+    v = ((v / 5) + 1) * 5;
+    if (v > 50) v = 0;
+    m->s.deadzone[0] = v;
+    m->s.deadzone[1] = v;
+}
+
+const char* launcher_model_deadzone_pct_label(const LauncherModel* m) {
+    static char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", clampi(m->s.deadzone[0], 0, 50));
+    return buf;
+}
+
+void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
+    safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
 }
 
 void launcher_model_toggle_msu1(LauncherModel* m) {

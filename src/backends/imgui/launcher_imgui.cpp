@@ -440,10 +440,12 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 
     // Region + verification state, centered under the art.
     const bool verified = launcher_model_rom_verified(m);
+    const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
     {
-        const char* line = !m->rom_present ? "No ROM loaded"
-                          : verified        ? "ROM verified"
-                                            : "ROM not recognized";
+        char line[64];
+        if (!m->rom_present)   snprintf(line, sizeof(line), "No %s loaded", noun);
+        else if (verified)     snprintf(line, sizeof(line), "%s verified", noun);
+        else                   snprintf(line, sizeof(line), "%s not recognized", noun);
         float w = ImGui::GetTextLineHeight() + px(6) + ImGui::CalcTextSize(line).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availw - w) * 0.5f);
         state_mark(verified, th);
@@ -463,7 +465,9 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         ImGui::EndTable();
     }
     ImGui::Dummy(ImVec2(0, px(12)));
-    if (ImGui::Button("Change ROM", ImVec2(availw, px(34))))
+    char change_label[32];
+    snprintf(change_label, sizeof(change_label), "Change %s", noun);
+    if (ImGui::Button(change_label, ImVec2(availw, px(34))))
         if (launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf)))
             launcher_model_set_rom(m, g_pick_buf);
 
@@ -652,19 +656,21 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
     return out;
 }
 
-void draw_settings(LauncherModel* m, const LauncherTheme& th) {
-    // Row 1: DISPLAY | AUDIO share the top band. Both cards are pinned to the
-    // SAME fixed height so the row reads as one balanced band (AUDIO no longer
-    // grows taller than DISPLAY and forces the view to scroll).
-    const float gap  = px(th.spacing_md);
-    const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
-    // Both cards share this height so the row is balanced; sized to fit the
-    // taller card (AUDIO, which carries the MSU-1 line) with no scrollbar.
-    const float row_h = px(198.0f);
+// True when this game exposes ANY of the deeper PSX-style DISPLAY controls.
+// SNES (and any console leaving every has_* flag 0) takes the legacy-only
+// branch below and gets EXACTLY today's 3-row DISPLAY card, unchanged.
+bool any_deep_display(const LauncherModel* m) {
+    return m->has_window_size || m->has_renderer || m->has_supersampling ||
+           m->has_antialiasing || m->has_texture_filter || m->has_screen_kind ||
+           m->has_frame_interp || m->has_skip_fmv || m->has_turbo_loads ||
+           m->has_fullscreen_toggle;
+}
 
-    begin_container("set_l", ImVec2(half, row_h));
-    if (begin_panel("disp", 0, true, /*no_scroll*/true)) {
-        eyebrow("DISPLAY");
+void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+    eyebrow("DISPLAY");
+
+    if (!any_deep_display(m)) {
+        // ---- legacy minimal surface (SNES etc.) — byte-identical to before ----
         row_label("Window scale", th);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
@@ -680,55 +686,230 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
         }
-    } end_panel();
-    end_container();
+        return;
+    }
+
+    // ---- deeper PSX-style surface, capability-gated per control -----------
+    // Order matches the real RmlUi PSX launcher: Window size, Renderer,
+    // Supersampling, Aspect ratio, Texture filtering, Antialiasing, Screen
+    // model, Frame interpolation (+Presentation target), Skip FMVs, Turbo
+    // loads, Fullscreen.
+    if (m->has_window_size) {
+        row_label("Window size", th);
+        if (ImGui::Button(launcher_model_window_size_label(m), ImVec2(px(150), px(30))))
+            launcher_model_cycle_window_size(m);
+    } else {
+        row_label("Window scale", th);
+        if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
+            launcher_model_cycle_scale(m);
+    }
+
+    if (m->has_renderer) {
+        row_label("Renderer", th);
+        if (ImGui::Button(launcher_model_renderer_label(m), ImVec2(px(120), px(30))))
+            launcher_model_toggle_renderer(m);
+    }
+
+    if (m->has_supersampling) {
+        row_label("Supersampling", th);
+        if (ImGui::Button(launcher_model_supersampling_label(m), ImVec2(px(90), px(30))))
+            launcher_model_cycle_supersampling(m);
+    }
+
+    if (m->aspect_mask) {
+        row_label("Aspect ratio", th);
+        if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+            launcher_model_cycle_aspect(m);
+    } else if (m->widescreen_supported) {
+        row_label("Widescreen 16:9", th);
+        bool ws = m->s.widescreen != 0;
+        if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
+    }
+
+    if (m->has_texture_filter) {
+        row_label("Texture filtering", th);
+        if (ImGui::Button(launcher_model_texture_filter_label(m), ImVec2(px(120), px(30))))
+            launcher_model_toggle_texture_filter(m);
+    } else {
+        row_label("Linear filtering", th);
+        bool filter = m->s.linear_filter != 0;
+        if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
+    }
+
+    if (m->has_antialiasing) {
+        row_label("Antialiasing", th);
+        bool aa = m->s.antialiasing != 0;
+        if (ImGui::Checkbox("##aa", &aa)) launcher_model_toggle_aa(m);
+    }
+
+    if (m->has_screen_kind) {
+        row_label("Screen model", th);
+        if (ImGui::Button(launcher_model_screen_kind_label(m), ImVec2(px(130), px(30))))
+            launcher_model_cycle_screen_kind(m);
+    }
+
+    // Frame interpolation is only meaningful under OpenGL (Software has no
+    // interpolation pass); Presentation target only matters once frame
+    // interpolation is actually on.
+    if (m->has_frame_interp && m->s.renderer) {
+        row_label("Frame interpolation", th);
+        bool fi = m->s.frame_interp != 0;
+        if (ImGui::Checkbox("##fi", &fi)) launcher_model_toggle_frame_interp(m);
+        if (m->s.frame_interp) {
+            row_label("Presentation target", th);
+            if (ImGui::Button(launcher_model_interp_fps_label(m), ImVec2(px(150), px(30))))
+                launcher_model_cycle_interp_fps(m);
+        }
+    }
+
+    if (m->has_skip_fmv) {
+        row_label("Skip FMVs", th);
+        bool sk = m->s.auto_skip_fmv != 0;
+        if (ImGui::Checkbox("##skipfmv", &sk)) launcher_model_toggle_skip_fmv(m);
+    }
+
+    if (m->has_turbo_loads) {
+        row_label("Turbo loads", th);
+        bool tl = m->s.turbo_loads != 0;
+        if (ImGui::Checkbox("##turbo", &tl)) launcher_model_toggle_turbo_loads(m);
+    }
+
+    if (m->has_fullscreen_toggle) {
+        row_label("Fullscreen on launch", th);
+        bool fs = m->s.fullscreen != 0;
+        if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
+    }
+}
+
+void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
+    eyebrow("AUDIO");
+    row_label("Sample rate", th);
+    if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
+        launcher_model_cycle_freq(m);
+    row_label("Volume", th);
+    int dv = 0; stepper("vol", m->s.volume, "%", &dv);
+    if (dv) launcher_model_volume_delta(m, dv);
+
+    if (m->has_spu_hq) {
+        row_label("SPU high-quality", th);
+        bool hq = m->s.spu_hq != 0;
+        if (ImGui::Checkbox("##spuhq", &hq)) launcher_model_toggle_spu_hq(m);
+    }
+
+    if (m->has_deadzone_pct) {
+        row_label("Analog deadzone", th);
+        if (ImGui::Button(launcher_model_deadzone_pct_label(m), ImVec2(px(90), px(30))))
+            launcher_model_cycle_deadzone_pct(m);
+    }
+
+    // MSU-1: no header/subsection — just one line under the rows above:
+    //   [x] Enable MSU-1 music (?)   …folder tail     [Browse]
+    if (m->msu1_supported) {
+        bool on = m->s.msu1_enabled != 0;
+        if (ImGui::Checkbox("Enable MSU-1 music", &on))
+            launcher_model_toggle_msu1(m);
+        if (m->msu1_note && m->msu1_note[0]) {
+            ImGui::SameLine(0, px(6));
+            ImGui::TextColored(col(th.accent), "(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(m->msu1_note);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        const float bw = px(78);
+        ImGui::SameLine(0, px(14));
+        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+        if (avail < px(50)) avail = px(50);
+        const char* dir = m->s.msu1_dir[0] ? m->s.msu1_dir : "(not set)";
+        char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button("Browse", ImVec2(bw, px(28)))) {
+            char buf[512];
+            if (launcher_pick_folder("Select MSU-1 music folder", buf, sizeof(buf)))
+                launcher_model_set_msu1_dir(m, buf);
+        }
+    }
+
+    // Localization: only games that declare a language list get this
+    // mini-section (mirrors the real PSX launcher's Language cycle).
+    if (m->num_languages > 0) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        eyebrow("LOCALIZATION");
+        row_label("Language", th);
+        if (ImGui::Button(launcher_model_language_label(m), ImVec2(px(140), px(30))))
+            launcher_model_cycle_language(m);
+    }
+}
+
+void draw_settings(LauncherModel* m, const LauncherTheme& th) {
+    // Row 1: DISPLAY | AUDIO share the top band. For the legacy minimal
+    // surface (no deep caps set — e.g. SNES) both cards are pinned to the
+    // SAME fixed height, exactly as before, so that screenshot is unchanged.
+    // A PSX-style game with the deeper capability set has far more rows than
+    // that fixed height fits — rather than clip (or reintroduce a stray
+    // scrollbar via no_scroll on an overflowing fixed-height card), those
+    // cards switch to AutoResizeY so they simply grow to fit their content.
+    const float gap  = px(th.spacing_md);
+    const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+    const float row_h = px(198.0f);   // legacy fixed band height
+
+    const bool deep_display = any_deep_display(m);
+    const bool deep_audio   = m->has_spu_hq || m->has_deadzone_pct || m->num_languages > 0;
+
+    if (deep_display) {
+        begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+        if (begin_panel("disp", 0, false)) draw_display_controls(m, th);
+        end_panel();
+        end_container();
+    } else {
+        begin_container("set_l", ImVec2(half, row_h));
+        if (begin_panel("disp", 0, true, /*no_scroll*/true)) draw_display_controls(m, th);
+        end_panel();
+        end_container();
+    }
 
     ImGui::SameLine(0, gap);
 
-    begin_container("set_r", ImVec2(0, row_h));
-    if (begin_panel("audio", 0, true, /*no_scroll*/true)) {
-        eyebrow("AUDIO");
-        row_label("Sample rate", th);
-        if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
-            launcher_model_cycle_freq(m);
-        row_label("Volume", th);
-        int dv = 0; stepper("vol", m->s.volume, "%", &dv);
-        if (dv) launcher_model_volume_delta(m, dv);
+    if (deep_audio) {
+        begin_container("set_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
+        if (begin_panel("audio", 0, false)) draw_audio_controls(m, th);
+        end_panel();
+        end_container();
+    } else {
+        begin_container("set_r", ImVec2(0, row_h));
+        if (begin_panel("audio", 0, true, /*no_scroll*/true)) draw_audio_controls(m, th);
+        end_panel();
+        end_container();
+    }
 
-        // MSU-1: no header/subsection — just one line under Volume:
-        //   [x] Enable MSU-1 music (?)   …folder tail     [Browse]
-        if (m->msu1_supported) {
-            bool on = m->s.msu1_enabled != 0;
-            if (ImGui::Checkbox("Enable MSU-1 music", &on))
-                launcher_model_toggle_msu1(m);
-            if (m->msu1_note && m->msu1_note[0]) {
-                ImGui::SameLine(0, px(6));
-                ImGui::TextColored(col(th.accent), "(?)");
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(px(360));
-                    ImGui::TextUnformatted(m->msu1_note);
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            }
+    // SYSTEM: BIOS path picker — a full-width row of its own, shown only for
+    // games that need a BIOS image (PSX).
+    if (m->has_bios) {
+        if (begin_panel("system", 0)) {
+            eyebrow("SYSTEM");
+            row_label("BIOS", th);
             const float bw = px(78);
-            ImGui::SameLine(0, px(14));
             float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
             if (avail < px(50)) avail = px(50);
-            const char* dir = m->s.msu1_dir[0] ? m->s.msu1_dir : "(not set)";
-            char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+            const char* bp = m->s.bios_path[0] ? m->s.bios_path : "(default)";
+            char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%s", elided);
+            ImGui::TextColored(col(th.text), "%s", elided);
             ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
             if (ImGui::Button("Browse", ImVec2(bw, px(28)))) {
                 char buf[512];
-                if (launcher_pick_folder("Select MSU-1 music folder", buf, sizeof(buf)))
-                    launcher_model_set_msu1_dir(m, buf);
+                static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
+                if (launcher_pick_file("Select BIOS file", kBiosPatterns, 2,
+                                       "BIOS image (.bin .rom)", buf, sizeof(buf)))
+                    launcher_model_set_bios_path(m, buf);
             }
-        }
-    } end_panel();
-    end_container();
+        } end_panel();
+    }
 
     if (begin_panel("hotkeys", 0)) {
         eyebrow("HOTKEYS");

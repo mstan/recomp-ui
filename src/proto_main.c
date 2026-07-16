@@ -73,12 +73,42 @@ int main(int argc, char** argv) {
 
     // Preview the PSX-style pad-mode selector + swapping controller art:
     // LNG_PADMODE=1 -> selectable 3-way selector (Hybrid/Analog/D-Pad), 1 player.
+    // Also flips on the full deeper-settings capability surface (Window size,
+    // Renderer, Supersampling, ..., BIOS, Localization) so a screenshot of the
+    // Settings view exercises every capability-gated PSX control.
+    static const char* kPreviewLanguages[2] = { "English", "Japanese" };
     const char* padmode = getenv("LNG_PADMODE");
     if (padmode && padmode[0] == '1') {
         gi.pad_mode_supported  = 1;
         gi.pad_mode_selectable = 1;
         gi.allow_hybrid        = 1;
         gi.num_players         = 1;
+
+        gi.has_window_size       = 1;
+        gi.has_renderer          = 1;
+        gi.has_supersampling     = 1;
+        gi.has_antialiasing      = 1;
+        gi.has_texture_filter    = 1;
+        gi.has_screen_kind       = 1;
+        gi.has_frame_interp      = 1;
+        gi.has_spu_hq            = 1;
+        gi.has_skip_fmv          = 1;
+        gi.has_turbo_loads       = 1;
+        gi.has_fullscreen_toggle = 1;
+        gi.has_bios              = 1;
+        gi.has_deadzone_pct      = 1;
+        gi.rom_noun              = "Disc";
+        gi.language_labels       = kPreviewLanguages;
+        gi.num_languages         = 2;
+
+        // Sensible defaults so the preview screenshot shows a "configured" look
+        // rather than all-zero placeholders.
+        s.window_width    = 1280;
+        s.renderer         = 1;      // OpenGL
+        s.supersampling    = 1;
+        s.screen_kind       = 1;      // CRT
+        s.frame_interp      = 0;
+        s.spu_hq             = 1;
     }
     // Preview the PSX-style aspect-ratio cycle control: LNG_ASPECT=1 -> offer
     // 4:3 + 16:9 + 21:9 (widescreen_supported is irrelevant once aspect_mask

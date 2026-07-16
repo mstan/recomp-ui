@@ -92,6 +92,24 @@ typedef struct {
     // widescreen_supported bool drives display settings instead.
     int      aspect_mask;
 
+    // ---- deeper PSX-style settings capability flags (0 => control hidden) ----
+    bool     has_window_size;
+    bool     has_renderer;
+    bool     has_supersampling;
+    bool     has_antialiasing;
+    bool     has_texture_filter;
+    bool     has_screen_kind;
+    bool     has_frame_interp;
+    bool     has_spu_hq;
+    bool     has_skip_fmv;
+    bool     has_turbo_loads;
+    bool     has_fullscreen_toggle;
+    bool     has_bios;
+    bool     has_deadzone_pct;
+    const char* rom_noun;             // "ROM" default; e.g. "Disc" for PSX
+    const char* const* language_labels;  // borrowed; NULL/num_languages==0 => no Localization menu
+    int      num_languages;
+
     bool     rom_present;
     char     rom_full[512];          // absolute path (what we hand to the game)
     char     rom_file[128];          // basename for display, e.g. "mmx.sfc"
@@ -165,6 +183,33 @@ bool launcher_model_aspect_offered(const LauncherModel* m, int index);  // 0=4:3
 // ---- audio settings ----
 void launcher_model_cycle_freq(LauncherModel* m);    // 32000/44100/48000
 void launcher_model_volume_delta(LauncherModel* m, int delta);  // clamp 0..100
+
+// ---- deeper PSX-style settings (capability-gated; no-op / harmless when the
+// corresponding has_* flag is false — callers should still gate the UI on the
+// flag so the control isn't shown at all, per the RmlUi PSX launcher parity). ----
+void launcher_model_cycle_window_size(LauncherModel* m);       // {960,1280,1600,1920} wrap
+const char* launcher_model_window_size_label(const LauncherModel* m);  // "1280 x 960" (H follows aspect)
+void launcher_model_toggle_renderer(LauncherModel* m);         // Software/OpenGL
+const char* launcher_model_renderer_label(const LauncherModel* m);
+void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
+const char* launcher_model_supersampling_label(const LauncherModel* m);
+void launcher_model_toggle_aa(LauncherModel* m);
+void launcher_model_toggle_texture_filter(LauncherModel* m);   // Nearest/Bilinear
+const char* launcher_model_texture_filter_label(const LauncherModel* m);
+void launcher_model_cycle_screen_kind(LauncherModel* m);       // Raw/CRT/Composite/Trinitron
+const char* launcher_model_screen_kind_label(const LauncherModel* m);
+void launcher_model_toggle_frame_interp(LauncherModel* m);
+void launcher_model_cycle_interp_fps(LauncherModel* m);        // {0,90,120,144,165,240} wrap
+const char* launcher_model_interp_fps_label(const LauncherModel* m);  // "Display refresh"/"90 fps"
+void launcher_model_toggle_spu_hq(LauncherModel* m);
+void launcher_model_toggle_skip_fmv(LauncherModel* m);
+void launcher_model_toggle_turbo_loads(LauncherModel* m);
+void launcher_model_toggle_fullscreen(LauncherModel* m);       // simple on/off (PSX row)
+void launcher_model_cycle_language(LauncherModel* m);          // wraps over num_languages
+const char* launcher_model_language_label(const LauncherModel* m);
+void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, wraps; mirrors both players
+const char* launcher_model_deadzone_pct_label(const LauncherModel* m);  // "37%"
+void launcher_model_set_bios_path(LauncherModel* m, const char* path);
 
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);

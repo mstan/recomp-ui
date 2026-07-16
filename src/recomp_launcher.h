@@ -35,6 +35,22 @@ typedef struct RecompLauncherCSettings {
     char msu1_dir[512];
     int  pad_mode[2];       // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital)
     int  aspect_index;      // 0 = 4:3, 1 = 16:9, 2 = 21:9
+
+    // ---- deeper PSX-style settings (capability-gated; see RecompLauncherCGameInfo
+    // has_* flags below — consoles that don't set the flags leave these unused) ----
+    int  window_width;        // px window width (height follows aspect)
+    int  renderer;            // 0 = software, 1 = OpenGL
+    int  supersampling;       // 1..4
+    int  antialiasing;        // bool
+    int  texture_filter;      // 0 = nearest, 1 = bilinear
+    int  screen_kind;         // 0 raw, 1 CRT, 2 composite, 3 trinitron
+    int  frame_interp;        // bool
+    int  frame_interp_fps;    // 0=display, else 90/120/144/165/240
+    int  spu_hq;              // bool
+    int  auto_skip_fmv;       // bool
+    int  turbo_loads;         // bool
+    int  language_index;      // selected index into GameInfo.languages
+    char bios_path[512];      // BIOS file path (empty = default)
 } RecompLauncherCSettings;
 
 typedef struct RecompLauncherCGameInfo {
@@ -74,6 +90,28 @@ typedef struct RecompLauncherCGameInfo {
     // Aspect ratios offered. bit0 = 4:3 (implied/always), bit1 = 16:9, bit2 = 21:9.
     // 0 = fall back to the legacy widescreen_supported bool (SNES: 16:9 toggle).
     int            aspect_mask;
+
+    // ---- deeper PSX-style settings capability flags ----
+    // 0 => that control is hidden entirely; SNES/other consoles that leave all
+    // of these 0 keep exactly today's minimal settings surface.
+    int  has_window_size;       // px window-size control (else the legacy window_scale cycle stays)
+    int  has_renderer;          // Software/OpenGL toggle
+    int  has_supersampling;
+    int  has_antialiasing;
+    int  has_texture_filter;    // Nearest/Bilinear (else the legacy Linear filtering checkbox stays)
+    int  has_screen_kind;       // CRT/screen-model filter
+    int  has_frame_interp;
+    int  has_spu_hq;
+    int  has_skip_fmv;          // Skip FMVs
+    int  has_turbo_loads;
+    int  has_fullscreen_toggle; // simple on/off fullscreen row (PSX). (SNES keeps its own path.)
+    int  has_bios;              // BIOS path picker
+    int  has_deadzone_pct;      // single analog-deadzone % control
+    const char* rom_noun;       // "ROM" (default/NULL) | "Disc" | "Cartridge" — the Change-<noun>
+                                 // button label + File row
+    // Languages (Localization menu shown only when num_languages > 0).
+    const char* const* language_labels;  // e.g. {"English","Japanese"}
+    int  num_languages;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
