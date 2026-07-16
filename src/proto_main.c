@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     snprintf(title, sizeof(title), "Recomp UI — Launcher [%s]", launcher_backend_name());
 
     LauncherPlatform plat;
-    if (!launcher_platform_open(&plat, title, 1100, 720)) {
+    if (!launcher_platform_open(&plat, title, 1100, 840)) {
         fprintf(stderr, "[proto] platform init failed; a real host would boot as if skipped.\n");
         return 2;
     }

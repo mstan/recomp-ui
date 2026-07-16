@@ -41,7 +41,8 @@ typedef struct RecompLauncherCSettings {
     int  window_width;        // px window width (height follows aspect)
     int  renderer;            // 0 = software, 1 = OpenGL
     int  supersampling;       // 1..4
-    int  antialiasing;        // bool
+    int  antialiasing;        // MSAA sample count: 0 = off, else 2/4/8 (x). (A
+                              // legacy on/off host may still write 0/1.)
     int  texture_filter;      // 0 = nearest, 1 = bilinear
     int  screen_kind;         // 0 raw, 1 CRT, 2 composite, 3 trinitron
     int  frame_interp;        // bool

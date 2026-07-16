@@ -374,8 +374,26 @@ const char* launcher_model_supersampling_label(const LauncherModel* m) {
     return buf;
 }
 
-void launcher_model_toggle_aa(LauncherModel* m) {
-    m->s.antialiasing = !m->s.antialiasing;
+// Antialiasing is an MSAA sample COUNT, not a bool: Off / 2x / 4x / 8x. Cycle
+// wraps 0 -> 2 -> 4 -> 8 -> 0. A legacy on/off host value of 1 is treated as
+// "on" by the label and advances to Off on the next cycle.
+void launcher_model_cycle_aa(LauncherModel* m) {
+    switch (m->s.antialiasing) {
+        case 0:  m->s.antialiasing = 2; break;
+        case 2:  m->s.antialiasing = 4; break;
+        case 4:  m->s.antialiasing = 8; break;
+        default: m->s.antialiasing = 0; break;   // 8 (or legacy 1/other) -> Off
+    }
+}
+
+const char* launcher_model_aa_label(const LauncherModel* m) {
+    switch (m->s.antialiasing) {
+        case 0:  return "Off";
+        case 2:  return "2x";
+        case 4:  return "4x";
+        case 8:  return "8x";
+        default: return "On";   // legacy on/off host value (1)
+    }
 }
 
 void launcher_model_toggle_texture_filter(LauncherModel* m) {

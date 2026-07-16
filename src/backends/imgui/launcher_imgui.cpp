@@ -622,97 +622,58 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
 // icon + path picker (Browse/New) + a real 15-block usage grid, matching PS1
 // memory-card conventions (each card holds 15 save blocks).
 
-// One slot's picker row: "Path" + card file + Browse (pick an existing image)
-// / New (choose where to create one). Mirrors draw_save_row's shape, sourced
-// from m->s.memcard_path[slot] (settings-editable, ABI-mirrored like
-// bios_path) instead of the borrowed read-only sram_path.
-void draw_memcard_path_row(LauncherModel* m, const LauncherTheme& th, int slot) {
+// One compact memory-card slot: icon + name, inline block count, and Browse/
+// New actions. `probe` (SystemProfile.save.probe) is the host hook that
+// would refresh m->memcard_blocks_used[slot] from the real card image; it is
+// NULL in every profile today (unimplemented proto hook), so this falls back to
+// a representative placeholder count rather than an all-empty slot.
+// Draws the CONTENT of one small memory-card card (the caller supplies the card
+// chrome + width). Vertical stack so nothing crowds at a controller-narrow
+// width: icon + label, block count, then a Browse/New button pair.
+void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    ImGui::PushID(slot);
+
+    image_fit(g_memcard, 20, 20);
+    ImGui::SameLine(0, px(8));
+    ImGui::AlignTextToFramePadding();
     const char* mp = m->s.memcard_path[slot];
     const char* base = mp;
     for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Path");
+    char label[40];
+    if (base[0]) snprintf(label, sizeof(label), "%s", base);
+    else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+    ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
-    ImGui::SameLine(px(76));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(base[0] ? base : "(none yet)");
-    const float bw = px(84);
-    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
+
+    const bool have_probe = prof && prof->save.probe && prof->save.probe(m, slot);
+    const uint16_t used = have_probe ? m->memcard_blocks_used[slot]
+                                     : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
+    int used_count = 0;
+    for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+    char cap[20]; snprintf(cap, sizeof(cap), "%d / 15 blocks", used_count);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    ImGui::TextUnformatted(cap);
+    ImGui::PopStyleColor();
+
+    ImGui::Dummy(ImVec2(0, px(4)));
     static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
-    if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+    const float cw = ImGui::GetContentRegionAvail().x;
+    const float bw = (cw - px(th.spacing_sm)) * 0.5f;
+    if (ImGui::Button("Browse", ImVec2(bw, px(26)))) {
         char buf[512];
         if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
                                "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
             launcher_model_set_memcard_path(m, slot, buf);
     }
     ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button("New", ImVec2(bw, px(30)))) {
+    if (ImGui::Button("New", ImVec2(bw, px(26)))) {
         char buf[512];
         if (launcher_pick_file("Create new memory card", kCardPatterns, 3,
                                "PS1 memory card (.mcd)", buf, sizeof(buf)))
             launcher_model_set_memcard_path(m, slot, buf);
     }
-}
-
-// 15-block usage grid (real PS1 cards hold 15 save blocks). `used` is a
-// bitmask, bit i = block i occupied. Sourced from m->memcard_blocks_used[slot]
-// when a host's SaveSpec.probe hook is wired up (see draw_memcard_slot);
-// otherwise the caller passes a representative placeholder pattern so the
-// grid always renders as real UI, never a dead/empty box.
-void draw_memcard_block_grid(const LauncherTheme& th, uint16_t used, float avail_w) {
-    const int kBlocks = 15;
-    const float gap = px(4.0f);
-    float cell = (avail_w - gap * (kBlocks - 1)) / (float)kBlocks;
-    if (cell > px(24.0f)) cell = px(24.0f);
-    if (cell < px(10.0f)) cell = px(10.0f);
-    const float total_w = cell * kBlocks + gap * (kBlocks - 1);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
-    for (int i = 0; i < kBlocks; ++i) {
-        bool on = (used & (1u << i)) != 0;
-        ImVec2 mn(p0.x + i * (cell + gap), p0.y);
-        ImVec2 mx(mn.x + cell, mn.y + cell);
-        dl->AddRectFilled(mn, mx, imcol(on ? th.accent : th.control), px(3.0f));
-        dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
-    }
-    ImGui::Dummy(ImVec2(total_w, cell));
-}
-
-// One full memory-card slot: icon + header, path row, block grid, and a
-// "N / 15 blocks used" caption. `probe` (SystemProfile.save.probe) is the
-// host hook that would refresh m->memcard_blocks_used[slot] from the real
-// card image; it is NULL in every profile today (unimplemented proto hook),
-// so this falls back to a couple of lightly-filled placeholder blocks rather
-// than an all-empty grid.
-void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
-    const SystemProfile* prof = (const SystemProfile*)m->profile;
-    ImGui::PushID(slot);
-
-    image_fit(g_memcard, 26, 26);
-    ImGui::SameLine(0, px(8));
-    ImGui::AlignTextToFramePadding();
-    char hdr[24]; snprintf(hdr, sizeof(hdr), "MEMORY CARD %d", slot + 1);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
-    ImGui::TextUnformatted(hdr);
-    ImGui::PopStyleColor();
-
-    ImGui::Dummy(ImVec2(0, px(6)));
-    draw_memcard_path_row(m, th, slot);
-    ImGui::Dummy(ImVec2(0, px(10)));
-
-    const bool have_probe = prof && prof->save.probe && prof->save.probe(m, slot);
-    const uint16_t used = have_probe ? m->memcard_blocks_used[slot]
-                                     : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
-    draw_memcard_block_grid(th, used, ImGui::GetContentRegionAvail().x);
-
-    int used_count = 0;
-    for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
-    ImGui::Dummy(ImVec2(0, px(4)));
-    char cap[32]; snprintf(cap, sizeof(cap), "%d / 15 blocks used", used_count);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-    ImGui::TextUnformatted(cap);
-    ImGui::PopStyleColor();
 
     ImGui::PopID();
 }
@@ -733,24 +694,30 @@ int avail_save(const LauncherModel* m) {
 void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
-    if (!begin_panel("save", 0)) { end_panel(); return; }
     if (kind == SAVE_MEMCARD) {
-        eyebrow("MEMORY CARDS");
+        // No outer "MEMORY CARDS" card/eyebrow: the small per-slot cards ARE the
+        // UI (each self-labels with a memcard icon + "Memory Card N"). Laid side
+        // by side at ~a controller-card width, the whole row is short enough to
+        // sit under the controller card without scrolling.
         const int slots = (prof->save.slots > 0 && prof->save.slots <= 2) ? prof->save.slots : 2;
+        const float gap = px(th->spacing_sm);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float cw = (avail - gap * (slots - 1)) / (float)slots;
         for (int slot = 0; slot < slots; ++slot) {
-            if (slot) {
-                ImGui::Dummy(ImVec2(0, px(10)));
-                ImGui::PushStyleColor(ImGuiCol_Separator, col(th->border));
-                ImGui::Separator();
-                ImGui::PopStyleColor();
-                ImGui::Dummy(ImVec2(0, px(10)));
-            }
-            draw_memcard_slot(m, *th, slot);
+            if (slot) ImGui::SameLine(0, gap);
+            char cid[16]; snprintf(cid, sizeof(cid), "mcc%d", slot);
+            char pid[16]; snprintf(pid, sizeof(pid), "mcp%d", slot);
+            begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
+                if (begin_panel(pid, cw / g_scale, false))
+                    draw_memcard_slot(m, *th, slot);
+                end_panel();
+            end_container();
         }
-    } else {
-        eyebrow("SAVES");
-        draw_save_row(m, *th);
+        return;
     }
+    if (!begin_panel("save", 0)) { end_panel(); return; }
+    eyebrow("SAVES");
+    draw_save_row(m, *th);
     end_panel();
 }
 
@@ -839,6 +806,20 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     ImGui::Dummy(ImVec2(0, px(4)));
     if (ImGui::Button("Configure", ImVec2(cw, px(32)))) launcher_model_open_config(m, p);
     ImGui::Dummy(ImVec2(0, px(6)));
+    // Analog-stick deadzone belongs to the input device, so it lives on the
+    // controller card (not Audio). PSX-style single mirrored value; shown per
+    // player card when the system exposes it.
+    if (m->has_deadzone_pct) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::TextUnformatted("Deadzone");
+        ImGui::PopStyleColor();
+        const float bw = px(70);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button(launcher_model_deadzone_pct_label(m), ImVec2(bw, px(28))))
+            launcher_model_cycle_deadzone_pct(m);
+        ImGui::Dummy(ImVec2(0, px(6)));
+    }
     // status line, centered
     {
         const bool on = m->s.player_src[p] != 0;
@@ -908,25 +889,26 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         if (game_p && ctrl_p) ImGui::SameLine(0, gap);
         if (ctrl_p) {
             begin_container("dash_r", ImVec2(0, 0), col_flags);
-                // One self-contained card per player. SAVES now lives in the GAME
-                // card and MSU-1 in Settings > Audio, so the side column is just
-                // the controller card(s).
+                // The side column stacks the controller card(s) and, directly
+                // beneath, the memory-card card at the SAME width as a controller
+                // card — so the user sees memcards without scrolling below the
+                // GAME card (they sit beside it, not under the whole row).
                 ctrl_p->draw(m, &th);
+                if (save_p) {
+                    // The memory-card panel spans the side column and lays its
+                    // small per-slot cards side by side (each ~a controller-card
+                    // width), so the row is short and sits under the controller.
+                    ImGui::Dummy(ImVec2(0, gap));
+                    save_p->draw(m, &th);
+                }
             end_container();
         }
     } else {
         if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
         if (game_p && ctrl_p) ImGui::Spacing();
         if (ctrl_p) ctrl_p->draw(m, &th);
-    }
-
-    // WIDE slot: the standalone memory-card panel, full width below the
-    // game/controller row. Only PSX's composition array lists "save" here
-    // (see kPanelsDashboardPsx) — SNES's kPanelsDashboardCommon does not, so
-    // its SRAM row stays folded into the GAME card exactly as today.
-    if (save_p) {
-        ImGui::Dummy(ImVec2(0, px(th.spacing_md)));
-        save_p->draw(m, &th);
+        // Narrow single-column layout: memcards stack under the controller.
+        if (save_p) { ImGui::Spacing(); save_p->draw(m, &th); }
     }
 }
 
@@ -1027,8 +1009,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 
     if (m->has_antialiasing) {
         row_label("Antialiasing", th);
-        bool aa = m->s.antialiasing != 0;
-        if (ImGui::Checkbox("##aa", &aa)) launcher_model_toggle_aa(m);
+        if (ImGui::Button(launcher_model_aa_label(m), ImVec2(px(90), px(30))))
+            launcher_model_cycle_aa(m);
     }
 
     if (m->has_screen_kind) {
@@ -1099,16 +1081,14 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     if (dv) launcher_model_volume_delta(m, dv);
 
     if (m->has_spu_hq) {
-        row_label("SPU high-quality", th);
+        row_label("High-quality SPU", th);
         bool hq = m->s.spu_hq != 0;
         if (ImGui::Checkbox("##spuhq", &hq)) launcher_model_toggle_spu_hq(m);
     }
 
-    if (m->has_deadzone_pct) {
-        row_label("Analog deadzone", th);
-        if (ImGui::Button(launcher_model_deadzone_pct_label(m), ImVec2(px(90), px(30))))
-            launcher_model_cycle_deadzone_pct(m);
-    }
+    // NOTE: analog deadzone is NOT here — it belongs to the input device, so it
+    // lives on each controller card (draw_player_panel), gated on
+    // has_deadzone_pct. Kept out of Audio deliberately.
 
     // MSU-1: no header/subsection — just one line under the rows above:
     //   [x] Enable MSU-1 music (?)   …folder tail     [Browse]
@@ -1158,7 +1138,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
 // panel_video_draw, decided from the same "deep" predicate draw_settings used
 // to compute inline.
 void panel_audio_draw(LauncherModel* m, const LauncherTheme* th) {
-    const bool deep_audio = m->has_spu_hq || m->has_deadzone_pct || m->num_languages > 0;
+    const bool deep_audio = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
     if (deep_audio) {
         if (begin_panel("audio", 0, false)) draw_audio_controls(m, *th);
         end_panel();
@@ -1257,7 +1237,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float row_h = px(198.0f);   // legacy fixed band height
 
     const bool deep_display = any_deep_display(m);
-    const bool deep_audio   = m->has_spu_hq || m->has_deadzone_pct || m->num_languages > 0;
+    const bool deep_audio   = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
 
     const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
     const LauncherPanel* audio_p   = find_composed(prof->panels_settings, "audio", m);

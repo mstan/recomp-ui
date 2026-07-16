@@ -29,7 +29,7 @@ int recomp_launcher_run_window(const char* window_title,
 
     LauncherPlatform plat;
     if (!launcher_platform_open(&plat, window_title ? window_title : "Launcher",
-                                1100, 720)) {
+                                1100, 840)) {
         // Window/GL init failed — tell the caller to boot as if the launcher was
         // skipped, exactly like the old launcher's UNAVAILABLE path.
         return 2;
