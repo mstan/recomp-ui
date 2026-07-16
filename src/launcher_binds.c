@@ -18,6 +18,7 @@
 #endif
 
 const char* g_launcher_config_path = NULL;
+const char* g_launcher_keybinds_path = NULL;
 
 // Per-system rebind-spec index -> keybinds.c button index. keybinds order is
 // a,b,x,y,l,r,start,select,up,down,left,right,l2,r2,l3,r3 (see keybinds.h).
@@ -25,37 +26,238 @@ const char* g_launcher_config_path = NULL;
 // SNES rebind spec order (launcher_system.h kSnesPadButtons): Up,Down,Left,
 // Right,A,B,X,Y,L,R,Start,Select. UNCHANGED from before per-system vocab —
 // SNES bind persistence stays byte-identical (indices 0..11, same mapping).
+//
+// PSX no longer routes through this generic table/keybinds.c at all — see
+// the "PSX-native keybind bridge" block below, which persists through
+// psxrecomp's own psx_keybinds.c format instead so rebinds actually reach
+// the game (routing PSX's 24 buttons through this 16-slot generic format
+// silently discarded the 8 stick-direction binds and, worse, wrote a file
+// the game's runtime can't parse at all). Every profile that still uses this
+// table today borrows kSnesPadButtons (launcher_system.h stub macro), so it
+// always matches LNG_SNES_PAD_BUTTON_COUNT.
 static const int kKbIndexSnes[LNG_SNES_PAD_BUTTON_COUNT] = {
     /* UP    */ 8, /* DOWN  */ 9, /* LEFT  */ 10, /* RIGHT */ 11,
     /* A     */ 0, /* B     */ 1, /* X     */ 2,  /* Y     */ 3,
     /* L     */ 4, /* R     */ 5, /* START */ 6,  /* SELECT*/ 7,
 };
 
-// PSX rebind spec order (launcher_system.h kPsxPadButtons): Up,Down,Left,
-// Right,Triangle,Circle,Cross,Square,L1,L2,R1,R2,L3,R3,Start,Select. Face
-// buttons map onto the keybinds a/b/x/y slots by PHYSICAL POSITION — the
-// same positions the SNES table above already uses (x=north, a=east,
-// b=south, y=west) — so Triangle(north)->x, Circle(east)->a, Cross(south)->b,
-// Square(west)->y. L2/R2/L3/R3 use the 4 slots keybinds.c added for systems
-// deeper than SNES.
-static const int kKbIndexPsx[LNG_PSX_PAD_BUTTON_COUNT] = {
-    /* Up */ 8, /* Down */ 9, /* Left */ 10, /* Right */ 11,
-    /* Triangle */ 2, /* Circle */ 0, /* Cross */ 1, /* Square */ 3,
-    /* L1 */ 4, /* L2 */ 12, /* R1 */ 5, /* R2 */ 13,
-    /* L3 */ 14, /* R3 */ 15,
-    /* Start */ 6, /* Select */ 7,
-};
-
 // Resolve the keybinds-index table (and its length) for the model's ACTIVE
-// SystemProfile. Only two shapes exist today (SNES-shaped 12, PSX-shaped
-// 16); every stub profile still borrows kSnesPadButtons (launcher_system.h)
-// so it falls into the SNES-shaped branch, matching its button_count.
+// SystemProfile. PSX is handled entirely by the native bridge below (see
+// is_psx_profile()) before this is ever consulted, so every caller here is
+// SNES-shaped (12 buttons) today.
 static const int* active_kb_index(const LauncherModel* m, int* out_n) {
-    const SystemProfile* prof = (const SystemProfile*)m->profile;
-    int bc = prof ? prof->controller.button_count : LNG_SNES_PAD_BUTTON_COUNT;
-    if (bc == LNG_PSX_PAD_BUTTON_COUNT) { *out_n = LNG_PSX_PAD_BUTTON_COUNT; return kKbIndexPsx; }
+    (void)m;
     *out_n = LNG_SNES_PAD_BUTTON_COUNT;
     return kKbIndexSnes;
+}
+
+// ---- PSX-native keybind bridge ---------------------------------------------
+// psxrecomp's runtime (runtime/launcher/psx_keybinds.h + .c, upstream repo)
+// owns its OWN keyboard-bind format: an INI with [player1]/[player2]
+// sections and 24 named keys (up/down/left/right/cross/circle/square/
+// triangle/l1/r1/l2/r2/l3/r3/start/select/ls_up/ls_down/ls_left/ls_right/
+// rs_up/rs_down/rs_left/rs_right), storing SDL *scancode* names exactly like
+// keybinds.c does. It is NOT the same format as keybinds.c's generic
+// PlayerBinds (a/b/x/y/l/r/start/select/up/down/left/right/l2/r2/l3/r3) —
+// before this bridge, the PSX rebind page persisted through that generic
+// format anyway (see kKbIndexPsx, now removed), which wrote content the PSX
+// runtime's INI parser can't make sense of. PSX rebinds therefore never
+// reached the game. This block fixes that at the root: for a PSX
+// SystemProfile, persistence routes through a native 24-scancode store,
+// read/written in psx_keybinds.c's own key vocabulary, to the SAME default
+// filename ("keybinds.ini") psx_keybinds_init() reads — so whichever process
+// (launcher or game) runs first creates a file the other already understands.
+//
+// Rebind-spec order (launcher_system.h kPsxPadButtons, 24 entries) is a
+// DIFFERENT physical ordering than psx_keybinds.c's kButtons — this table
+// maps rebind-spec index -> ini key NAME (never by raw index).
+static const char* kPsxKbKeyName[LNG_PSX_PAD_BUTTON_COUNT] = {
+    "up", "down", "left", "right",
+    "triangle", "circle", "cross", "square",
+    "l1", "l2", "r1", "r2",
+    "l3", "r3", "start", "select",
+    "ls_up", "ls_down", "ls_left", "ls_right",
+    "rs_up", "rs_down", "rs_left", "rs_right",
+};
+
+// Defaults mirror psxrecomp's PSXKB_DEFAULTS (psx_keybinds.c) exactly, just
+// reordered into kPsxPadButtons's rebind-spec order, so a file either process
+// creates first is byte-for-byte what the other would have generated.
+static const SDL_Scancode kPsxDefaultsP1[LNG_PSX_PAD_BUTTON_COUNT] = {
+    /* Up */ SDL_SCANCODE_UP, /* Down */ SDL_SCANCODE_DOWN,
+    /* Left */ SDL_SCANCODE_LEFT, /* Right */ SDL_SCANCODE_RIGHT,
+    /* Triangle */ SDL_SCANCODE_A, /* Circle */ SDL_SCANCODE_S,
+    /* Cross */ SDL_SCANCODE_X, /* Square */ SDL_SCANCODE_Z,
+    /* L1 */ SDL_SCANCODE_Q, /* L2 */ SDL_SCANCODE_E,
+    /* R1 */ SDL_SCANCODE_W, /* R2 */ SDL_SCANCODE_R,
+    /* L3 */ SDL_SCANCODE_T, /* R3 */ SDL_SCANCODE_Y,
+    /* Start */ SDL_SCANCODE_RETURN, /* Select */ SDL_SCANCODE_RSHIFT,
+    /* LS Up */ SDL_SCANCODE_UP, /* LS Down */ SDL_SCANCODE_DOWN,
+    /* LS Left */ SDL_SCANCODE_LEFT, /* LS Right */ SDL_SCANCODE_RIGHT,
+    /* RS Up */ SDL_SCANCODE_UNKNOWN, /* RS Down */ SDL_SCANCODE_UNKNOWN,
+    /* RS Left */ SDL_SCANCODE_UNKNOWN, /* RS Right */ SDL_SCANCODE_UNKNOWN,
+};
+static const SDL_Scancode kPsxDefaultsP2[LNG_PSX_PAD_BUTTON_COUNT] = {
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+    SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN,
+};
+
+static SDL_Scancode s_psx_binds[2][LNG_PSX_PAD_BUTTON_COUNT];
+static int s_psx_binds_init = 0;
+
+static int is_psx_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && !strcmp(prof->id, "psx");
+}
+
+static const char* psx_keybinds_file_path(void) {
+    return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
+             ? g_launcher_keybinds_path : "keybinds.ini";
+}
+
+// Same scancode<->name normalization psx_keybinds.c/keybinds.c use (SDL name
+// first, then a handful of common aliases) so files round-trip identically
+// whichever side writes them.
+static SDL_Scancode psx_kb_name_to_scancode(const char* name) {
+    if (!name || !*name) return SDL_SCANCODE_UNKNOWN;
+    SDL_Scancode sc = SDL_GetScancodeFromName(name);
+    if (sc != SDL_SCANCODE_UNKNOWN) return sc;
+    char buf[32]; size_t i = 0;
+    for (; name[i] && i < sizeof(buf) - 1; i++) buf[i] = (char)tolower((unsigned char)name[i]);
+    buf[i] = '\0';
+    if (!strcmp(buf, "enter") || !strcmp(buf, "return")) return SDL_SCANCODE_RETURN;
+    if (!strcmp(buf, "tab"))     return SDL_SCANCODE_TAB;
+    if (!strcmp(buf, "space"))   return SDL_SCANCODE_SPACE;
+    if (!strcmp(buf, "lshift"))  return SDL_SCANCODE_LSHIFT;
+    if (!strcmp(buf, "rshift"))  return SDL_SCANCODE_RSHIFT;
+    if (!strcmp(buf, "lctrl"))   return SDL_SCANCODE_LCTRL;
+    if (!strcmp(buf, "rctrl"))   return SDL_SCANCODE_RCTRL;
+    if (!strcmp(buf, "lalt"))    return SDL_SCANCODE_LALT;
+    if (!strcmp(buf, "ralt"))    return SDL_SCANCODE_RALT;
+    if (!strcmp(buf, "backslash")) return SDL_SCANCODE_BACKSLASH;
+    if (!strcmp(buf, "escape") || !strcmp(buf, "esc")) return SDL_SCANCODE_ESCAPE;
+    if (!strcmp(buf, "backspace")) return SDL_SCANCODE_BACKSPACE;
+    if (!strcmp(buf, "none") || !buf[0]) return SDL_SCANCODE_UNKNOWN;
+    return SDL_SCANCODE_UNKNOWN;
+}
+static const char* psx_kb_scancode_to_name(SDL_Scancode sc) {
+    if (sc == SDL_SCANCODE_UNKNOWN) return "None";
+    const char* n = SDL_GetScancodeName(sc);
+    return (n && n[0]) ? n : "None";
+}
+
+static void psx_kb_write_ini(const char* path) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f,
+        "# PSXRecomp Keyboard Keybinds (keyboard -> DualShock).\n"
+        "# Written by recomp-ui's launcher (psx_keybinds.c-compatible format);\n"
+        "# also read/regenerated by the game's own runtime. Edit values and\n"
+        "# restart, or rebind live in the launcher's Controls page.\n"
+        "# Use SDL key names, or \"None\" to leave an input unbound.\n\n");
+    for (int p = 0; p < 2; ++p) {
+        fprintf(f, "[player%d]\n", p + 1);
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
+            fprintf(f, "%-9s = %s\n", kPsxKbKeyName[b], psx_kb_scancode_to_name(s_psx_binds[p][b]));
+        fprintf(f, "\n");
+    }
+    fclose(f);
+}
+
+// Key indices present ONLY in psx_keybinds.c's vocabulary (never in
+// keybinds.c's generic PlayerBinds format): triangle/circle/cross/square,
+// l1/r1 (generic only has l/r), and all 8 ls_*/rs_* stick binds. up/down/
+// left/right/start/select/l2/r2/l3/r3 (the other 10 keys) exist in BOTH
+// formats by coincidence of naming, so matching one of those alone does NOT
+// prove the file is psx_keybinds.c-shaped — see psx_kb_load_ini()'s use of
+// this, which is what stops a stale pre-bridge generic-format keybinds.ini
+// from being silently half-applied as if it were native.
+static int psx_kb_key_is_native_only(int b) {
+    switch (b) {
+        case 4: case 5: case 6: case 7:        // triangle/circle/cross/square
+        case 8: case 10:                        // l1/r1
+        case 16: case 17: case 18: case 19:     // ls_up/down/left/right
+        case 20: case 21: case 22: case 23:     // rs_up/down/left/right
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// Returns the count of NATIVE-ONLY keys matched (see above) — the caller
+// uses this to detect a foreign-format file instead of silently blending
+// its overlapping-name values into the defaults.
+static int psx_kb_load_ini(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) return 0;
+    int player = -1;   // -1 none, 0 p1, 1 p2
+    int native_hits = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        size_t n = strlen(line);
+        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r' || isspace((unsigned char)line[n-1]))) line[--n] = '\0';
+        char* s = line;
+        while (*s && isspace((unsigned char)*s)) ++s;
+        if (!*s || *s == '#' || *s == ';') continue;
+        if (*s == '[') {
+            char* end = strchr(s, ']');
+            if (end) *end = '\0';
+            const char* section = s + 1;
+            player = -1;
+            if (!strcmp(section, "player1")) player = 0;
+            else if (!strcmp(section, "player2")) player = 1;
+            continue;
+        }
+        char* eq = strchr(s, '=');
+        if (!eq || player < 0) continue;
+        *eq = '\0';
+        char* key = s; char* val = eq + 1;
+        // trim key/val
+        size_t kl = strlen(key); while (kl > 0 && isspace((unsigned char)key[kl-1])) key[--kl] = '\0';
+        while (*val && isspace((unsigned char)*val)) ++val;
+        size_t vl = strlen(val); while (vl > 0 && isspace((unsigned char)val[vl-1])) val[--vl] = '\0';
+        for (char* c = key; *c; c++) *c = (char)tolower((unsigned char)*c);
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b) {
+            if (!strcmp(key, kPsxKbKeyName[b])) {
+                s_psx_binds[player][b] = psx_kb_name_to_scancode(val);
+                if (psx_kb_key_is_native_only(b)) ++native_hits;
+                break;
+            }
+        }
+    }
+    fclose(f);
+    return native_hits;
+}
+
+// Load existing keybinds.ini if present (whichever process wrote it last —
+// launcher or game, same format), else seed defaults and write it so the
+// game's first run sees identical bindings to what the launcher displays.
+// If a file exists but matches ZERO native-only keys, it is a foreign-format
+// file (e.g. a stale keybinds.ini this launcher wrote pre-bridge, in the
+// generic SNES-shaped format, before a PSX game ever ran) — defaults are
+// re-seeded and the file is rewritten cleanly rather than left holding a
+// half-applied blend of foreign values.
+static void psx_kb_init(void) {
+    memcpy(s_psx_binds[0], kPsxDefaultsP1, sizeof(kPsxDefaultsP1));
+    memcpy(s_psx_binds[1], kPsxDefaultsP2, sizeof(kPsxDefaultsP2));
+    const char* path = psx_keybinds_file_path();
+    FILE* test = fopen(path, "r");
+    if (test) {
+        fclose(test);
+        int native_hits = psx_kb_load_ini(path);
+        if (native_hits == 0) {
+            memcpy(s_psx_binds[0], kPsxDefaultsP1, sizeof(kPsxDefaultsP1));
+            memcpy(s_psx_binds[1], kPsxDefaultsP2, sizeof(kPsxDefaultsP2));
+            psx_kb_write_ini(path);
+        }
+    } else {
+        psx_kb_write_ini(path);
+    }
+    s_psx_binds_init = 1;
 }
 
 // The engine's config.ini [KeyMap] keys, in LngHotkey order.
@@ -84,6 +286,12 @@ static const char* scancode_label(SDL_Scancode sc) {
 }
 
 static void reload_player_display(LauncherModel* m, int player) {
+    if (is_psx_profile(m)) {
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
+            copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                     scancode_label(s_psx_binds[player - 1][b]));
+        return;
+    }
     int n = 0;
     const int* kb_index = active_kb_index(m, &n);
     for (int b = 0; b < n; ++b) {
@@ -245,18 +453,33 @@ static void format_hotkey(int keycode, int kmod, char* out, size_t cap) {
 
 // ---- public API -------------------------------------------------------------
 
-void launcher_binds_load(LauncherModel* m, const char* config_path_in) {
+void launcher_binds_load(LauncherModel* m, const char* config_path_in, const char* keybinds_path_in) {
     g_launcher_config_path = config_path_in;
-    recompui_keybinds_init(NULL);               // load/generate keybinds.ini (exe-anchored)
+    g_launcher_keybinds_path = keybinds_path_in;
+    if (is_psx_profile(m)) {
+        psx_kb_init();                            // load/generate psx_keybinds.c-format keybinds.ini
+    } else {
+        recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
+    }
     reload_player_display(m, 1);
     reload_player_display(m, 2);
     reload_hotkey_display(m);
 }
 
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {
+    if (player < 1 || player > 2) return;
+    if (is_psx_profile(m)) {
+        if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
+        if (!s_psx_binds_init) psx_kb_init();
+        s_psx_binds[player - 1][b] = (SDL_Scancode)scancode;
+        psx_kb_write_ini(psx_keybinds_file_path());
+        copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                 scancode_label((SDL_Scancode)scancode));
+        return;
+    }
     int n = 0;
     const int* kb_index = active_kb_index(m, &n);
-    if (b < 0 || b >= n || player < 1 || player > 2) return;
+    if (b < 0 || b >= n) return;
     recompui_keybinds_set_button(player, kb_index[b], (SDL_Scancode)scancode);
     recompui_keybinds_save();
     copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
@@ -265,6 +488,14 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
 
 void launcher_binds_reset_player(LauncherModel* m, int player) {
     if (player < 1 || player > 2) return;
+    if (is_psx_profile(m)) {
+        if (!s_psx_binds_init) psx_kb_init();
+        memcpy(s_psx_binds[player - 1], player == 2 ? kPsxDefaultsP2 : kPsxDefaultsP1,
+               sizeof(s_psx_binds[player - 1]));
+        psx_kb_write_ini(psx_keybinds_file_path());
+        reload_player_display(m, player);
+        return;
+    }
     recompui_keybinds_reset_player(player);
     recompui_keybinds_save();
     reload_player_display(m, player);

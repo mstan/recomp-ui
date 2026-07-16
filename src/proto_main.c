@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     const char* rom = SDL_getenv("LNG_ROM");
     if (!rom || !rom[0]) rom = demo_msu_rom ? demo_msu_rom : "test.rom";
     launcher_model_init(&model, &s, &gi, rom);
-    launcher_binds_load(&model, NULL);   // keybinds.ini + config.ini [KeyMap]
+    launcher_binds_load(&model, NULL, NULL);   // keybinds.ini + config.ini [KeyMap]
     fprintf(stderr, "[proto] rom=%s present=%d crc_match=%d sha_match=%d verified=%d size=%s\n",
             rom, model.rom_present, model.crc_match, model.sha_match,
             launcher_model_rom_verified(&model), model.rom_size);

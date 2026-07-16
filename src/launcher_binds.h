@@ -2,6 +2,10 @@
 //
 // Bridges the launcher's Controller view to the engine's persisted files:
 //   * player buttons  -> keybinds.ini  (SDL *scancode* names), via keybinds.c
+//     -- EXCEPT the PSX SystemProfile, which persists through psxrecomp's own
+//        24-button psx_keybinds.c format instead (see the PSX-native bridge
+//        below launcher_binds_load's declaration) so PSX rebinds actually
+//        reach the game. SNES (and every stub profile) is unaffected.
 //   * system hotkeys   -> config.ini [KeyMap] (SDL *keycode* names), surgical edit
 //
 // This is the module that makes remaps actually STICK. Kept separate from the
@@ -19,8 +23,12 @@ extern "C" {
 
 // Load current bindings from disk into the model for DISPLAY. Initializes
 // keybinds.ini (generating defaults if absent) and reads config.ini [KeyMap].
-// config_path may be NULL (=> "config.ini" in the exe dir).
-void launcher_binds_load(LauncherModel* m, const char* config_path);
+// config_path may be NULL (=> "config.ini" in the exe dir). keybinds_path may
+// be NULL (=> "keybinds.ini" in the exe dir); for a PSX SystemProfile this is
+// the psx_keybinds.c-format file, for every other profile it is this
+// launcher's own generic keybinds.c-format file (see recomp_launcher.h
+// RecompLauncherCGameInfo.keybinds_path).
+void launcher_binds_load(LauncherModel* m, const char* config_path, const char* keybinds_path);
 
 // A player button was rebound to `scancode` (an SDL_Scancode). `b` is a
 // generic index into the active profile's ControllerSpec.buttons[]
@@ -38,6 +46,10 @@ void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int k
 
 // The config.ini path hotkeys are written to (NULL => default). Set once at load.
 extern const char* g_launcher_config_path;
+// The keybinds file path player buttons are written to (NULL => default).
+// Set once at load; see launcher_binds_load(). Format is chosen from the
+// active profile, not from this path.
+extern const char* g_launcher_keybinds_path;
 
 #ifdef __cplusplus
 }
