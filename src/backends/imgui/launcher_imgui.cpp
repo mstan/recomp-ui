@@ -806,20 +806,8 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     ImGui::Dummy(ImVec2(0, px(4)));
     if (ImGui::Button("Configure", ImVec2(cw, px(32)))) launcher_model_open_config(m, p);
     ImGui::Dummy(ImVec2(0, px(6)));
-    // Analog-stick deadzone belongs to the input device, so it lives on the
-    // controller card (not Audio). PSX-style single mirrored value; shown per
-    // player card when the system exposes it.
-    if (m->has_deadzone_pct) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::TextUnformatted("Deadzone");
-        ImGui::PopStyleColor();
-        const float bw = px(70);
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
-        if (ImGui::Button(launcher_model_deadzone_pct_label(m), ImVec2(bw, px(28))))
-            launcher_model_cycle_deadzone_pct(m);
-        ImGui::Dummy(ImVec2(0, px(6)));
-    }
+    // (Analog-stick deadzone lives on the Configure page — draw_controller_config_view's
+    // per-player Deadzone stepper — not on this dashboard card.)
     // status line, centered
     {
         const bool on = m->s.player_src[p] != 0;
