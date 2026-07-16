@@ -652,12 +652,35 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
                                      : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+    // Block count sits on the RIGHT of the header row; the 15-block grid is on
+    // the LEFT (its own full-width row below), with slightly larger cells.
     char cap[20]; snprintf(cap, sizeof(cap), "%d / 15 blocks", used_count);
+    const float capw = ImGui::CalcTextSize(cap).x;
+    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - capw);
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::TextUnformatted(cap);
     ImGui::PopStyleColor();
 
-    ImGui::Dummy(ImVec2(0, px(4)));
+    ImGui::Dummy(ImVec2(0, px(6)));
+    {
+        const int   kB   = 15;
+        const float bgap = px(4.0f);
+        const float availw = ImGui::GetContentRegionAvail().x;
+        float cell = (availw - bgap * (kB - 1)) / (float)kB;
+        if (cell > px(18.0f)) cell = px(18.0f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        for (int i = 0; i < kB; ++i) {
+            const bool onb = (used & (1u << i)) != 0;
+            const ImVec2 mn(p0.x + i * (cell + bgap), p0.y);
+            const ImVec2 mx(mn.x + cell, mn.y + cell);
+            dl->AddRectFilled(mn, mx, imcol(onb ? th.accent : th.control), px(3.0f));
+            dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
+        }
+        ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
+    }
+
+    ImGui::Dummy(ImVec2(0, px(6)));
     static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
     const float cw = ImGui::GetContentRegionAvail().x;
     const float bw = (cw - px(th.spacing_sm)) * 0.5f;
@@ -804,16 +827,22 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         ImGui::EndCombo();
     }
     ImGui::Dummy(ImVec2(0, px(4)));
-    if (ImGui::Button("Configure", ImVec2(cw, px(32)))) launcher_model_open_config(m, p);
-    ImGui::Dummy(ImVec2(0, px(6)));
-    // (Analog-stick deadzone lives on the Configure page — draw_controller_config_view's
-    // per-player Deadzone stepper — not on this dashboard card.)
-    // status line, centered
+    // Configure + connection status share ONE half/half row (Configure left,
+    // status right) so the card stays short — that keeps the memory cards below
+    // it from being pushed off the bottom. (Analog-stick deadzone lives on the
+    // Configure page's per-player Deadzone stepper, not on this card.)
     {
+        const float gap  = px(th.spacing_sm);
+        const float half = (cw - gap) * 0.5f;
+        const float btnh = px(32);
+        if (ImGui::Button("Configure", ImVec2(half, btnh))) launcher_model_open_config(m, p);
+        ImGui::SameLine(0, gap);
         const bool on = m->s.player_src[p] != 0;
         const char* st = on ? "connected" : "not assigned";
-        float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - sw) * 0.5f);
+        const float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
+        // center the dot+label within the right half, vertically on the button
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (half - sw) * 0.5f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (btnh - ImGui::GetTextLineHeight()) * 0.5f);
         draw_dot(on, th.good, th.text_muted);
         ImGui::TextColored(on ? col(th.good) : col(th.text_muted), "%s", st);
     }
