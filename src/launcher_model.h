@@ -266,6 +266,10 @@ void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, 
 const char* launcher_model_deadzone_pct_label(const LauncherModel* m);  // "37%"
 void launcher_model_set_bios_path(LauncherModel* m, const char* path);
 
+// ---- SRAM save management (Import/Clear; both back up to "<sram>.bak" first) ----
+void launcher_model_import_sram(LauncherModel* m, const char* src);
+void launcher_model_clear_sram(LauncherModel* m);
+
 // ---- PSX memory-card slots (SAVE_MEMCARD only; no-op guarded by slot range) ----
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path);
 

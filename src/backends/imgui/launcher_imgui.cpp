@@ -605,9 +605,16 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     ImGui::TextUnformatted(base[0] ? base : "(none yet)");
     const float bw = px(84);
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
-    ImGui::Button("Import", ImVec2(bw, px(30)));
+    static const char* kSramPatterns[] = { "*.srm", "*.sav" };
+    if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
+        char buf[512];
+        if (launcher_pick_file("Import SRAM save", kSramPatterns, 2,
+                               "SNES save (.srm .sav)", buf, sizeof(buf)))
+            launcher_model_import_sram(m, buf);   // backs up existing to .bak, then copies in
+    }
     ImGui::SameLine(0, px(th.spacing_sm));
-    ImGui::Button("Clear", ImVec2(bw, px(30)));
+    if (ImGui::Button("Clear", ImVec2(bw, px(30))))
+        launcher_model_clear_sram(m);             // backs up to .bak, then deletes
 }
 
 // ---- panel adapters: LauncherPanelDrawFn = void(LauncherModel*, const LauncherTheme*) ----

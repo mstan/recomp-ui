@@ -13,7 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const int kFreqTable[] = { 32000, 44100, 48000 };
+// 32040 = the SNES S-DSP's native output rate; kept reachable in the cycle so
+// users chasing bit-exact SNES audio can pick it (matches the RmlUi launcher).
+static const int kFreqTable[] = { 32040, 32000, 44100, 48000 };
 static const int kFreqCount   = (int)(sizeof(kFreqTable) / sizeof(kFreqTable[0]));
 
 static const int kWindowWidths[]    = { 960, 1280, 1600, 1920 };
@@ -481,6 +483,36 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path) {
     if (slot < 0 || slot > 1) return;
     safe_copy(m->s.memcard_path[slot], sizeof(m->s.memcard_path[slot]), path ? path : "");
+}
+
+// ---- SRAM save management (mirrors the RmlUi launcher's Import/Clear) --------
+// Both back up any existing save to "<sram>.bak" first (never a destructive op
+// without a recoverable copy), matching the old launcher's behavior.
+static bool lm_copy_file(const char* src, const char* dst) {
+    FILE* in = fopen(src, "rb");
+    if (!in) return false;
+    FILE* out = fopen(dst, "wb");
+    if (!out) { fclose(in); return false; }
+    char buf[8192]; size_t n; bool ok = true;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+        if (fwrite(buf, 1, n, out) != n) { ok = false; break; }
+    fclose(in); fclose(out);
+    return ok;
+}
+
+void launcher_model_import_sram(LauncherModel* m, const char* src) {
+    if (!m->sram_path || !m->sram_path[0] || !src || !src[0]) return;
+    char bak[600]; snprintf(bak, sizeof(bak), "%s.bak", m->sram_path);
+    FILE* existing = fopen(m->sram_path, "rb");
+    if (existing) { fclose(existing); lm_copy_file(m->sram_path, bak); }  // back up first
+    lm_copy_file(src, m->sram_path);
+}
+
+void launcher_model_clear_sram(LauncherModel* m) {
+    if (!m->sram_path || !m->sram_path[0]) return;
+    char bak[600]; snprintf(bak, sizeof(bak), "%s.bak", m->sram_path);
+    FILE* existing = fopen(m->sram_path, "rb");
+    if (existing) { fclose(existing); lm_copy_file(m->sram_path, bak); remove(m->sram_path); }
 }
 
 void launcher_model_toggle_msu1(LauncherModel* m) {
