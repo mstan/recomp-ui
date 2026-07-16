@@ -100,6 +100,8 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/pad.tga
                 ${RUI_ASSETS}/img/pad_analog.tga ${RUI_ASSETS}/img/pad_digital.tga
                 ${RUI_ASSETS}/img/memcard.tga
+                ${RUI_ASSETS}/img/verdict_ok.tga ${RUI_ASSETS}/img/verdict_warn.tga
+                ${RUI_ASSETS}/img/verdict_bad.tga ${RUI_ASSETS}/img/verdict_none.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a
