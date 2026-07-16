@@ -152,7 +152,7 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
     } else if (strncmp(c, "player:", 7) == 0) {
         m->cfg_player = atoi(c + 7) ? 1 : 0;
     } else if (strncmp(c, "capbtn:", 7) == 0) {
-        launcher_model_begin_capture(m, (LngButton)atoi(c + 7));   // rebind a player button
+        launcher_model_begin_capture(m, atoi(c + 7));   // rebind a player button (generic spec index)
     } else if (strncmp(c, "caphk:", 6) == 0) {
         launcher_model_begin_hk_capture(m, (LngHotkey)atoi(c + 6)); // rebind a hotkey
     } else if (strncmp(c, "size:", 5) == 0) {

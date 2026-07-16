@@ -3,6 +3,7 @@
 #include "launcher_binds.h"
 #include "launcher_sdlcompat.h"   // SDL header (2 or 3)
 #include "keybinds.h"             // engine keyboard-binding store
+#include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 
 #include <ctype.h>
 #include <stdio.h>
@@ -18,13 +19,44 @@
 
 const char* g_launcher_config_path = NULL;
 
-// LngButton -> keybinds button index. keybinds order is
-// a,b,x,y,l,r,start,select,up,down,left,right (see keybinds.h).
-static const int kKbIndex[LNG_BTN_COUNT] = {
+// Per-system rebind-spec index -> keybinds.c button index. keybinds order is
+// a,b,x,y,l,r,start,select,up,down,left,right,l2,r2,l3,r3 (see keybinds.h).
+//
+// SNES rebind spec order (launcher_system.h kSnesPadButtons): Up,Down,Left,
+// Right,A,B,X,Y,L,R,Start,Select. UNCHANGED from before per-system vocab —
+// SNES bind persistence stays byte-identical (indices 0..11, same mapping).
+static const int kKbIndexSnes[LNG_SNES_PAD_BUTTON_COUNT] = {
     /* UP    */ 8, /* DOWN  */ 9, /* LEFT  */ 10, /* RIGHT */ 11,
     /* A     */ 0, /* B     */ 1, /* X     */ 2,  /* Y     */ 3,
     /* L     */ 4, /* R     */ 5, /* START */ 6,  /* SELECT*/ 7,
 };
+
+// PSX rebind spec order (launcher_system.h kPsxPadButtons): Up,Down,Left,
+// Right,Triangle,Circle,Cross,Square,L1,L2,R1,R2,L3,R3,Start,Select. Face
+// buttons map onto the keybinds a/b/x/y slots by PHYSICAL POSITION — the
+// same positions the SNES table above already uses (x=north, a=east,
+// b=south, y=west) — so Triangle(north)->x, Circle(east)->a, Cross(south)->b,
+// Square(west)->y. L2/R2/L3/R3 use the 4 slots keybinds.c added for systems
+// deeper than SNES.
+static const int kKbIndexPsx[LNG_PSX_PAD_BUTTON_COUNT] = {
+    /* Up */ 8, /* Down */ 9, /* Left */ 10, /* Right */ 11,
+    /* Triangle */ 2, /* Circle */ 0, /* Cross */ 1, /* Square */ 3,
+    /* L1 */ 4, /* L2 */ 12, /* R1 */ 5, /* R2 */ 13,
+    /* L3 */ 14, /* R3 */ 15,
+    /* Start */ 6, /* Select */ 7,
+};
+
+// Resolve the keybinds-index table (and its length) for the model's ACTIVE
+// SystemProfile. Only two shapes exist today (SNES-shaped 12, PSX-shaped
+// 16); every stub profile still borrows kSnesPadButtons (launcher_system.h)
+// so it falls into the SNES-shaped branch, matching its button_count.
+static const int* active_kb_index(const LauncherModel* m, int* out_n) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int bc = prof ? prof->controller.button_count : LNG_SNES_PAD_BUTTON_COUNT;
+    if (bc == LNG_PSX_PAD_BUTTON_COUNT) { *out_n = LNG_PSX_PAD_BUTTON_COUNT; return kKbIndexPsx; }
+    *out_n = LNG_SNES_PAD_BUTTON_COUNT;
+    return kKbIndexSnes;
+}
 
 // The engine's config.ini [KeyMap] keys, in LngHotkey order.
 static const char* kHotkeyKey[LNG_HK_COUNT] = {
@@ -52,8 +84,10 @@ static const char* scancode_label(SDL_Scancode sc) {
 }
 
 static void reload_player_display(LauncherModel* m, int player) {
-    for (int b = 0; b < LNG_BTN_COUNT; ++b) {
-        SDL_Scancode sc = recompui_keybinds_get_button(player, kKbIndex[b]);
+    int n = 0;
+    const int* kb_index = active_kb_index(m, &n);
+    for (int b = 0; b < n; ++b) {
+        SDL_Scancode sc = recompui_keybinds_get_button(player, kb_index[b]);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]), scancode_label(sc));
     }
 }
@@ -219,9 +253,11 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in) {
     reload_hotkey_display(m);
 }
 
-void launcher_binds_set_button(LauncherModel* m, int player, LngButton b, int scancode) {
-    if (b < 0 || b >= LNG_BTN_COUNT || player < 1 || player > 2) return;
-    recompui_keybinds_set_button(player, kKbIndex[b], (SDL_Scancode)scancode);
+void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {
+    int n = 0;
+    const int* kb_index = active_kb_index(m, &n);
+    if (b < 0 || b >= n || player < 1 || player > 2) return;
+    recompui_keybinds_set_button(player, kb_index[b], (SDL_Scancode)scancode);
     recompui_keybinds_save();
     copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
              scancode_label((SDL_Scancode)scancode));
