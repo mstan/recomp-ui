@@ -511,7 +511,7 @@ void draw_verdict_block(const LauncherModel* m, const LauncherTheme& th, float a
 
 void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = false) {
     if (!begin_panel("game", 0, fill_h)) { end_panel(); return; }
-    eyebrow("GAME");
+    // No "GAME" eyebrow: the box art itself tells the user this is the game.
     const float availw = ImGui::GetContentRegionAvail().x;
 
     // Verify module: verify.mode==1 systems (PSX) render a disc-verdict block
@@ -529,8 +529,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (disc_verdict) reserve += px(96.0f);           // taller: icon+headline + 3-row checklist
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
-        if (art_h > px(280.0f)) art_h = px(280.0f);
-        if (art_h < px(132.0f)) art_h = px(132.0f);
+        if (art_h > px(320.0f)) art_h = px(320.0f);   // allow a larger hero box art
+        if (art_h < px(216.0f)) art_h = px(216.0f);   // keep it big enough to balance the side column
         hero_boxart_centered(g_boxart, art_h / g_scale, availw);
     }
     ImGui::Dummy(ImVec2(0, px(10)));
@@ -680,18 +680,18 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
     }
 
-    ImGui::Dummy(ImVec2(0, px(6)));
+    ImGui::Dummy(ImVec2(0, px(10)));
     static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
     const float cw = ImGui::GetContentRegionAvail().x;
     const float bw = (cw - px(th.spacing_sm)) * 0.5f;
-    if (ImGui::Button("Browse", ImVec2(bw, px(26)))) {
+    if (ImGui::Button("Browse", ImVec2(bw, px(32)))) {
         char buf[512];
         if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
                                "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
             launcher_model_set_memcard_path(m, slot, buf);
     }
     ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button("New", ImVec2(bw, px(26)))) {
+    if (ImGui::Button("New", ImVec2(bw, px(32)))) {
         char buf[512];
         if (launcher_pick_file("Create new memory card", kCardPatterns, 3,
                                "PS1 memory card (.mcd)", buf, sizeof(buf)))
