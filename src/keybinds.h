@@ -13,7 +13,7 @@ extern "C" {
  * Layout matches the SNES gamepad: A, B, X, Y, L, R, Start, Select, and
  * the d-pad. Two players. Each button maps to one SDL_Scancode.
  *
- * The button bitmask returned by keybinds_read_player() uses the same
+ * The button bitmask returned by recompui_keybinds_read_player() uses the same
  * 12-bit layout as SMW's $4218/$4219 joypad register pair, low byte first:
  *
  *   bit  0: R              (high byte, $4219 bit 4)
@@ -47,29 +47,29 @@ typedef struct {
 
 /* Initialize keybinds from <exe_dir>/keybinds.ini. Generates a default
  * file if one doesn't exist. exe_path may be NULL or argv[0]. */
-void keybinds_init(const char *exe_path);
+void recompui_keybinds_init(const char *exe_path);
 
 /* Get current keybind configuration (read-only view). */
-const KeyBinds *keybinds_get(void);
+const KeyBinds *recompui_keybinds_get(void);
 
 /* Build a 12-bit SNES button bitmask for the given player (1 or 2)
  * from the SDL keyboard state. See header docstring for bit layout. */
-uint16_t keybinds_read_player(const uint8_t *keys, int player);
+uint16_t recompui_keybinds_read_player(const uint8_t *keys, int player);
 
 /* ── Rebind API (used by the launcher's Configure view) ──────────────────
- * Buttons are indexed 0..keybinds_button_count()-1 in the fixed order
+ * Buttons are indexed 0..recompui_keybinds_button_count()-1 in the fixed order
  * a, b, x, y, l, r, start, select, up, down, left, right — the same order
  * keybinds.ini writes them. Scancodes, NOT keycodes (keybinds.ini stores
  * SDL scancode names; config.ini's [KeyMap] hotkeys use keycode names). */
-int          keybinds_button_count(void);
-const char  *keybinds_button_name(int button);              /* "a".."right" */
-SDL_Scancode keybinds_get_button(int player, int button);   /* player 1|2 */
-void         keybinds_set_button(int player, int button, SDL_Scancode sc);
+int          recompui_keybinds_button_count(void);
+const char  *recompui_keybinds_button_name(int button);              /* "a".."right" */
+SDL_Scancode recompui_keybinds_get_button(int player, int button);   /* player 1|2 */
+void         recompui_keybinds_set_button(int player, int button, SDL_Scancode sc);
 /* Reset one player's bindings to the built-in defaults (P2 = all unbound). */
-void         keybinds_reset_player(int player);
-/* Persist the current bindings to keybinds.ini (same path keybinds_init
- * resolved; call keybinds_init first). */
-void         keybinds_save(void);
+void         recompui_keybinds_reset_player(int player);
+/* Persist the current bindings to keybinds.ini (same path recompui_keybinds_init
+ * resolved; call recompui_keybinds_init first). */
+void         recompui_keybinds_save(void);
 
 #ifdef __cplusplus
 }

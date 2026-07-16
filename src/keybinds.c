@@ -23,7 +23,7 @@
  */
 
 /* One literal for the default layout, shared by the boot state and the
- * launcher's Reset-to-Defaults (keybinds_reset_player). */
+ * launcher's Reset-to-Defaults (recompui_keybinds_reset_player). */
 #define KEYBINDS_DEFAULTS { \
     .p1 = { \
         .a      = SDL_SCANCODE_X, \
@@ -207,7 +207,7 @@ static void load_ini(const char *path) {
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
-void keybinds_init(const char *exe_path) {
+void recompui_keybinds_init(const char *exe_path) {
     derive_ini_path(exe_path);
     FILE *test = fopen(s_ini_path, "r");
     if (test) {
@@ -218,18 +218,18 @@ void keybinds_init(const char *exe_path) {
     }
 }
 
-const KeyBinds *keybinds_get(void) {
+const KeyBinds *recompui_keybinds_get(void) {
     return &s_binds;
 }
 
 /* ── Rebind API (launcher Configure view) ────────────────────────────────── */
 
-int keybinds_button_count(void) {
+int recompui_keybinds_button_count(void) {
     return (int)(sizeof(s_buttons) / sizeof(s_buttons[0])) - 1;  /* minus NULL terminator */
 }
 
-const char *keybinds_button_name(int button) {
-    if (button < 0 || button >= keybinds_button_count()) return "?";
+const char *recompui_keybinds_button_name(int button) {
+    if (button < 0 || button >= recompui_keybinds_button_count()) return "?";
     return s_buttons[button].name;
 }
 
@@ -237,21 +237,21 @@ static PlayerBinds *player_binds(int player) {
     return (player == 2) ? &s_binds.p2 : &s_binds.p1;
 }
 
-SDL_Scancode keybinds_get_button(int player, int button) {
-    if (button < 0 || button >= keybinds_button_count()) return SDL_SCANCODE_UNKNOWN;
+SDL_Scancode recompui_keybinds_get_button(int player, int button) {
+    if (button < 0 || button >= recompui_keybinds_button_count()) return SDL_SCANCODE_UNKNOWN;
     return *(SDL_Scancode *)((char *)player_binds(player) + s_buttons[button].offset);
 }
 
-void keybinds_set_button(int player, int button, SDL_Scancode sc) {
-    if (button < 0 || button >= keybinds_button_count()) return;
+void recompui_keybinds_set_button(int player, int button, SDL_Scancode sc) {
+    if (button < 0 || button >= recompui_keybinds_button_count()) return;
     *(SDL_Scancode *)((char *)player_binds(player) + s_buttons[button].offset) = sc;
 }
 
-void keybinds_reset_player(int player) {
+void recompui_keybinds_reset_player(int player) {
     *player_binds(player) = (player == 2) ? s_default_binds.p2 : s_default_binds.p1;
 }
 
-void keybinds_save(void) {
+void recompui_keybinds_save(void) {
     if (!s_ini_path[0])
         strcpy(s_ini_path, "keybinds.ini");
     write_defaults(s_ini_path);   /* writes the CURRENT s_binds, header included */
@@ -259,7 +259,7 @@ void keybinds_save(void) {
 
 /* SNES joypad bitmask layout — matches $4218/$4219 (low/high byte) packing.
  * Returns 0 if either `keys` is NULL or player is out of range. */
-uint16_t keybinds_read_player(const uint8_t *keys, int player) {
+uint16_t recompui_keybinds_read_player(const uint8_t *keys, int player) {
     if (!keys) return 0;
     const PlayerBinds *pb = (player == 2) ? &s_binds.p2 : &s_binds.p1;
     uint16_t b = 0;

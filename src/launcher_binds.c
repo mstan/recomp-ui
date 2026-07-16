@@ -53,7 +53,7 @@ static const char* scancode_label(SDL_Scancode sc) {
 
 static void reload_player_display(LauncherModel* m, int player) {
     for (int b = 0; b < LNG_BTN_COUNT; ++b) {
-        SDL_Scancode sc = keybinds_get_button(player, kKbIndex[b]);
+        SDL_Scancode sc = recompui_keybinds_get_button(player, kKbIndex[b]);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]), scancode_label(sc));
     }
 }
@@ -213,7 +213,7 @@ static void format_hotkey(int keycode, int kmod, char* out, size_t cap) {
 
 void launcher_binds_load(LauncherModel* m, const char* config_path_in) {
     g_launcher_config_path = config_path_in;
-    keybinds_init(NULL);               // load/generate keybinds.ini (exe-anchored)
+    recompui_keybinds_init(NULL);               // load/generate keybinds.ini (exe-anchored)
     reload_player_display(m, 1);
     reload_player_display(m, 2);
     reload_hotkey_display(m);
@@ -221,16 +221,16 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in) {
 
 void launcher_binds_set_button(LauncherModel* m, int player, LngButton b, int scancode) {
     if (b < 0 || b >= LNG_BTN_COUNT || player < 1 || player > 2) return;
-    keybinds_set_button(player, kKbIndex[b], (SDL_Scancode)scancode);
-    keybinds_save();
+    recompui_keybinds_set_button(player, kKbIndex[b], (SDL_Scancode)scancode);
+    recompui_keybinds_save();
     copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
              scancode_label((SDL_Scancode)scancode));
 }
 
 void launcher_binds_reset_player(LauncherModel* m, int player) {
     if (player < 1 || player > 2) return;
-    keybinds_reset_player(player);
-    keybinds_save();
+    recompui_keybinds_reset_player(player);
+    recompui_keybinds_save();
     reload_player_display(m, player);
 }
 

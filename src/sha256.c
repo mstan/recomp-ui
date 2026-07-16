@@ -58,7 +58,7 @@ static void sha256_block(uint32_t H[8], const uint8_t blk[64]) {
     H[4]+=e; H[5]+=f; H[6]+=g; H[7]+=h;
 }
 
-void sha256_compute(const uint8_t *data, size_t len, uint8_t out[32]) {
+void recompui_sha256_compute(const uint8_t *data, size_t len, uint8_t out[32]) {
     uint32_t H[8] = {
         0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
         0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u,

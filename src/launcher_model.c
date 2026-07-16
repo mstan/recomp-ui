@@ -128,9 +128,9 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
                     size_t hdr  = ((size_t)n % 1024 == 512) ? 512 : 0;
                     const uint8_t* body = buf + hdr;
                     size_t blen = (size_t)n - hdr;
-                    uint32_t crc = crc32_compute(body, blen);
+                    uint32_t crc = recompui_crc32_compute(body, blen);
                     uint8_t  sha[32];
-                    sha256_compute(body, blen, sha);
+                    recompui_sha256_compute(body, blen, sha);
                     m->crc_match = m->has_expected_crc && crc == m->expected_crc;
                     for (size_t k = 0; k < m->num_known_sha256; ++k)
                         if (memcmp(sha, m->known_sha256[k], 32) == 0) { m->sha_match = true; break; }

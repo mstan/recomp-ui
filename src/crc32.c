@@ -13,7 +13,7 @@ static void crc32_init_table(void) {
     s_table_ready = 1;
 }
 
-uint32_t crc32_compute(const uint8_t *data, size_t len) {
+uint32_t recompui_crc32_compute(const uint8_t *data, size_t len) {
     if (!s_table_ready) crc32_init_table();
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < len; i++)
