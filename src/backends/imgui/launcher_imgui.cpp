@@ -49,7 +49,7 @@ float  px(float logical) { return logical * g_scale; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
-LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand;
+LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
 ImTextureID tid(const LauncherTexture& t) { return (ImTextureID)(intptr_t)t.id; }
 
 LauncherPad g_pads[LNG_MAX_PADS];   // live gamepad list (repolled every frame)
@@ -540,13 +540,142 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_game_panel(m, *th, g_game_fill_h);
 }
 
-// Standalone SAVE card (own eyebrow) — not composed by any SystemProfile yet
-// (SAVES still folds into GAME per draw_game_panel, matching today's pixel
-// layout exactly), registered so the module is a complete, addressable unit
-// per the architecture and ready for a future standalone composition.
-int avail_save(const LauncherModel* m) { return m->saves_supported; }
+// ---- Save module, SAVE_MEMCARD half (PSX) -----------------------------------
+// SAVE_SRAM keeps the compact row above, folded into the GAME card (SNES,
+// unchanged). SAVE_MEMCARD (PSX) is a standalone WIDE dashboard panel (see
+// kPanelsDashboardPsx in launcher_system.h): one sub-section per card slot —
+// icon + path picker (Browse/New) + a real 15-block usage grid, matching PS1
+// memory-card conventions (each card holds 15 save blocks).
+
+// One slot's picker row: "Path" + card file + Browse (pick an existing image)
+// / New (choose where to create one). Mirrors draw_save_row's shape, sourced
+// from m->s.memcard_path[slot] (settings-editable, ABI-mirrored like
+// bios_path) instead of the borrowed read-only sram_path.
+void draw_memcard_path_row(LauncherModel* m, const LauncherTheme& th, int slot) {
+    const char* mp = m->s.memcard_path[slot];
+    const char* base = mp;
+    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Path");
+    ImGui::PopStyleColor();
+    ImGui::SameLine(px(76));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(base[0] ? base : "(none yet)");
+    const float bw = px(84);
+    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
+    static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
+    if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+        char buf[512];
+        if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
+                               "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
+            launcher_model_set_memcard_path(m, slot, buf);
+    }
+    ImGui::SameLine(0, px(th.spacing_sm));
+    if (ImGui::Button("New", ImVec2(bw, px(30)))) {
+        char buf[512];
+        if (launcher_pick_file("Create new memory card", kCardPatterns, 3,
+                               "PS1 memory card (.mcd)", buf, sizeof(buf)))
+            launcher_model_set_memcard_path(m, slot, buf);
+    }
+}
+
+// 15-block usage grid (real PS1 cards hold 15 save blocks). `used` is a
+// bitmask, bit i = block i occupied. Sourced from m->memcard_blocks_used[slot]
+// when a host's SaveSpec.probe hook is wired up (see draw_memcard_slot);
+// otherwise the caller passes a representative placeholder pattern so the
+// grid always renders as real UI, never a dead/empty box.
+void draw_memcard_block_grid(const LauncherTheme& th, uint16_t used, float avail_w) {
+    const int kBlocks = 15;
+    const float gap = px(4.0f);
+    float cell = (avail_w - gap * (kBlocks - 1)) / (float)kBlocks;
+    if (cell > px(24.0f)) cell = px(24.0f);
+    if (cell < px(10.0f)) cell = px(10.0f);
+    const float total_w = cell * kBlocks + gap * (kBlocks - 1);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < kBlocks; ++i) {
+        bool on = (used & (1u << i)) != 0;
+        ImVec2 mn(p0.x + i * (cell + gap), p0.y);
+        ImVec2 mx(mn.x + cell, mn.y + cell);
+        dl->AddRectFilled(mn, mx, imcol(on ? th.accent : th.control), px(3.0f));
+        dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
+    }
+    ImGui::Dummy(ImVec2(total_w, cell));
+}
+
+// One full memory-card slot: icon + header, path row, block grid, and a
+// "N / 15 blocks used" caption. `probe` (SystemProfile.save.probe) is the
+// host hook that would refresh m->memcard_blocks_used[slot] from the real
+// card image; it is NULL in every profile today (unimplemented proto hook),
+// so this falls back to a couple of lightly-filled placeholder blocks rather
+// than an all-empty grid.
+void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    ImGui::PushID(slot);
+
+    image_fit(g_memcard, 26, 26);
+    ImGui::SameLine(0, px(8));
+    ImGui::AlignTextToFramePadding();
+    char hdr[24]; snprintf(hdr, sizeof(hdr), "MEMORY CARD %d", slot + 1);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+    ImGui::TextUnformatted(hdr);
+    ImGui::PopStyleColor();
+
+    ImGui::Dummy(ImVec2(0, px(6)));
+    draw_memcard_path_row(m, th, slot);
+    ImGui::Dummy(ImVec2(0, px(10)));
+
+    const bool have_probe = prof && prof->save.probe && prof->save.probe(m, slot);
+    const uint16_t used = have_probe ? m->memcard_blocks_used[slot]
+                                     : (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
+    draw_memcard_block_grid(th, used, ImGui::GetContentRegionAvail().x);
+
+    int used_count = 0;
+    for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+    ImGui::Dummy(ImVec2(0, px(4)));
+    char cap[32]; snprintf(cap, sizeof(cap), "%d / 15 blocks used", used_count);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    ImGui::TextUnformatted(cap);
+    ImGui::PopStyleColor();
+
+    ImGui::PopID();
+}
+
+// Available whenever this system's SaveSpec says there's something to show:
+// SAVE_MEMCARD (PSX) always offers the panel — the memory-card slots exist
+// independent of whether the GAME itself also has legacy SRAM — while
+// SAVE_SRAM keeps the original per-GAME gate (sram_path != NULL) and
+// SAVE_NONE stays hidden.
+int avail_save(const LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
+    if (kind == SAVE_MEMCARD) return 1;
+    if (kind == SAVE_SRAM)    return m->saves_supported;
+    return 0;
+}
+
 void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
-    if (begin_panel("save", 0)) { eyebrow("SAVES"); draw_save_row(m, *th); }
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
+    if (!begin_panel("save", 0)) { end_panel(); return; }
+    if (kind == SAVE_MEMCARD) {
+        eyebrow("MEMORY CARDS");
+        const int slots = (prof->save.slots > 0 && prof->save.slots <= 2) ? prof->save.slots : 2;
+        for (int slot = 0; slot < slots; ++slot) {
+            if (slot) {
+                ImGui::Dummy(ImVec2(0, px(10)));
+                ImGui::PushStyleColor(ImGuiCol_Separator, col(th->border));
+                ImGui::Separator();
+                ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0, px(10)));
+            }
+            draw_memcard_slot(m, *th, slot);
+        }
+    } else {
+        eyebrow("SAVES");
+        draw_save_row(m, *th);
+    }
     end_panel();
 }
 
@@ -681,20 +810,29 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const LauncherPanel* game_p = find_composed(prof->panels_dashboard, "game", m);
     const LauncherPanel* ctrl_p = find_composed(prof->panels_dashboard, "controller", m);
+    const LauncherPanel* save_p = find_composed(prof->panels_dashboard, "save", m);
 
     if (logical_w >= 820) {
         const float gap = px(th.spacing_md);
+        // When a WIDE panel (save) follows this row, the columns must hug
+        // their own content (AutoResizeY) instead of stretching to fill the
+        // whole scrollable "body" — otherwise there's never any room left
+        // below them and the WIDE panel silently draws off the bottom edge.
+        // SNES's composition never lists "save" here (save_p == nullptr), so
+        // it keeps the original fill-to-height columns byte-identical.
+        const bool hug = (save_p != nullptr);
+        const ImGuiChildFlags col_flags = hug ? ImGuiChildFlags_AutoResizeY : ImGuiChildFlags_None;
         // Art-led left column sized to the box art; side column takes the rest.
         if (game_p) {
-            g_game_fill_h = true;
-            begin_container("dash_l", ImVec2(px(400), 0));
+            g_game_fill_h = !hug;
+            begin_container("dash_l", ImVec2(px(400), 0), col_flags);
             game_p->draw(m, &th);
             end_container();
         }
 
         if (game_p && ctrl_p) ImGui::SameLine(0, gap);
         if (ctrl_p) {
-            begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
+            begin_container("dash_r", ImVec2(0, 0), col_flags);
                 // One self-contained card per player. SAVES now lives in the GAME
                 // card and MSU-1 in Settings > Audio, so the side column is just
                 // the controller card(s).
@@ -705,6 +843,15 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
         if (game_p && ctrl_p) ImGui::Spacing();
         if (ctrl_p) ctrl_p->draw(m, &th);
+    }
+
+    // WIDE slot: the standalone memory-card panel, full width below the
+    // game/controller row. Only PSX's composition array lists "save" here
+    // (see kPanelsDashboardPsx) — SNES's kPanelsDashboardCommon does not, so
+    // its SRAM row stays folded into the GAME card exactly as today.
+    if (save_p) {
+        ImGui::Dummy(ImVec2(0, px(th.spacing_md)));
+        save_p->draw(m, &th);
     }
 }
 
@@ -1385,6 +1532,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_pad_analog  = launcher_texture_load(asset("assets/img/pad_analog.tga").c_str());
     g_pad_digital = launcher_texture_load(asset("assets/img/pad_digital.tga").c_str());
     g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
+    // memcard.tga is already 32-bit with real alpha (no colorkey backdrop),
+    // same as pad_analog.tga/pad_digital.tga above.
+    g_memcard = launcher_texture_load(asset("assets/img/memcard.tga").c_str());
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
     float applied_scale = 0.0f;
@@ -1435,6 +1585,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_pad_analog);
     launcher_texture_free(&g_pad_digital);
     launcher_texture_free(&g_brand);
+    launcher_texture_free(&g_memcard);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();

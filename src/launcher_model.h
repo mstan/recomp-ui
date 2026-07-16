@@ -74,6 +74,14 @@ typedef struct {
     const char* msu1_note;           // borrowed; which patch, shown in the card
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
     const char* sram_path;           // borrowed; NULL when the game has no SRAM
+
+    // ---- PSX memory-card block usage (SAVE_MEMCARD; see launcher_system.h) ----
+    // Per-slot bitmask over the 15 PS1 card blocks (bit i = block i occupied).
+    // Populated by a SystemProfile's SaveSpec.probe hook (SaveProbeFn) once a
+    // host wires one up; left zeroed/unused while probe is NULL (every profile
+    // today), in which case the Save panel renders a representative placeholder
+    // grid instead of reading this field.
+    uint16_t    memcard_blocks_used[2];
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.
@@ -224,6 +232,9 @@ const char* launcher_model_language_label(const LauncherModel* m);
 void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, wraps; mirrors both players
 const char* launcher_model_deadzone_pct_label(const LauncherModel* m);  // "37%"
 void launcher_model_set_bios_path(LauncherModel* m, const char* path);
+
+// ---- PSX memory-card slots (SAVE_MEMCARD only; no-op guarded by slot range) ----
+void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path);
 
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);
