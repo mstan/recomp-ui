@@ -377,10 +377,20 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta) {
 }
 
 // "Label ......... [control]" row: label baseline-aligned to the control.
-void row_label(const char* text, const LauncherTheme& th) {
+// col_w > 0 reserves a FIXED label column so the control starts at the same x
+// on every row — the caller passes the widest label's width (+gap) to line all
+// the controls up into a clean grid. col_w == 0 keeps the legacy flow layout
+// (control hugs the label with a fixed gap).
+void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
+    float x0 = ImGui::GetCursorPosX();
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(th.text_muted), "%s", text);
-    ImGui::SameLine(0.0f, px(th.spacing_md));  // flow from label width (no fixed-x overlap)
+    if (col_w > 0.0f) {
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::SetCursorPosX(x0 + col_w);          // fixed label column → controls align
+    } else {
+        ImGui::SameLine(0.0f, px(th.spacing_md));  // flow from label width (no fixed-x overlap)
+    }
 }
 
 // ---- views -----------------------------------------------------------------
@@ -640,13 +650,31 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     const char* sp = m->sram_path ? m->sram_path : "";
     const char* base = sp;
     for (const char* q = sp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+
+    // Reflect the ACTUAL save file state, not just the configured path. Showing
+    // the filename unconditionally made a present and an absent save look
+    // identical — so Clear (which correctly no-ops when there's nothing to
+    // delete) read as "broken". Stat the file each frame: show its size when it
+    // exists, "no save yet" when it doesn't, and disable Clear when empty so the
+    // button's effect is always visible.
+    long sz = -1;
+    if (sp[0]) { FILE* f = fopen(sp, "rb"); if (f) { fseek(f, 0, SEEK_END); sz = ftell(f); fclose(f); } }
+    const bool has_save = sz >= 0;
+
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Save");
     ImGui::PopStyleColor();
     ImGui::SameLine(px(76));
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(base[0] ? base : "(none yet)");
+    if (has_save) {
+        char lbl[160];
+        if (sz >= 1024) snprintf(lbl, sizeof lbl, "%s  (%.0f KB)", base, sz / 1024.0);
+        else            snprintf(lbl, sizeof lbl, "%s  (%ld B)", base, sz);
+        ImGui::TextUnformatted(lbl);
+    } else {
+        ImGui::TextColored(col(th.text_muted), "no save yet");
+    }
     const float bw = px(84);
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
     static const char* kSramPatterns[] = { "*.srm", "*.sav" };
@@ -657,8 +685,10 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_import_sram(m, buf);   // backs up existing to .bak, then copies in
     }
     ImGui::SameLine(0, px(th.spacing_sm));
+    ImGui::BeginDisabled(!has_save);              // nothing to clear when no save exists
     if (ImGui::Button("Clear", ImVec2(bw, px(30))))
         launcher_model_clear_sram(m);             // backs up to .bak, then deletes
+    ImGui::EndDisabled();
 }
 
 // ---- panel adapters: LauncherPanelDrawFn = void(LauncherModel*, const LauncherTheme*) ----
@@ -1041,25 +1071,39 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_fullscreen_toggle;
 }
 
+// Inline amber "EXPERIMENTAL" tag, drawn on the same row right after a control
+// whose feature is not yet production-ready. Currently every SNES 16:9
+// widescreen path is experimental (per-game rendering still maturing), so the
+// widescreen checkbox always carries this marker. Uses the same th.warn amber
+// as the other cautionary labels (e.g. the MSU-1 notice).
+static void experimental_tag(const LauncherTheme& th) {
+    ImGui::SameLine(0, px(8));
+    ImGui::TextColored(col(th.warn), "EXPERIMENTAL");
+}
+
 void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
 
     if (!any_deep_display(m)) {
-        // ---- legacy minimal surface (SNES etc.) — byte-identical to before ----
-        row_label("Window scale", th);
+        // ---- legacy minimal surface (SNES etc.) — aligned label grid ----------
+        float cw = ImGui::CalcTextSize("Linear filtering").x;   // widest legacy label
+        { float t = ImGui::CalcTextSize("Widescreen 16:9").x; if (t > cw) cw = t; }
+        cw += px(18.0f);
+        row_label("Window scale", th, cw);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
-        row_label("Linear filtering", th);
+        row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
         if (m->aspect_mask) {   // PSX-style: 4:3/16:9/21:9 cycle (supersedes the legacy checkbox)
-            row_label("Aspect ratio", th);
+            row_label("Aspect ratio", th, cw);
             if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
                 launcher_model_cycle_aspect(m);
         } else if (m->widescreen_supported) {   // legacy module: only for games that support it
-            row_label("Widescreen 16:9", th);
+            row_label("Widescreen 16:9", th, cw);
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
+            experimental_tag(th);
         }
         return;
     }
@@ -1099,6 +1143,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Widescreen 16:9", th);
         bool ws = m->s.widescreen != 0;
         if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
+        experimental_tag(th);
     }
 
     if (m->has_texture_filter) {
@@ -1177,15 +1222,20 @@ void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
 
 void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("AUDIO");
-    row_label("Sample rate", th);
+    // Fixed label column so the sample-rate button, the volume stepper's "-",
+    // and the SPU toggle all share the same left edge (aligned grid).
+    float cw = ImGui::CalcTextSize("Sample rate").x;
+    if (m->has_spu_hq) { float t = ImGui::CalcTextSize("High-quality SPU").x; if (t > cw) cw = t; }
+    cw += px(18.0f);
+    row_label("Sample rate", th, cw);
     if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
         launcher_model_cycle_freq(m);
-    row_label("Volume", th);
+    row_label("Volume", th, cw);
     int dv = 0; stepper("vol", m->s.volume, "%", &dv);
     if (dv) launcher_model_volume_delta(m, dv);
 
     if (m->has_spu_hq) {
-        row_label("High-quality SPU", th);
+        row_label("High-quality SPU", th, cw);
         bool hq = m->s.spu_hq != 0;
         if (ImGui::Checkbox("##spuhq", &hq)) launcher_model_toggle_spu_hq(m);
     }
@@ -1220,7 +1270,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(col(th.text_muted), "%s", elided);
         ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
-        if (ImGui::Button("Browse", ImVec2(bw, px(28)))) {
+        if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {  // px(30) matches the other settings buttons + the row's frame height (px(28) sat the label high)
             char buf[512];
             if (launcher_pick_folder("Select MSU-1 music folder", buf, sizeof(buf)))
                 launcher_model_set_msu1_dir(m, buf);
@@ -1294,14 +1344,30 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     const float cell_w = px(280.0f);
     int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
     cols = cols < 1 ? 1 : (cols > 3 ? 3 : cols);
+    // Uniform label column: measure the widest bound hotkey name up front so
+    // every bind button in the grid starts at the same x within its cell —
+    // aligned left edges (and, since the buttons are fixed-width, aligned right
+    // edges too), instead of hugging each variable-width label.
+    float label_w = 0.0f;
+    for (int h = 0; h < LNG_HK_COUNT; ++h) {
+        if (!(mask & (1u << h))) continue;
+        float w = ImGui::CalcTextSize(launcher_hotkey_name((LngHotkey)h)).x;
+        if (w > label_w) label_w = w;
+    }
+    label_w += px(16.0f);   // gap between label and its bind button
     if (ImGui::BeginTable("hk", cols)) {
         for (int h = 0; h < LNG_HK_COUNT; ++h) {
             if (!(mask & (1u << h))) continue;
             ImGui::TableNextColumn();
             ImGui::PushID(h);
+            const char* hkname = launcher_hotkey_name((LngHotkey)h);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%s", launcher_hotkey_name((LngHotkey)h));
-            ImGui::SameLine(0.0f, px(th.spacing_sm));
+            ImGui::TextColored(col(th.text_muted), "%s", hkname);
+            // Pad with RELATIVE spacing (not absolute x) so the bind button
+            // starts at a uniform offset within every table cell — absolute
+            // SameLine() fights ImGui's per-cell cursor tracking and spills
+            // buttons into the wrong column.
+            ImGui::SameLine(0.0f, label_w - ImGui::CalcTextSize(hkname).x);
             const bool cap = m->hk_capturing && m->capture_hk == (LngHotkey)h;
             const char* lbl = cap ? "[ press... ]"
                             : m->hotkeys[h][0] ? m->hotkeys[h] : "(unbound)";
