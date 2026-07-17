@@ -1768,19 +1768,32 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    g_boxart = launcher_texture_load(asset("assets/img/boxart.tga").c_str());
+    // Box art: per-game path from the ABI when given (multi-variant repos
+    // stage one file per variant in a shared build dir), else the default.
+    g_boxart = launcher_texture_load(
+        asset(m->boxart_path && m->boxart_path[0] ? m->boxart_path
+                                                  : "assets/img/boxart.tga").c_str());
     // Controller art comes from the active SystemProfile's ControllerSpec —
     // never hardcoded console filenames in this common backend. Conventions:
-    // `image` is 24-bit TGA with a flat backdrop baked in -> keyed out so the
-    // pad art sits transparently on the panel; `image_analog`/`image_digital`
-    // (the optional PSX-style mode-swap pair) are 32-bit with real alpha ->
-    // the plain alpha-respecting loader, not colorkey.
+    // a 32-bit TGA carries real alpha -> the plain alpha-respecting loader;
+    // a 24-bit TGA has a flat backdrop baked in -> keyed out (top-left pixel)
+    // so the art sits transparently on the panel. `image_analog`/
+    // `image_digital` (the optional PSX-style mode-swap pair) are 32-bit.
     {
         const SystemProfile* prof = (const SystemProfile*)m->profile;
         const char* pad_img = (prof && prof->controller.image)
                                 ? prof->controller.image : "pad.tga";
-        g_pad = launcher_texture_load_colorkey(
-            asset((std::string("assets/img/") + pad_img).c_str()).c_str(), 24);
+        std::string pad_path = asset((std::string("assets/img/") + pad_img).c_str());
+        // TGA header byte 16 = bits per pixel: pick the loader by depth.
+        int bpp = 0;
+        if (FILE* f = fopen(pad_path.c_str(), "rb")) {
+            unsigned char hdr[18];
+            if (fread(hdr, 1, sizeof(hdr), f) == sizeof(hdr)) bpp = hdr[16];
+            fclose(f);
+        }
+        g_pad = (bpp == 32)
+            ? launcher_texture_load(pad_path.c_str())
+            : launcher_texture_load_colorkey(pad_path.c_str(), 24);
         if (prof && prof->controller.image_analog)
             g_pad_analog = launcher_texture_load(
                 asset((std::string("assets/img/") + prof->controller.image_analog).c_str()).c_str());

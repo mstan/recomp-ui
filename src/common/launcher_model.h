@@ -135,6 +135,9 @@ typedef struct {
     // (re-run on every disc/card change) instead of the placeholder synthesis.
     int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
+    // Box-art path relative to the assets dir (GameInfo.boxart_path);
+    // NULL => the default "assets/img/boxart.tga".
+    const char* boxart_path;
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.

@@ -163,6 +163,12 @@ typedef struct RecompLauncherCGameInfo {
     // 1 if `out` was filled.
     int (*disc_verify)(const char* disc_path, RecompLauncherCDiscVerify* out);
     int (*memcard_inspect)(const char* card_path, RecompLauncherCMemcard* out);
+
+    /* Box-art image path relative to the assets dir. NULL/"" => the default
+     * "assets/img/boxart.tga". Multi-variant repos whose variants share one
+     * build dir stage one file per variant (e.g. "assets/img/boxart_firered
+     * .tga") and point each exe's GameInfo here. */
+    const char* boxart_path;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
