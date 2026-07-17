@@ -97,6 +97,18 @@ function(recomp_target_launcher_ui TGT)
         RECOMP_LAUNCHER           # un-gate the GUI launcher block in the host's main()
         SDL_MAIN_HANDLED)         # our real main() is the entry point (no SDL_main redirect)
 
+    # OpenGL: the ImGui GL3 backend + launcher_gl.c need the system GL library.
+    # Link it here so a host gets it from this ONE call (self-contained) rather
+    # than having to remember to link OpenGL itself — mirrors the standalone
+    # CMakeLists.txt. SDL2 is still the host's to provide (its provenance varies:
+    # vendored, find_package, etc.); GL is a uniform system lib, so it lives here.
+    if(WIN32)
+        target_link_libraries(${TGT} PRIVATE opengl32)
+    else()
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(${TGT} PRIVATE OpenGL::GL ${CMAKE_DL_LIBS})
+    endif()
+
     if(NOT MSVC)
         # the vendored ImGui + tinyfiledialogs compile clean; nothing extra needed.
     endif()
