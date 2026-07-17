@@ -63,6 +63,12 @@ typedef struct RecompLauncherCSettings {
     // present). 0 = unset (host predates this field) -> the model defaults it
     // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
     int  memcard_enabled[2];
+
+    // ---- NES-style settings (capability-gated; see has_integer_scale /
+    // hdpack_supported below) — appended additively, same ABI convention. ----
+    int  integer_scale;       // bool: snap the game image to integer multiples
+    int  hdpack_enabled;      // bool: load a Mesen-format HD texture pack
+    char hdpack_dir[512];     // folder containing the pack's hires.txt
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -188,6 +194,23 @@ typedef struct RecompLauncherCGameInfo {
     const char* const* aspect_labels;
     int  num_aspect_labels;
     int  aspect_experimental;
+
+    // ---- NES-style capability flags (appended additively) ----
+    int  has_integer_scale;   // Integer-scale checkbox in Display settings
+    // HD texture packs (Mesen hires.txt format): 1 shows the HD-pack toggle +
+    // folder picker in Display settings (NES defaults this ON per game; a
+    // stock build that must not load packs passes 0 — e.g. unpatched Zelda).
+    int  hdpack_supported;
+    // Password/mantra save (e.g. Faxanadu): when password_save_path is
+    // non-NULL the SAVES row shows the password text (read-only, editable
+    // behind an Edit + confirm step) instead of the binary SRAM file UI.
+    // The file is a single line of text. Independent of sram_path.
+    const char* password_save_path;   // abs path to the 1-line password file
+    const char* password_save_label;  // row label, e.g. "Password" / "Mantra"
+    // Light-gun (NES Zapper) game: the controller config page shows a Zapper
+    // block (mouse-as-gun + crosshair toggles, persisted to the engine's
+    // keybinds.ini [zapper] section) alongside the pad UI.
+    int  zapper;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

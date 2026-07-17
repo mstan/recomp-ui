@@ -44,6 +44,20 @@ void launcher_binds_reset_player(LauncherModel* m, int player);
 // and refreshes the model's display string.
 void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int kmod);
 
+// NES Zapper switches were toggled (mouse-as-gun / crosshair). Persists to
+// keybinds.ini [zapper] via the NES-native bridge's surgical writer; the
+// rest of the file is preserved. Meaningful only under an NES profile
+// (the model gates the UI on GameInfo.zapper).
+void launcher_binds_set_zapper(int mouse_enabled, int crosshair);
+
+// Surgically set "Key = value" inside [section] of `path`, preserving every
+// other line (comments, blank lines, unrelated sections). Creates the file
+// and/or section when absent. Shared by the config.ini [KeyMap] hotkey
+// writer and console units whose native bind files carry sections the
+// launcher doesn't own (consoles/nes/nes_binds.c).
+void launcher_ini_kv_write(const char* path, const char* section,
+                           const char* key, const char* value);
+
 // The config.ini path hotkeys are written to (NULL => default). Set once at load.
 extern const char* g_launcher_config_path;
 // The keybinds file path player buttons are written to (NULL => default).

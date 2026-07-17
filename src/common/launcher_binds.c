@@ -5,6 +5,7 @@
 #include "keybinds.h"             // engine keyboard-binding store
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
+#include "consoles/nes/nes_binds.h"   // NES-native keybind bridge (nesrecomp keybinds.c format)
 
 #include <ctype.h>
 #include <stdio.h>
@@ -68,7 +69,16 @@ static int is_psx_profile(const LauncherModel* m) {
     return prof && prof->id && !strcmp(prof->id, "psx");
 }
 
-static const char* psx_keybinds_file_path(void) {
+// NES routes to its own native bridge too (consoles/nes/nes_binds.c): the
+// nesrecomp runner's keybinds.ini format has 8 NES-named keys plus [zapper]
+// and [gamepad1]/[gamepad2] sections the generic store's whole-file rewrite
+// would destroy.
+static int is_nes_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && !strcmp(prof->id, "nes");
+}
+
+static const char* keybinds_file_path(void) {
     return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
              ? g_launcher_keybinds_path : "keybinds.ini";
 }
@@ -103,7 +113,14 @@ static void reload_player_display(LauncherModel* m, int player) {
         for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_psx_binds_get(
-                         psx_keybinds_file_path(), player - 1, b)));
+                         keybinds_file_path(), player - 1, b)));
+        return;
+    }
+    if (is_nes_profile(m)) {
+        for (int b = 0; b < LNG_NES_PAD_BUTTON_COUNT; ++b)
+            copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                     scancode_label((SDL_Scancode)rui_nes_binds_get(
+                         keybinds_file_path(), player - 1, b)));
         return;
     }
     int n = 0;
@@ -187,9 +204,14 @@ static int line_is_key(const char* line, const char* key) {
     return *i == '=';
 }
 
-// Surgically set "Key = value" inside [KeyMap], preserving all other lines.
-static void keymap_write(const char* key, const char* value) {
-    const char* path = config_path();
+// Surgically set "Key = value" inside [section] of `path`, preserving every
+// other line (comments, blank lines, and unrelated sections — e.g. the NES
+// keybinds.ini's [zapper]/[gamepad1]/[gamepad2] sections survive untouched).
+// Creates the file and/or section when absent. Exported (launcher_binds.h)
+// for console units whose native bind files carry sections the launcher
+// doesn't own (consoles/nes/nes_binds.c).
+void launcher_ini_kv_write(const char* path, const char* section,
+                           const char* key, const char* value) {
     long len = 0; char* text = read_whole(path, &len);
     /* split into a growable line array, PRESERVING blank lines (strtok would
      * collapse them, losing the user's config formatting). */
@@ -213,7 +235,7 @@ static void keymap_write(const char* key, const char* value) {
     char assign[128];
     snprintf(assign, sizeof(assign), "%s = %s", key, value ? value : "");
 
-    /* locate [KeyMap] body [start,end) */
+    /* locate [section] body [start,end) */
     int ks = -1, ke = -1;
     for (int i = 0; i < n; ++i) {
         const char* p = lines[i]; while (*p == ' ' || *p == '\t') ++p;
@@ -221,15 +243,17 @@ static void keymap_write(const char* key, const char* value) {
         const char* close = strchr(p, ']');
         size_t sl = close ? (size_t)(close - p - 1) : strlen(p + 1);
         if (ks >= 0) { ke = i; break; }
-        if (ieq(p + 1, sl, "KeyMap")) ks = i + 1;
+        if (ieq(p + 1, sl, section)) ks = i + 1;
     }
     if (ks >= 0 && ke < 0) ke = n;
 
     if (ks < 0) {
+        char header[96];
+        snprintf(header, sizeof(header), "[%s]", section);
         if (n == cap) { cap += 4; lines = (char**)realloc(lines, sizeof(char*) * cap); }
         if (n && lines[n-1][0]) lines[n++] = strdup("");
         if (n == cap) { cap += 4; lines = (char**)realloc(lines, sizeof(char*) * cap); }
-        lines[n++] = strdup("[KeyMap]");
+        lines[n++] = strdup(header);
         if (n == cap) { cap += 4; lines = (char**)realloc(lines, sizeof(char*) * cap); }
         lines[n++] = strdup(assign);
     } else {
@@ -249,6 +273,11 @@ static void keymap_write(const char* key, const char* value) {
     if (f) { for (int i = 0; i < n; ++i) { fputs(lines[i], f); fputc('\n', f); } fclose(f); }
     for (int i = 0; i < n; ++i) free(lines[i]);
     free(lines); free(text);
+}
+
+// Original config.ini [KeyMap] entry point, now a thin wrapper.
+static void keymap_write(const char* key, const char* value) {
+    launcher_ini_kv_write(config_path(), "KeyMap", key, value);
 }
 
 // Format SDL keycode + mods the way config.c's ParseKeyArray reads back.
@@ -271,7 +300,15 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
     g_launcher_config_path = config_path_in;
     g_launcher_keybinds_path = keybinds_path_in;
     if (is_psx_profile(m)) {
-        rui_psx_binds_init(psx_keybinds_file_path());   // load/generate psx_keybinds.c-format keybinds.ini
+        rui_psx_binds_init(keybinds_file_path());   // load/generate psx_keybinds.c-format keybinds.ini
+    } else if (is_nes_profile(m)) {
+        rui_nes_binds_init(keybinds_file_path());   // load/generate nesrecomp-format keybinds.ini
+        // Zapper switches live in the same file ([zapper]); surface them on
+        // the model for the controller page's Zapper block.
+        int zm = 1, zc = 1;
+        rui_nes_zapper_get(keybinds_file_path(), &zm, &zc);
+        m->zapper_mouse     = zm != 0;
+        m->zapper_crosshair = zc != 0;
     } else {
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
@@ -280,11 +317,25 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
     reload_hotkey_display(m);
 }
 
+// Persist the Zapper switches to keybinds.ini [zapper] (surgical: the rest of
+// the file — player binds, gamepad sections, comments — is preserved).
+// Called by launcher_model_toggle_zapper_* on every flip.
+void launcher_binds_set_zapper(int mouse_enabled, int crosshair) {
+    rui_nes_zapper_set(keybinds_file_path(), mouse_enabled, crosshair);
+}
+
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {
     if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
         if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
-        rui_psx_binds_set(psx_keybinds_file_path(), player - 1, b, scancode);
+        rui_psx_binds_set(keybinds_file_path(), player - 1, b, scancode);
+        copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                 scancode_label((SDL_Scancode)scancode));
+        return;
+    }
+    if (is_nes_profile(m)) {
+        if (b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT) return;
+        rui_nes_binds_set(keybinds_file_path(), player - 1, b, scancode);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                  scancode_label((SDL_Scancode)scancode));
         return;
@@ -301,7 +352,12 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
 void launcher_binds_reset_player(LauncherModel* m, int player) {
     if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
-        rui_psx_binds_reset(psx_keybinds_file_path(), player - 1);
+        rui_psx_binds_reset(keybinds_file_path(), player - 1);
+        reload_player_display(m, player);
+        return;
+    }
+    if (is_nes_profile(m)) {
+        rui_nes_binds_reset(keybinds_file_path(), player - 1);
         reload_player_display(m, player);
         return;
     }

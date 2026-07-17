@@ -61,6 +61,7 @@ function(recomp_target_launcher_ui TGT)
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
+        ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
@@ -117,6 +118,7 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/psx/img/pad_digital.tga
                 ${RUI_ASSETS}/consoles/psx/img/memcard.tga
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
+                ${RUI_ASSETS}/consoles/nes/img/pad_nes.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a

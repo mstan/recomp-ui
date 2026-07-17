@@ -77,6 +77,11 @@ void launcher_model_init(LauncherModel* m,
         m->msu1_patch_path      = game->msu1_patch_path;
         m->saves_supported      = game->sram_path != NULL;
         m->sram_path            = game->sram_path;
+        m->has_integer_scale    = game->has_integer_scale != 0;
+        m->hdpack_supported     = game->hdpack_supported != 0;
+        m->password_save_path   = game->password_save_path;
+        m->password_save_label  = game->password_save_label;
+        m->zapper               = game->zapper != 0;
         /* 0 = unset (caller predates the field) -> assume 2 players. */
         m->player_count         = game->num_players ? clampi(game->num_players, 1, 2) : 2;
         m->expected_crc         = game->expected_crc;
@@ -192,6 +197,11 @@ void launcher_model_init(LauncherModel* m,
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
     launcher_model_set_rom(m, initial_rom);
+
+    // Password/mantra save: read the current one-line password file so the
+    // SAVES row can show it. (Zapper switch state is loaded later by
+    // launcher_binds_load(), which owns the keybinds.ini path.)
+    launcher_model_password_reload(m);
 
     // Inspect both memory-card slots up front (real block usage/validity when a
     // host memcard_inspect callback is wired; no-op otherwise).
@@ -650,6 +660,65 @@ void launcher_model_toggle_msu1(LauncherModel* m) {
 
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir) {
     safe_copy(m->s.msu1_dir, sizeof(m->s.msu1_dir), dir ? dir : "");
+}
+
+// ---- NES-style settings ------------------------------------------------------
+
+void launcher_model_toggle_integer_scale(LauncherModel* m) {
+    if (!m->has_integer_scale) return;   // gated: no-op when unsupported
+    m->s.integer_scale = !m->s.integer_scale;
+}
+
+void launcher_model_toggle_hdpack(LauncherModel* m) {
+    if (!m->hdpack_supported) return;    // gated: no-op when unsupported
+    m->s.hdpack_enabled = !m->s.hdpack_enabled;
+}
+
+void launcher_model_set_hdpack_dir(LauncherModel* m, const char* dir) {
+    safe_copy(m->s.hdpack_dir, sizeof(m->s.hdpack_dir), dir ? dir : "");
+}
+
+// Password/mantra save: the file is one line of text (e.g. Faxanadu's mantra),
+// read/rewritten whole. Mirrors the RmlUi NES launcher's SAVES-panel variant.
+void launcher_model_password_reload(LauncherModel* m) {
+    m->password_text[0] = '\0';
+    if (!m->password_save_path || !m->password_save_path[0]) return;
+    FILE* f = fopen(m->password_save_path, "r");
+    if (!f) return;
+    if (fgets(m->password_text, sizeof(m->password_text), f)) {
+        size_t n = strlen(m->password_text);
+        while (n > 0 && (m->password_text[n-1] == '\n' || m->password_text[n-1] == '\r'))
+            m->password_text[--n] = '\0';
+    } else {
+        m->password_text[0] = '\0';
+    }
+    fclose(f);
+}
+
+void launcher_model_password_commit(LauncherModel* m, const char* text) {
+    if (!m->password_save_path || !m->password_save_path[0]) return;
+    FILE* f = fopen(m->password_save_path, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", text ? text : "");
+    fclose(f);
+    launcher_model_password_reload(m);   // reflect what actually landed on disk
+}
+
+// Zapper switches: flip the model state and persist through launcher_binds'
+// [zapper] section writer immediately (same persist-on-change behavior as the
+// rebind chips). launcher_binds_set_zapper is a no-op-safe plain writer.
+void launcher_binds_set_zapper(int mouse_enabled, int crosshair);   // launcher_binds.c
+
+void launcher_model_toggle_zapper_mouse(LauncherModel* m) {
+    if (!m->zapper) return;
+    m->zapper_mouse = !m->zapper_mouse;
+    launcher_binds_set_zapper(m->zapper_mouse ? 1 : 0, m->zapper_crosshair ? 1 : 0);
+}
+
+void launcher_model_toggle_zapper_crosshair(LauncherModel* m) {
+    if (!m->zapper) return;
+    m->zapper_crosshair = !m->zapper_crosshair;
+    launcher_binds_set_zapper(m->zapper_mouse ? 1 : 0, m->zapper_crosshair ? 1 : 0);
 }
 
 // ---- MSU-1 IPS auto-patching (mirrors the RmlUi launcher's do_patch() /

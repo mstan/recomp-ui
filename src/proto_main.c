@@ -71,6 +71,21 @@ int main(int argc, char** argv) {
             s.window_width = 1280; s.renderer = 1; s.supersampling = 1;
             s.screen_kind = 1; s.frame_interp = 0; s.spu_hq = 1; s.aspect_index = 1;
         }
+        if (lpr_is(variant, "nes")) {
+            // Preview an NES title exercising the whole NES surface: 2 players,
+            // widescreen opt-in, HD-pack row (on via launcher_profile_apply),
+            // and the Zapper block. LNG_DEMO_FULL=1 additionally previews the
+            // password/mantra save row (Faxanadu-style; the file is created
+            // next to the exe on the first Edit -> Save).
+            gi.num_players = 2;
+            gi.widescreen_supported = 1;
+            gi.zapper = 1;
+            const char* nd = getenv("LNG_DEMO_FULL");
+            if (nd && nd[0] == '1') {
+                gi.password_save_path  = "nes_password_demo.txt";
+                gi.password_save_label = "Mantra";
+            }
+        }
         if (lpr_is(variant, "gba")) {
             // Preview a GBA title: the one battery .sav (save row in the GAME
             // card), a "configured" LCD screen model, 3x integer scale.
