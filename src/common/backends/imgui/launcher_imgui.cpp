@@ -1207,6 +1207,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_scale(m);
     }
 
+    // NES module rows can appear on this branch too (has_renderer puts NES
+    // on the deep surface): integer scaling right under the window row,
+    // mirroring the legacy branch's ordering.
+    if (m->has_integer_scale) {
+        row_label("Integer scaling", th);
+        bool is = m->s.integer_scale != 0;
+        if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+    }
+
     if (m->has_renderer) {
         row_label("Renderer", th);
         if (ImGui::Button(launcher_model_renderer_label(m), ImVec2(px(120), px(30))))
@@ -1284,6 +1293,28 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         bool fs = m->s.fullscreen != 0;
         if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
     }
+
+    // HD texture packs (NES module) — same enable + folder row as the legacy
+    // branch renders; kept last, below the console-shape rows.
+    if (m->hdpack_supported) {
+        bool on = m->s.hdpack_enabled != 0;
+        if (ImGui::Checkbox("HD texture pack", &on))
+            launcher_model_toggle_hdpack(m);
+        const float bw = px(78);
+        ImGui::SameLine(0, px(14));
+        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+        if (avail < px(50)) avail = px(50);
+        const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
+        char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+            char buf[512];
+            if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
+                launcher_model_set_hdpack_dir(m, buf);
+        }
+    }
 }
 
 // Video/Display module (docs/ARCHITECTURE.md): base window-scale/fullscreen
@@ -1318,9 +1349,14 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     float cw = ImGui::CalcTextSize("Sample rate").x;
     if (m->has_spu_hq) { float t = ImGui::CalcTextSize("High-quality SPU").x; if (t > cw) cw = t; }
     cw += px(18.0f);
-    row_label("Sample rate", th, cw);
-    if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
-        launcher_model_cycle_freq(m);
+    // Sample rate: hidden for consoles whose runtime has no audio-frequency
+    // setting (SystemProfile.hide_audio_freq — NES has Volume only).
+    const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
+    if (!audio_prof || !audio_prof->hide_audio_freq) {
+        row_label("Sample rate", th, cw);
+        if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
+            launcher_model_cycle_freq(m);
+    }
     row_label("Volume", th, cw);
     int dv = 0; stepper("vol", m->s.volume, "%", &dv);
     if (dv) launcher_model_volume_delta(m, dv);

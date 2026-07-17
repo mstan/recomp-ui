@@ -43,6 +43,12 @@ static const ButtonDef kNesPadButtons[] = {
 // also matches the old RmlUi NES launcher, which offered no hotkey UI.
 static const char* const kPanelsSettingsNes[] = { "video", "audio", NULL };
 
+// ---- renderer vocabulary --------------------------------------------------------
+// The runner's [Display] Renderer key: 0 = SDL accelerated, 1 = SDL software.
+// Same 0/1 the has_renderer toggle cycles; only the words differ from PSX's
+// Software/OpenGL pair.
+static const char* const kNesRendererLabels[] = { "Accelerated", "Software" };
+
 // ---- ROM file-picker filter -----------------------------------------------------
 static const char* const kNesRomPatterns[] = { "*.nes" };
 #define LNG_NES_ROM_PATTERN_COUNT \
@@ -80,6 +86,8 @@ static const SystemProfile kSystemProfileNes = {
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kNesRomPatterns, LNG_NES_ROM_PATTERN_COUNT,
                               "NES ROM (.nes)" },
+    /* renderer_labels   */ kNesRendererLabels,   // Accelerated/Software (SDL output)
+    /* hide_audio_freq   */ 1,      // runner has no audio-frequency setting (Volume only)
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------
@@ -102,6 +110,10 @@ static inline void launcher_profile_apply_nes(RecompLauncherCGameInfo* gi) {
     // password save, and Zapper are per-game opt-ins.
     gi->has_integer_scale = 1;
     gi->hdpack_supported  = 1;
+    // The runner's Accelerated/Software output toggle (config.ini [Display]
+    // Renderer) — shown with kNesRendererLabels, not the PSX Software/OpenGL
+    // pair. This was a real control on the old RmlUi NES launcher.
+    gi->has_renderer      = 1;
 }
 
 #ifdef __cplusplus

@@ -450,6 +450,11 @@ void launcher_model_toggle_renderer(LauncherModel* m) {
 }
 
 const char* launcher_model_renderer_label(const LauncherModel* m) {
+    // Per-console vocabulary (SystemProfile.renderer_labels): NES says
+    // Accelerated/Software; NULL keeps the legacy PSX-era pair.
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->renderer_labels)
+        return prof->renderer_labels[m->s.renderer ? 1 : 0];
     return m->s.renderer ? "OpenGL" : "Software";
 }
 

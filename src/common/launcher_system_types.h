@@ -102,6 +102,14 @@ typedef struct SystemProfile {
     // "Change ROM" native-dialog filter (per console). All-zero => the
     // built-in SNES default (back-compat); every built-out console sets it.
     RomFilterSpec rom_filter;
+    // Renderer-toggle vocabulary for the has_renderer control: two labels
+    // indexed by Settings.renderer (0/1). NULL => the legacy PSX-era pair
+    // ("Software"/"OpenGL"). NES uses {"Accelerated","Software"} — its
+    // renderer value means SDL-accelerated vs SDL-software output.
+    const char* const* renderer_labels;
+    // 1 => hide the Sample-rate cycle in the AUDIO panel (the nesrecomp
+    // runner has no audio-frequency setting; only Volume). 0 = legacy (show).
+    int hide_audio_freq;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------
