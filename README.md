@@ -102,9 +102,12 @@ identification (`disc_verify`) and memory-card inspection (`memcard_inspect`).
 - **Game / verification** — box art, ROM CRC/SHA verification, or PSX disc
   verdict (serial / region / ISO header) via the host `disc_verify` callback.
 - **Controllers** — none/keyboard/gamepad per player, per-console pad art +
-  button vocabulary, PSX analog/digital/hybrid pad modes, deadzone, keyboard
-  rebinding that writes each runtime's native keybind format.
+  button vocabulary, PSX analog/digital/hybrid pad modes or a custom mode list
+  (Genesis 3-Button / 6-Button, which also sets the visible rebind-row count),
+  deadzone, keyboard rebinding that writes each runtime's native keybind format,
+  and an optional per-row **GAMEPAD** bind column (Genesis) alongside the key.
 - **Video** — window scale/size, renderer, supersampling, aspect (4:3/16:9/21:9),
+  widescreen 16:9 with an optional "extra cells / side" stepper (Genesis),
   texture filtering, antialiasing (Off/2×/4×/8×), screen model, frame
   interpolation, and more — each shown only when the console exposes it.
 - **Save** — SRAM Import/Clear (with `.bak` backup) or PS1 memory cards (per-slot
@@ -124,8 +127,8 @@ passes, so you can iterate on the UI without a game:
 ```sh
 cmake -G Ninja -S . -B build
 cmake --build build -j
-# Preview a console: LNG_VARIANT = psx | snes | ...
-LNG_VARIANT=psx ./build/recomp-ui-launcher
+# Preview a console: LNG_VARIANT = psx | snes | gba | genesis | ...
+LNG_VARIANT=genesis ./build/recomp-ui-launcher
 ```
 
 `LNG_SCRIPT` drives it headless for screenshot regression, e.g.
@@ -139,15 +142,23 @@ Requires SDL2 (`find_package(SDL2)`), OpenGL, a C++17 compiler.
 ## Layout
 
 ```
-src/                launcher core (.c/.h), Dear ImGui backend, C ABI header
-src/launcher_system.h   SystemProfile — one row per console
-src/launcher_model.*    UI-toolkit-free view-model (state + behavior)
+src/common/             launcher core (.c/.h), Dear ImGui backend, C ABI header
+src/common/launcher_model.*   UI-toolkit-free view-model (state + behavior)
+src/consoles/<id>/      per-console unit: <id>_profile.h (SystemProfile row) +
+                        any native bridge (e.g. genesis_binds.c, psx_binds.c)
+src/launcher_system.h   aggregates the console units + by-id / infer lookups
 src/third_party/        vendored Dear ImGui, stb, tinyfiledialogs
-assets/                 fonts/ + img/ shipped with the launcher
+assets/common/          fonts + chrome art shared by every console
+assets/consoles/<id>/   per-console art (pad_genesis.tga, pad_gba.tga, ...)
 recomp_ui.cmake         reusable recomp_target_launcher_ui() integration helper
 docs/ARCHITECTURE.md    composition + inheritance design
 CMakeLists.txt          standalone self-test build (recomp-ui-launcher)
 ```
+
+Adding a console = one directory under `src/consoles/<id>/` (profile row +
+optional native bind bridge) registered in `src/launcher_system.h`, a theme in
+`src/common/launcher_theme.h`, per-console art under `assets/consoles/<id>/`,
+and its `.c` files + assets wired into `recomp_ui.cmake`.
 
 ## License
 

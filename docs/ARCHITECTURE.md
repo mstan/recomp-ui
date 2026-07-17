@@ -37,12 +37,18 @@ The System is the **template**; the Game **refines** it.
 - **Base (universal):** device source `none / keyboard / gamepad`, connected
   status, N player cards laid out by count (1 = single, 2 = split, 4 = grid),
   a **Configure** action that opens the controller-binds page.
-- **Spec (per system):** pad **image(s)** (SNES pad / DualShock / N64 trident),
-  the **base button set** for rebinding, `max_players` (2 or 4), optional
-  **pad-mode** selector (PSX analog/digital, swaps the image).
+- **Spec (per system):** pad **image(s)** (SNES pad / DualShock / N64 trident /
+  Genesis 6-button), the **base button set** for rebinding, `max_players`
+  (2 or 4), optional **pad-mode** selector. Two selector shapes: PSX's
+  analog/digital (swaps the image, gated by `allow_hybrid`), or a **custom mode
+  list** (`ControllerSpec.modes`, e.g. Genesis **3-Button / 6-Button**) where
+  the selected mode's `button_count` also sets how many rebind rows show
+  (3-Button hides X/Y/Z/Mode).
 - **Binds:** the game-pad buttons are rebound on a **page reached from the
   Controller panel's Configure** (controller view). Per-system base button set.
-  This is SEPARATE from emulator hotkeys.
+  A console can set `has_pad_binds` to add a second **GAMEPAD** chip per row
+  (KEY + GAMEPAD, e.g. Genesis — the engine stores a controller button/axis
+  bind alongside the keyboard scancode). This is SEPARATE from emulator hotkeys.
 
 ### Save  (optional — omitted when the game has none)
 - **Base:** a persistence card built from a reusable **picker row** (label +
@@ -55,7 +61,9 @@ The System is the **template**; the Game **refines** it.
 
 ### Video / Display  (always present)
 - **Base (universal):** Display + **Window scale** (+ Fullscreen-on-launch).
-- **Spec (per system):** SNES adds linear-filter + widescreen toggle; PSX adds
+- **Spec (per system):** SNES adds linear-filter + widescreen toggle; Genesis
+  adds — while widescreen is on — an **"extra cells per side"** stepper
+  (`VideoSpec.widescreen_cells`, N extra 8-px background cells, 1..16); PSX adds
   renderer, supersampling, screen-model, frame-interp, and the **aspect dropdown**
   (4:3 / 16:9 / 21:9 gated by the game's offered set).
 
@@ -92,6 +100,7 @@ The System is the **template**; the Game **refines** it.
 
 ```c
 typedef struct { const char* label; int code; } ButtonDef;
+typedef struct { int mode; const char* label; int button_count; } PadModeDef;
 
 typedef struct {
   const ButtonDef* buttons; int button_count;   // per-system base set
@@ -99,6 +108,9 @@ typedef struct {
   const char* image_analog, * image_digital;     // optional mode-swap pair
   int  max_players;                              // 2 or 4
   int  has_pad_mode;                             // analog/digital selector
+  // ---- appended additively (older positional initializers zero-fill) ----
+  const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
+  int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
 } ControllerSpec;
 
 typedef enum { SAVE_NONE, SAVE_SRAM, SAVE_MEMCARD } SaveKind;
@@ -109,9 +121,11 @@ typedef struct {                                 // capability flags for the vid
   int linear_filter, widescreen;                 // SNES-ish
   int renderer, supersampling, screen_kind, frame_interp, aspect, texture_filter,
       antialiasing, spu_hq, skip_fmv, turbo_loads, bios, deadzone; // PSX-ish
+  int  widescreen_cells;                         // Genesis: "extra cells / side" stepper
 } VideoSpec;
 
 typedef struct { int mode; /* 0 rom-hash, 1 disc-verdict */ VerifyProbeFn probe; } VerifySpec;
+typedef struct { const char* const* patterns; int pattern_count; const char* desc; } RomFilterSpec;
 
 typedef struct {
   const char* id, *platform, *theme, *rom_noun;
@@ -120,6 +134,8 @@ typedef struct {
   const char* const* panels_dashboard;           // composition (panel ids, in slot order)
   const char* const* panels_settings;
   const char* const* panels_controller;
+  const char* const* screen_kind_names; int screen_kind_count;  // "Screen model" vocab (NULL => legacy set)
+  RomFilterSpec rom_filter;                      // "Change ROM" native-dialog filter, per console
 } SystemProfile;                                  // ONE ROW PER CONSOLE
 
 // A panel is a composition unit.

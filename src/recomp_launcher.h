@@ -63,6 +63,12 @@ typedef struct RecompLauncherCSettings {
     // present). 0 = unset (host predates this field) -> the model defaults it
     // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
     int  memcard_enabled[2];
+
+    // ---- Genesis-style widescreen width (SystemProfile.video.widescreen_cells
+    // consoles only) — how many extra 8-px background cells EACH SIDE renders
+    // while `widescreen` is on. 0 = unset (host predates this field) -> the
+    // model defaults it to 8, the Genesis engine default. Appended additively.
+    int  widescreen_cells;    // 1..16
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
