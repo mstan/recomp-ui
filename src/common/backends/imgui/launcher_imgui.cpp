@@ -547,8 +547,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
-        if (art_h > px(320.0f)) art_h = px(320.0f);   // allow a larger hero box art
-        if (art_h < px(216.0f)) art_h = px(216.0f);   // keep it big enough to balance the side column
+        if (art_h > px(368.0f)) art_h = px(368.0f);   // allow a larger hero box art (~15% bigger than before)
+        if (art_h < px(248.0f)) art_h = px(248.0f);   // keep it big enough to balance the side column
         hero_boxart_centered(g_boxart, art_h, availw);
     }
     ImGui::Dummy(ImVec2(0, px(10)));
@@ -1318,10 +1318,11 @@ void panel_audio_draw(LauncherModel* m, const LauncherTheme* th) {
     }
 }
 
-// SYSTEM module: BIOS path picker — a full-width row of its own, composed
-// only for systems whose profile lists "system" (PSX) AND only shown for a
-// game instance that needs one (has_bios) — composition + availability, both
-// layers, matching the architecture.
+// SYSTEM module: BIOS path picker — a half-width card stacked under AUDIO in
+// the right column (see draw_settings), composed only for systems whose
+// profile lists "system" (PSX, GBA) AND only shown for a game instance that
+// needs one (has_bios) — composition + availability, both layers, matching
+// the architecture.
 int avail_system(const LauncherModel* m) { return m->has_bios; }
 void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("SYSTEM");
@@ -1403,9 +1404,12 @@ void panel_hotkeys_draw(LauncherModel* m, const LauncherTheme* th) {
 
 // The settings VIEW composes whichever panels this game's SystemProfile
 // lists in panels_settings, in order: DISPLAY (MAIN) + AUDIO (SIDE) share the
-// top band, then any WIDE panels (SYSTEM, HOTKEYS) stack full-width below —
-// exactly today's fixed layout, now driven by the composition array + the
-// registry's available() gate instead of hardcoded calls.
+// top band; SYSTEM (SIDE, PSX/GBA only — its BIOS "Browse" row) then stacks
+// directly beneath AUDIO as a second half-width card in the SAME right
+// column, instead of spanning full width under both columns; any WIDE panels
+// (HOTKEYS) still stack full-width below that — exactly today's fixed layout
+// otherwise, now driven by the composition array + the registry's
+// available() gate instead of hardcoded calls.
 void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     // Row 1: DISPLAY | AUDIO share the top band. For the legacy minimal
     // surface (no deep caps set — e.g. SNES) both cards are pinned to the
@@ -1430,21 +1434,61 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const LauncherPanel* system_p  = find_composed(prof->panels_settings, "system", m);
     const LauncherPanel* hotkeys_p = find_composed(prof->panels_settings, "hotkeys", m);
 
+    // Left content edge in SCREEN space — where DISPLAY starts and where any
+    // full-width content (HOTKEYS) below both columns must resume.
+    const float content_left_x = ImGui::GetCursorScreenPos().x;
+
+    float left_bottom = 0.0f;   // DISPLAY's bottom edge (screen space)
     if (video_p) {
         if (deep_display) begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
         else               begin_container("set_l", ImVec2(half, row_h));
         video_p->draw(m, &th);
         end_container();
+        left_bottom = ImGui::GetItemRectMax().y;
     }
     if (video_p && audio_p) ImGui::SameLine(0, gap);
+    // Capture the right column's SCREEN x BEFORE opening AUDIO's child, so a
+    // SYSTEM card composed alongside it (SIDE slot — see kPanelRegistry) can
+    // be reopened at the same x once AUDIO's child ends (a finished child,
+    // like any item, returns the cursor to the LEFT edge of the row on the
+    // next line, not to its own column).
+    const float right_x = ImGui::GetCursorScreenPos().x;
+    float audio_bottom = 0.0f;   // AUDIO's bottom edge (screen space)
     if (audio_p) {
-        if (deep_audio) begin_container("set_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
-        else             begin_container("set_r", ImVec2(0, row_h));
+        if (deep_audio) begin_container("set_r", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+        else             begin_container("set_r", ImVec2(half, row_h));
         audio_p->draw(m, &th);
         end_container();
+        audio_bottom = ImGui::GetItemRectMax().y;
     }
 
-    if (system_p)  system_p->draw(m, &th);
+    // SYSTEM (PSX/GBA's BIOS row) is a SIDE-slot card: stack it as a second
+    // half-width card directly under AUDIO, in the same right column, rather
+    // than spanning the full width below both columns. Falls back to full
+    // width only if some profile composes "system" without "audio".
+    if (system_p) {
+        if (audio_p) {
+            // Place SYSTEM's top edge one standard card-gap below AUDIO's
+            // bottom edge specifically (not "wherever the taller of the two
+            // columns ended up", which is what plain SameLine/next-line flow
+            // would give — DISPLAY's deep surface is usually taller than
+            // AUDIO, and that gap would show as dead space above SYSTEM).
+            ImGui::SetCursorScreenPos(ImVec2(right_x, audio_bottom + gap));
+            begin_container("set_r2", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+            system_p->draw(m, &th);
+            end_container();
+            const float system_bottom = ImGui::GetItemRectMax().y;
+            // The manual SetCursorScreenPos above pulled SYSTEM out of the
+            // normal same-line row flow, so ImGui's auto-advanced cursor now
+            // only accounts for SYSTEM's own bottom, not DISPLAY's (which can
+            // still be the taller column). Explicitly resume the layout below
+            // whichever column is taller so HOTKEYS never overlaps DISPLAY.
+            const float below_y = (left_bottom > system_bottom) ? left_bottom : system_bottom;
+            ImGui::SetCursorScreenPos(ImVec2(content_left_x, below_y + gap));
+        } else {
+            system_p->draw(m, &th);
+        }
+    }
     if (hotkeys_p) hotkeys_p->draw(m, &th);
 }
 
@@ -1560,7 +1604,7 @@ const LauncherPanel kPanelRegistry[] = {
     { "save",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_save,   panel_save_draw },
     { "video",             LNG_VIEW_SETTINGS,   LNG_SLOT_MAIN, nullptr,      panel_video_draw },
     { "audio",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, nullptr,      panel_audio_draw },
-    { "system",            LNG_VIEW_SETTINGS,   LNG_SLOT_WIDE, avail_system, panel_system_draw },
+    { "system",            LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_system, panel_system_draw },
     { "hotkeys",           LNG_VIEW_SETTINGS,   LNG_SLOT_WIDE, nullptr,      panel_hotkeys_draw },
     { "controller_config", LNG_VIEW_CONTROLLER, LNG_SLOT_WIDE, nullptr,      panel_controller_config_draw },
     { nullptr,              LNG_VIEW_DASHBOARD,  0,             nullptr,      nullptr },   // sentinel
