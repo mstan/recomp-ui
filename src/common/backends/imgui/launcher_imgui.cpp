@@ -310,6 +310,22 @@ void image_fit(const LauncherTexture& t, float box_w, float box_h) {
     ImGui::Image(tid(t), ImVec2(t.w * s, t.h * s));
 }
 
+// Like image_fit, but horizontally centers the FITTED image within avail_w.
+// image_fit alone centers on the box width, so a near-square art (the N64 pad)
+// fit into a landscape box draws narrow and sits left-of-center — this offsets
+// by the real fitted width instead.
+void image_fit_centered(const LauncherTexture& t, float box_w, float box_h, float avail_w) {
+    float fitted_w = px(box_w);
+    if (t.id && t.w > 0 && t.h > 0) {
+        float bw = px(box_w), bh = px(box_h);
+        float s = (bw / t.w < bh / t.h) ? bw / (float)t.w : bh / (float)t.h;
+        fitted_w = t.w * s;
+    }
+    float off = (avail_w - fitted_w) * 0.5f;
+    if (off > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
+    image_fit(t, box_w, box_h);
+}
+
 void eyebrow(const char* s) { eyebrow_tracked(s); }
 // A card: filled + bordered. Hugs its content by default; `fill_h` stretches it
 // to the remaining height (used by the dashboard columns so the layout doesn't
@@ -917,73 +933,159 @@ static const char* rui_basename(const char* path) {
     return base;
 }
 
-void draw_tpak_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
+// Transfer Pak config modal state. A tile click stages a request (open_req);
+// the modal itself is drawn once per frame at root scope (draw_tpak_modal) so
+// OpenPopup and BeginPopupModal share the same ID stack from wherever a tile
+// was clicked (dashboard row OR the Controller page).
+static int g_tpak_open_req  = -1;
+static int g_tpak_modal_slot = -1;
+
+// One compact port tile: the cartridge (gray shell when empty, colored R/B/Y
+// once a cart is set), the cart name, and a Configure button — clicking either
+// the cart or Configure opens the config modal. This is ALL that shows inline
+// now; picking cart + save happens in the modal, so the dashboard row stays a
+// short strip of carts instead of tall cards that push the layout into a
+// scroll.
+void draw_tpak_tile(LauncherModel* m, const LauncherTheme& th, int slot) {
     char eb[24]; snprintf(eb, sizeof(eb), "TRANSFER PAK %d", slot + 1);
     eyebrow(eb);
 
     const bool has_cart  = m->s.tpak_rom_path[slot][0] != '\0';
     const bool inspected = m->tpak_inspected[slot];
     const RecompLauncherCTpak* info = &m->tpak_info[slot];
+    const float inner = ImGui::GetContentRegionAvail().x;
 
-    // real GB cartridge art + cartridge/trainer facts share a row
-    draw_tpak_cart(inspected ? info->cart_kind : 0, has_cart, 58);
-    ImGui::SameLine(0, px(12));
-    ImGui::BeginGroup();
+    // Centered cartridge art, itself a click target that opens the modal.
+    ImGui::PushID(slot);
+    const float art = px(66);
+    ImVec2 art_cursor = ImGui::GetCursorScreenPos();
+    image_fit_centered(g_cart[(has_cart && inspected && info->cart_kind >= 1 &&
+                               info->cart_kind <= 4) ? info->cart_kind : 0], 60, 66, inner);
+    // invisible hit-box over the art
+    ImGui::SetCursorScreenPos(art_cursor);
+    if (ImGui::InvisibleButton("cart_hit", ImVec2(inner, art))) g_tpak_open_req = slot;
+
+    // name line (centered), muted "Empty" when nothing inserted
+    const char* label = !has_cart ? "Empty"
+                        : (inspected && info->cart_label[0])
+                            ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
+    float lw = ImGui::CalcTextSize(label).x;
+    if (lw < inner) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - lw) * 0.5f);
+    ImGui::TextColored(has_cart ? col(th.text) : col(th.text_muted), "%s", label);
+    ImGui::Dummy(ImVec2(0, px(4)));
+
+    if (ImGui::Button(has_cart ? "Configure" : "Insert...",
+                      ImVec2(ImGui::GetContentRegionAvail().x, px(28))))
+        g_tpak_open_req = slot;
+    ImGui::PopID();
+}
+
+// The per-port config surface, drawn as a modal. Everything cartridge-related
+// lives here: a large live cart preview, the cartridge/trainer facts, and the
+// Change / Remove / save-file actions. Reached from any tile (dashboard or
+// Controller page). Draw ONCE per frame at root scope.
+void draw_tpak_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (g_tpak_open_req >= 0) {
+        g_tpak_modal_slot = g_tpak_open_req;
+        g_tpak_open_req = -1;
+        ImGui::OpenPopup("Transfer Pak");
+    }
+    ImGui::SetNextWindowSize(ImVec2(px(440), 0), ImGuiCond_Appearing);
+    // No OS-style title bar (it renders in ImGui's un-themed blue) — the card's
+    // own "TRANSFER PAK · PORT n" eyebrow is the heading.
+    if (!ImGui::BeginPopupModal("Transfer Pak", nullptr,
+                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                ImGuiWindowFlags_NoTitleBar))
+        return;
+    const int slot = g_tpak_modal_slot;
+    if (slot < 0 || slot >= m->tpak_slots) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+
+    const bool has_cart  = m->s.tpak_rom_path[slot][0] != '\0';
+    const bool inspected = m->tpak_inspected[slot];
+    const RecompLauncherCTpak* info = &m->tpak_info[slot];
+
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+    ImGui::Text("TRANSFER PAK  \xC2\xB7  PORT %d", slot + 1);
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, px(6)));
+
+    // Large live cart preview, centered — turns from the gray shell into the
+    // colored cart the moment a recognized ROM is picked.
+    const float avail = ImGui::GetContentRegionAvail().x;
+    image_fit_centered(g_cart[(has_cart && inspected && info->cart_kind >= 1 &&
+                               info->cart_kind <= 4) ? info->cart_kind : 0], 132, 138, avail);
+    ImGui::Dummy(ImVec2(0, px(6)));
+
+    // name + trainer, centered
+    auto centered = [&](ImU32 c, const char* s) {
+        float w = ImGui::CalcTextSize(s).x;
+        if (w < avail) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - w) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Text, c); ImGui::TextUnformatted(s); ImGui::PopStyleColor();
+    };
     if (!has_cart) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text_muted), "(empty slot)");
+        centered(ImGui::GetColorU32(col(th.text_muted)), "No cartridge inserted");
     } else {
         const char* label = (inspected && info->cart_label[0])
                               ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
-        ImGui::TextUnformatted(label);
+        centered(ImGui::GetColorU32(col(th.text)), label);
+        char line[80];
         if (inspected && info->trainer_name[0]) {
             if (info->trainer_id[0])
-                ImGui::TextColored(col(th.text_muted), "Trainer %s  \xC2\xB7  ID %s",
-                                   info->trainer_name, info->trainer_id);
-            else
-                ImGui::TextColored(col(th.text_muted), "Trainer %s", info->trainer_name);
-        } else {
-            ImGui::TextColored(col(th.text_muted), "No save data");
-        }
+                snprintf(line, sizeof(line), "Trainer %s  \xC2\xB7  ID %s",
+                         info->trainer_name, info->trainer_id);
+            else snprintf(line, sizeof(line), "Trainer %s", info->trainer_name);
+        } else snprintf(line, sizeof(line), "No save data");
+        centered(ImGui::GetColorU32(col(th.text_muted)), line);
     }
-    ImGui::EndGroup();
-    ImGui::Dummy(ImVec2(0, px(8)));
 
-    // One action per slot: "Change" opens the GB picker (also how an empty slot
-    // gets its first cart) — full card width, no separate Insert/Eject/Enabled
-    // (an inserted cart IS an enabled Pak; clearing is "Change" to nothing).
-    if (ImGui::Button("Change", ImVec2(ImGui::GetContentRegionAvail().x, px(30)))) {
+    ImGui::Dummy(ImVec2(0, px(10)));
+    // Change / Remove cartridge
+    const float full = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button(has_cart ? "Change cartridge..." : "Insert cartridge...",
+                      ImVec2(full, px(32)))) {
         static const char* kGbPatterns[] = { "*.gb", "*.gbc" };
         char buf[512];
         if (launcher_pick_file("Select Game Boy cartridge", kGbPatterns, 2,
                                "Game Boy cartridge (.gb .gbc)", buf, sizeof(buf)))
             launcher_model_set_tpak_rom(m, slot, buf);
     }
-
-    // Battery-save row (only with a cart inserted): its own two lines so nothing
-    // crowds — "Save: <file|Default>" then a full-width Browse button.
     if (has_cart) {
-        ImGui::Dummy(ImVec2(0, px(4)));
+        if (ImGui::Button("Remove cartridge", ImVec2(full, px(28))))
+            launcher_model_clear_tpak(m, slot);
+
+        // Battery-save row: label + value + Browse / Reset.
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.text_muted), "Battery save");
         const char* sv = m->s.tpak_save_path[slot][0]
-                           ? rui_basename(m->s.tpak_save_path[slot]) : "Default";
+                           ? rui_basename(m->s.tpak_save_path[slot])
+                           : "Default (runtime chooses)";
         char elided[128];
-        elide_left(sv, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Save: ").x,
-                   elided, sizeof(elided));
-        ImGui::TextColored(col(th.text_muted), "Save: %s", elided);
-        if (ImGui::Button("Browse save...", ImVec2(ImGui::GetContentRegionAvail().x, px(26)))) {
+        elide_left(sv, ImGui::GetContentRegionAvail().x, elided, sizeof(elided));
+        ImGui::TextUnformatted(elided);
+        const float bw = (ImGui::GetContentRegionAvail().x - px(th.spacing_sm)) * 0.5f;
+        if (ImGui::Button("Browse save...", ImVec2(bw, px(26)))) {
             static const char* kSavPatterns[] = { "*.sav", "*.srm" };
             char buf[512];
             if (launcher_pick_file("Select battery save", kSavPatterns, 2,
                                    "Battery save (.sav)", buf, sizeof(buf)))
                 launcher_model_set_tpak_save(m, slot, buf);
         }
+        ImGui::SameLine(0, px(th.spacing_sm));
+        if (ImGui::Button("Use default", ImVec2(bw, px(26))))
+            launcher_model_set_tpak_save(m, slot, "");
     }
+
+    ImGui::Dummy(ImVec2(0, px(10)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, px(4)));
+    if (ImGui::Button("Done", ImVec2(ImGui::GetContentRegionAvail().x, px(30))))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
-    // No outer card/eyebrow: the small per-port cards ARE the UI, laid out in
-    // one full-width row (4 ports side by side), same pattern as the PSX
-    // memory-card row.
+    // Compact per-port tiles in one full-width row (click a cart to configure).
     const int slots = m->tpak_slots;
     const float gap = px(th->spacing_sm);
     const float avail = ImGui::GetContentRegionAvail().x;
@@ -994,7 +1096,7 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
         if (slot) ImGui::SameLine(0, gap);
         begin_container(kCid[slot], ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
             if (begin_panel(kPid[slot], cw, false))
-                draw_tpak_slot(m, *th, slot);
+                draw_tpak_tile(m, *th, slot);
             end_panel();
         end_container();
     }
@@ -1051,9 +1153,9 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         const bool digital = m->pad_mode_supported && m->s.pad_mode[p] == 2;
         const LauncherTexture& art = m->pad_mode_supported
             ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
-        const float aw = px(120);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - aw) * 0.5f);
-        image_fit(art, 120, 70);
+        // Center on the FITTED width so a near-square pad (N64) sits centered,
+        // not left-shifted by the landscape box's spare width.
+        image_fit_centered(art, 120, 78, inner);
     }
     ImGui::Dummy(ImVec2(0, px(6)));
 
@@ -1685,6 +1787,15 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (dz) launcher_model_deadzone_delta(m, p, dz);
     } end_panel();
 
+    // Transfer Pak for THIS controller port (N64 tpak games), so it's reachable
+    // from the Controller page without scrolling the dashboard. Same compact
+    // tile + config modal; the port is the player being configured.
+    if (m->tpak_slots > p) {
+        if (begin_panel("cfg_tpak", 0)) {
+            draw_tpak_tile(m, th, p);
+        } end_panel();
+    }
+
     // Some systems ship no rebindable input layer (N64 Snap / PMS-J read no
     // input.cfg): GameInfo.hide_rebind drops the bindings card entirely and the
     // Controller view is source+deadzone only.
@@ -1941,6 +2052,9 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
 
     draw_footer(m, th, footer_h);
     draw_skip_modal(m);
+    // Transfer Pak config modal (N64): opened by any tile, dashboard or
+    // Controller page. Drawn at root so it isn't clipped by a card child.
+    if (m->tpak_slots > 0) draw_tpak_modal(m, th);
     ImGui::End();
     (void)logical_h;
 }
