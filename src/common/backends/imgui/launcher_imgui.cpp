@@ -73,6 +73,10 @@ char        g_pick_buf[512] = {};    // ROM picker result
 // dashboard vs hug its content in the narrow stacked layout). Same pattern as
 // the other per-frame context globals below (g_th, g_pads).
 bool g_game_fill_h = false;
+// Same idea for the SAVE (memory-card) panel: the wide PSX dashboard sets this
+// so the memory-card card fills the right column down to the boxart column's
+// height (bottom-flush), while the narrow/stacked layout leaves it hugging.
+bool g_save_fill_h = false;
 
 // ---- panel registry lookup helper ------------------------------------------
 // Resolve `id` against a SystemProfile's NULL-terminated composition array:
@@ -765,38 +769,9 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
 
     const bool enabled = m->s.memcard_enabled[slot] != 0;
 
-    image_fit(g_memcard, 20, 20);
-    ImGui::SameLine(0, px(8));
-    ImGui::AlignTextToFramePadding();
-    const char* mp = m->s.memcard_path[slot];
-    const char* base = mp;
-    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
-    char label[40];
-    if (base[0]) snprintf(label, sizeof(label), "%s", base);
-    else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
-    ImGui::TextUnformatted(label);
-    ImGui::PopStyleColor();
-
-    // Per-slot Enable/Disable switch, right-aligned on the header row —
-    // mirrors the RmlUi launcher's `.switch`/`toggle_mc1`/`toggle_mc2` (a
-    // disabled slot is an empty SIO port once a host wires that up). The
-    // header stays full-strength; only the body below dims when disabled.
-    {
-        const char* tglabel = "Enabled";
-        const float tgw = ImGui::GetFrameHeight() + px(6.0f) + ImGui::CalcTextSize(tglabel).x;
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - tgw);
-        bool enabled_box = enabled;
-        if (ImGui::Checkbox(tglabel, &enabled_box))
-            launcher_model_toggle_memcard(m, slot);
-    }
-
-    // Dim the rest of the slot body when disabled (mirrors the RmlUi
-    // launcher's `.card-body.disabled { opacity: 0.4; }` — visual only, the
-    // Browse/New controls stay clickable so the slot can be re-configured
-    // while off).
-    const float body_alpha = enabled ? 1.0f : 0.4f;
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+    const float slotw   = ImGui::GetContentRegionAvail().x;
+    const float start_x = ImGui::GetCursorPosX();
+    const float top_y   = ImGui::GetCursorPosY();
 
     // Block usage source, most-authoritative first: a host memcard_inspect
     // callback (REAL card contents) → a card we just formatted blank (0) → a
@@ -812,17 +787,75 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         used = (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
-    // Block count sits right-aligned on its OWN row (the header row's right
-    // side is now the Enabled switch); the 15-block grid is its own
-    // full-width row below, with slightly larger cells.
-    char cap[20]; snprintf(cap, sizeof(cap), "%d / 15 blocks", used_count);
-    const float capw = ImGui::CalcTextSize(cap).x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - capw);
+
+    // --- Header: memory-card image on the LEFT; the Enabled toggle (top-right)
+    // and the card name + block count (under the toggle) on the RIGHT. The
+    // block grid + Browse/New sit BELOW the image, full width. ---
+    // Image is fit by height (memcard.tga is 148x164 portrait). In the
+    // fill-height (wide PSX) layout it grows to fill the card, reserving room
+    // below for the grid + buttons and capping its width to ~half the card so
+    // the right column keeps room for the toggle and name.
+    float img_h;
+    if (g_save_fill_h) {
+        const float avail_h = ImGui::GetContentRegionAvail().y;
+        img_h = avail_h - px(78.0f);                              // reserve grid + buttons
+        const float img_h_by_w = (0.50f * slotw) * (164.0f / 148.0f);  // cap width ~half
+        if (img_h > img_h_by_w) img_h = img_h_by_w;
+        if (img_h < px(92.0f))  img_h = px(92.0f);
+        if (img_h > px(200.0f)) img_h = px(200.0f);
+    } else {
+        img_h = px(108.0f);
+    }
+    float iw = img_h * (148.0f / 164.0f), ih = img_h;
+    if (g_memcard.w > 0 && g_memcard.h > 0) {
+        const float s = img_h / (float)g_memcard.h;
+        iw = g_memcard.w * s;
+        ImGui::Image(tid(g_memcard), ImVec2(iw, ih));
+    } else {
+        ImGui::Dummy(ImVec2(iw, ih));
+    }
+
+    const float rc_x    = start_x + iw + px(14.0f);   // right column x
+    const float frame_h = ImGui::GetFrameHeight();
+    const float line_h  = ImGui::GetTextLineHeight();
+
+    // Enabled toggle at the top of the right column — left-aligned at rc_x so
+    // it lines up vertically with the card name and block count below it.
+    {
+        ImGui::SetCursorPos(ImVec2(rc_x, top_y));
+        bool enabled_box = enabled;
+        if (ImGui::Checkbox("Enabled", &enabled_box))
+            launcher_model_toggle_memcard(m, slot);
+    }
+
+    // Card name, on its own line under the toggle.
+    const char* mp = m->s.memcard_path[slot];
+    const char* base = mp;
+    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    char label[40];
+    if (base[0]) snprintf(label, sizeof(label), "%s", base);
+    else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+
+    // Block count under the name.
+    char cap[16]; snprintf(cap, sizeof(cap), "%d / 15", used_count);
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f) + line_h + px(6.0f)));
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::TextUnformatted(cap);
     ImGui::PopStyleColor();
 
-    ImGui::Dummy(ImVec2(0, px(6)));
+    // Resume the card body BELOW the image, full width.
+    ImGui::SetCursorPos(ImVec2(start_x, top_y + ih + px(10.0f)));
+
+    // Dim the rest of the slot body when disabled (visual only; the Browse/New
+    // controls stay clickable so the slot can be re-configured while off).
+    const float body_alpha = enabled ? 1.0f : 0.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+
+    // 15-block usage grid, full width under the image.
     {
         const int   kB   = 15;
         const float bgap = px(4.0f);
@@ -841,18 +874,27 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
     }
 
-    ImGui::Dummy(ImVec2(0, px(10)));
+    // Push the Browse/New buttons toward the bottom so a fill-height slot card
+    // (bottom-flush with the boxart column) doesn't strand them mid-card. In
+    // the hugging layout just leave the usual small gap.
     static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
     const float cw = ImGui::GetContentRegionAvail().x;
     const float bw = (cw - px(th.spacing_sm)) * 0.5f;
-    if (ImGui::Button("Browse", ImVec2(bw, px(32)))) {
+    const float btn_h = px(32.0f);
+    if (g_save_fill_h) {
+        const float slack = ImGui::GetContentRegionAvail().y - btn_h;
+        ImGui::Dummy(ImVec2(0, slack > px(10.0f) ? slack : px(10.0f)));
+    } else {
+        ImGui::Dummy(ImVec2(0, px(10.0f)));
+    }
+    if (ImGui::Button("Browse", ImVec2(bw, btn_h))) {
         char buf[512];
         if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
                                "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
             launcher_model_set_memcard_path(m, slot, buf);
     }
     ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button("New", ImVec2(bw, px(32)))) {
+    if (ImGui::Button("New", ImVec2(bw, btn_h))) {
         char buf[512];
         // "New" picks a DESTINATION (the file need not exist yet — a save
         // dialog, not the open dialog Browse uses), then writes a real,
@@ -891,16 +933,25 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
         const float gap = px(th->spacing_sm);
         const float avail = ImGui::GetContentRegionAvail().x;
         const float cw = (avail - gap * (slots - 1)) / (float)slots;
+        // When the dashboard asks the SAVE panel to fill (wide PSX layout), the
+        // slot cards take the full remaining column height so their bottoms sit
+        // flush with the boxart card on the left. Only do it when there's real
+        // room; otherwise (narrow/stacked layout) hug the content as before.
+        const float fill_h = ImGui::GetContentRegionAvail().y;
+        const bool do_fill = g_save_fill_h && fill_h > px(180.0f);
+        g_save_fill_h = do_fill;   // draw_memcard_slot reads this for the bottom slack
         for (int slot = 0; slot < slots; ++slot) {
             if (slot) ImGui::SameLine(0, gap);
             char cid[16]; snprintf(cid, sizeof(cid), "mcc%d", slot);
             char pid[16]; snprintf(pid, sizeof(pid), "mcp%d", slot);
-            begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
-                if (begin_panel(pid, cw, false))
+            begin_container(cid, ImVec2(cw, do_fill ? fill_h : 0.0f),
+                            do_fill ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+                if (begin_panel(pid, cw, do_fill, do_fill))
                     draw_memcard_slot(m, *th, slot);
                 end_panel();
             end_container();
         }
+        g_save_fill_h = false;
         return;
     }
     if (!begin_panel("save", 0)) { end_panel(); return; }
@@ -1072,32 +1123,48 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         // below them and the WIDE panel silently draws off the bottom edge.
         // SNES's composition never lists "save" here (save_p == nullptr), so
         // it keeps the original fill-to-height columns byte-identical.
-        const bool hug = (save_p != nullptr);
-        const ImGuiChildFlags col_flags = hug ? ImGuiChildFlags_AutoResizeY : ImGuiChildFlags_None;
-        // Art-led left column sized to the box art; side column takes the rest.
-        if (game_p) {
-            g_game_fill_h = !hug;
-            begin_container("dash_l", ImVec2(px(400), 0), col_flags);
-            game_p->draw(m, &th);
-            end_container();
-        }
-
-        if (game_p && ctrl_p) ImGui::SameLine(0, gap);
-        if (ctrl_p) {
-            begin_container("dash_r", ImVec2(0, 0), col_flags);
-                // The side column stacks the controller card(s) and, directly
-                // beneath, the memory-card card at the SAME width as a controller
-                // card — so the user sees memcards without scrolling below the
-                // GAME card (they sit beside it, not under the whole row).
-                ctrl_p->draw(m, &th);
-                if (save_p) {
-                    // The memory-card panel spans the side column and lays its
-                    // small per-slot cards side by side (each ~a controller-card
-                    // width), so the row is short and sits under the controller.
-                    ImGui::Dummy(ImVec2(0, gap));
-                    save_p->draw(m, &th);
-                }
-            end_container();
+        const bool has_save = (save_p != nullptr);
+        if (has_save) {
+            // Hug-then-fill: the left column hugs the box art; the right column
+            // is made exactly as tall as it, so the controller card hugs at the
+            // top and the memory-card card fills the rest — its bottom sits
+            // flush with the box-art card on the left.
+            float left_h = 0.0f;
+            if (game_p) {
+                g_game_fill_h = false;
+                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
+                game_p->draw(m, &th);
+                end_container();
+                left_h = ImGui::GetItemRectSize().y;
+            }
+            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+            if (ctrl_p) {
+                begin_container("dash_r", ImVec2(0, left_h > 0.0f ? left_h : 0.0f),
+                                ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                    ctrl_p->draw(m, &th);
+                    if (save_p) {
+                        ImGui::Dummy(ImVec2(0, gap));
+                        g_save_fill_h = (left_h > 0.0f);
+                        save_p->draw(m, &th);
+                        g_save_fill_h = false;
+                    }
+                end_container();
+            }
+        } else {
+            // No WIDE save panel (SNES): original fill-to-height columns,
+            // byte-identical.
+            if (game_p) {
+                g_game_fill_h = true;
+                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_None);
+                game_p->draw(m, &th);
+                end_container();
+            }
+            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+            if (ctrl_p) {
+                begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
+                    ctrl_p->draw(m, &th);
+                end_container();
+            }
         }
     } else {
         if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
