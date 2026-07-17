@@ -18,6 +18,7 @@
 #include "launcher_binds.h"
 #include "launcher_panels.h"
 #include "launcher_system.h"
+#include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
 
 #include "launcher_sdlcompat.h"   // pulls the right SDL header + event shim
 
@@ -90,7 +91,8 @@ const LauncherPanel* find_composed(const char* const* ids, const char* id, Launc
 }
 
 // ---- DPI: rebuild fonts + re-derive style from an unscaled baseline ----------
-void apply_scale(const LauncherTheme& th, float scale, const char* font_path) {
+void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
+                 const char* jp_font_path) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig cfg; cfg.OversampleH = 2; cfg.OversampleV = 2;
@@ -107,6 +109,19 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path) {
     if (font_path && font_path[0])
         loaded = io.Fonts->AddFontFromFileTTF(font_path, body, &cfg, kRanges) != nullptr;
     if (!loaded) { cfg.SizePixels = body; io.Fonts->AddFontDefault(&cfg); }
+    // Merge a Japanese subset atlas over the Latin base when the game ships one
+    // (PMS-J's kana cart names / trainer strings). MergeMode folds the JP glyphs
+    // into the same font so mixed Latin+kana strings render in one pass; absent
+    // file => Latin-only, unchanged for every other console.
+    if (jp_font_path && jp_font_path[0]) {
+        if (FILE* jf = fopen(jp_font_path, "rb")) {
+            fclose(jf);
+            ImFontConfig jcfg; jcfg.OversampleH = 2; jcfg.OversampleV = 2;
+            jcfg.MergeMode = true;
+            io.Fonts->AddFontFromFileTTF(jp_font_path, body, &jcfg,
+                                         io.Fonts->GetGlyphRangesJapanese());
+        }
+    }
     io.Fonts->Build();
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     ImGui_ImplOpenGL3_CreateFontsTexture();
@@ -1690,14 +1705,35 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (dz) launcher_model_deadzone_delta(m, p, dz);
     } end_panel();
 
-    if (begin_panel("cfg_binds", 0)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
-        ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
+    // Some systems ship no rebindable input layer (N64 Snap / PMS-J read no
+    // input.cfg): GameInfo.hide_rebind drops the bindings card entirely and the
+    // Controller view is source+deadzone only.
+    if (m->hide_rebind) return;
 
+    if (begin_panel("cfg_binds", 0)) {
         // Responsive grid: fit as many label+chip columns as the width allows
         // (1..4) instead of one tall column with dead space to the right.
         const SystemProfile* prof = (const SystemProfile*)m->profile;
         const ControllerSpec& spec = prof->controller;
+        // Alternate binds per input (N64's input.cfg keeps two; SNES/PSX/GBA
+        // keep one). 0 in the spec reads as 1 (older positional initializers).
+        const int bpi = spec.binds_per_input < 1 ? 1 : spec.binds_per_input;
+
+        // Stores that follow the input SOURCE (N64: one shared table per device
+        // TYPE) must re-read display strings on entry so switching
+        // Keyboard<->pad shows the table actually in effect. Single-bind stores
+        // are per-player and unaffected by the source, so skip the refresh to
+        // keep their behaviour byte-identical.
+        if (bpi >= 2) launcher_binds_refresh(m);
+
+        // When the player's source is a gamepad the N64 store captures pad
+        // fields, not keys — reflect that in the card title and the capture
+        // placeholder.
+        const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+        if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
+        else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+        ImGui::PopStyleColor(); ImGui::Spacing();
 
         // Label column width is sized to the WIDEST label this system's spec
         // actually uses (e.g. PSX's "Triangle") instead of a constant tuned
@@ -1708,7 +1744,10 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             float w = ImGui::CalcTextSize(spec.buttons[b].label).x + px(20.0f);
             if (w > label_col_w) label_col_w = w;
         }
-        const float cell_w = label_col_w + px(170.0f);
+        // Narrower chips when two sit side by side; the single-bind width and
+        // resulting cell_w stay exactly as before (bpi==1 -> label+170).
+        const float chip_w = bpi >= 2 ? px(120.0f) : px(160.0f);
+        const float cell_w = label_col_w + bpi * (chip_w + px(6.0f)) + px(4.0f);
         int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
         if (cols < 1) cols = 1;
         if (cols > 4) cols = 4;
@@ -1725,11 +1764,20 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
                 ImGui::SameLine(label_col_w);
-                const bool cap = m->capturing && m->capture_btn == b;
-                if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                if (ImGui::Button(cap ? "[ press a key... ]" : m->binds[p][b], ImVec2(px(160), 0)))
-                    launcher_model_begin_capture(m, b);
-                if (cap) ImGui::PopStyleColor();
+                for (int slot = 0; slot < bpi; ++slot) {
+                    if (slot) ImGui::SameLine();
+                    ImGui::PushID(slot);
+                    const bool cap = m->capturing && m->capture_btn == b
+                                                  && m->capture_slot == slot;
+                    const char* txt = cap
+                        ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
+                        : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
+                    if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                    if (ImGui::Button(txt, ImVec2(chip_w, 0)))
+                        launcher_model_begin_capture_slot(m, b, slot);
+                    if (cap) ImGui::PopStyleColor();
+                    ImGui::PopID();
+                }
                 ImGui::PopID();
             }
             ImGui::EndTable();
@@ -1926,16 +1974,88 @@ bool is_modifier_scancode(SDL_Scancode sc) {
 
 // Keyboard capture for the rebind editors. Player buttons persist a SCANCODE to
 // keybinds.ini; system hotkeys persist a KEYCODE+mods to config.ini [KeyMap].
+#if !defined(LNG_SDL3)
+// SDL2 only: is this raw joystick button/axis already part of the pad's
+// SDL_GameController mapping? Raw capture is reserved for inputs the mapping
+// can't express (PSR issue #15: 8BitDo 64 C-buttons) — prefer the clean gamepad
+// event otherwise. Ported from PSR input_bindings.cpp raw_input_is_mapped().
+static bool raw_input_is_mapped(SDL_JoystickID which, bool is_axis, int raw_index) {
+    SDL_GameController* gc = SDL_GameControllerFromInstanceID(which);
+    if (!gc) return false;
+    auto hit = [&](SDL_GameControllerButtonBind b) {
+        if (!is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON) return b.value.button == raw_index;
+        if ( is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_AXIS)   return b.value.axis   == raw_index;
+        return false;
+    };
+    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i)
+        if (hit(SDL_GameControllerGetBindForButton(gc, (SDL_GameControllerButton)i))) return true;
+    for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i)
+        if (hit(SDL_GameControllerGetBindForAxis(gc, (SDL_GameControllerAxis)i))) return true;
+    return false;
+}
+#endif
+
 bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     if (!m->capturing && !m->hk_capturing) return false;
-    if (ev.type != SDL_EVENT_KEY_DOWN) return true;   // swallow input while capturing
-    if (LNG_EVKEY(ev) == SDLK_ESCAPE) {
+
+    // ESC cancels any capture — keyboard, pad, or hotkey.
+    if (ev.type == SDL_EVENT_KEY_DOWN && LNG_EVKEY(ev) == SDLK_ESCAPE) {
         launcher_model_cancel_capture(m);
         launcher_model_cancel_hk_capture(m);
         return true;
     }
+
+    // N64 pad capture: when the player being configured has a gamepad source,
+    // the input.cfg store captures pad fields, not keys. Listen for pad
+    // buttons / decisive axis throws / (SDL2) raw joystick fields; swallow the
+    // keyboard entirely so a stray key can't land in a controller bind.
+    if (m->capturing && launcher_binds_wants_pad_capture(m, m->cfg_player + 1)) {
+        const int pl = m->cfg_player + 1, b = m->capture_btn, slot = m->capture_slot;
+        constexpr int kScanThreshold = 20000;   // decisive throw; ignores resting drift
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+            launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_BUTTON, (int)LNG_EVGBTN(ev));
+            launcher_model_cancel_capture(m);
+        } else if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            const int v = (int)LNG_EVGAXISVAL(ev);
+            if (v > kScanThreshold) {
+                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_P, (int)LNG_EVGAXIS(ev));
+                launcher_model_cancel_capture(m);
+            } else if (v < -kScanThreshold) {
+                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_N, (int)LNG_EVGAXIS(ev));
+                launcher_model_cancel_capture(m);
+            }
+        }
+#if !defined(LNG_SDL3)
+        else if (ev.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
+            if (!raw_input_is_mapped(LNG_EVJBTNWHICH(ev), false, (int)LNG_EVJBTN(ev))) {
+                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_JOY_BUTTON, (int)LNG_EVJBTN(ev));
+                launcher_model_cancel_capture(m);
+            }
+        } else if (ev.type == SDL_EVENT_JOYSTICK_AXIS_MOTION) {
+            const int v = (int)LNG_EVJAXISVAL(ev);
+            if ((v > kScanThreshold || v < -kScanThreshold) &&
+                !raw_input_is_mapped(LNG_EVJAXISWHICH(ev), true, (int)LNG_EVJAXIS(ev))) {
+                launcher_binds_set_field(m, pl, b, slot,
+                    v > 0 ? RUI_N64_FIELD_JOY_AXIS_P : RUI_N64_FIELD_JOY_AXIS_N, (int)LNG_EVJAXIS(ev));
+                launcher_model_cancel_capture(m);
+            }
+        }
+#endif
+        return true;   // swallow all other input (keyboard included) while pad-capturing
+    }
+
+    if (ev.type != SDL_EVENT_KEY_DOWN) return true;   // swallow non-key input while capturing
     if (m->capturing) {
-        launcher_binds_set_button(m, m->cfg_player + 1, m->capture_btn, (int)LNG_EVSCAN(ev));
+        // N64's input.cfg keeps two alternate binds per input, so a keyboard
+        // capture there must honour capture_slot via the slot-aware field API.
+        // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
+        // (capture_slot is always 0 for them).
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        if (prof && prof->controller.binds_per_input >= 2)
+            launcher_binds_set_field(m, m->cfg_player + 1, m->capture_btn, m->capture_slot,
+                                     RUI_N64_FIELD_KEY, (int)LNG_EVSCAN(ev));
+        else
+            launcher_binds_set_button(m, m->cfg_player + 1, m->capture_btn, (int)LNG_EVSCAN(ev));
         launcher_model_cancel_capture(m);
         return true;
     }
@@ -2035,6 +2155,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_memcard = launcher_texture_load(asset("assets/img/memcard.tga").c_str());
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
+    // Optional Japanese subset, merged over the Latin base when present (PMS-J).
+    // Games that don't ship it stay Latin-only (fopen in apply_scale fails
+    // silently), so this path is inert for every other console.
+    std::string jp_font_path = asset("assets/fonts/NotoSansJP-Subset.ttf");
     float applied_scale = 0.0f;
     launcher_debug_init();
 
@@ -2062,7 +2186,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         launcher_platform_refresh_metrics(p);
         if (applied_scale != p->display_scale) {
-            apply_scale(*th, p->display_scale, font_path.c_str());
+            apply_scale(*th, p->display_scale, font_path.c_str(), jp_font_path.c_str());
             applied_scale = p->display_scale;
         }
 
