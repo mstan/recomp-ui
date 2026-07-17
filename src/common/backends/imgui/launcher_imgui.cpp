@@ -37,10 +37,32 @@
 #endif
 #include "imgui_impl_opengl3.h"
 
+// ---- Dear ImGui version compatibility ----------------------------------------
+// recomp-ui's vendored ImGui is 1.91.x, but a host can reuse its OWN single
+// ImGui copy via recomp_ui.cmake HOST_IMGUI (e.g. gb-recompiled vendors 1.90.4
+// for its in-game menu). Map the few 1.91-only identifiers this file uses onto
+// their 1.90 spellings so it compiles against either. (The struct-member
+// io.ConfigNavCursorVisibleAlways has no 1.90 equivalent — it is #if-guarded
+// at its use site.)
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM < 19100
+  #define ImGuiChildFlags_Borders     ImGuiChildFlags_Border
+  #define ImGuiCol_NavCursor          ImGuiCol_NavHighlight
+  #define ImGuiButtonFlags_EnableNav  ImGuiButtonFlags_None
+#endif
+
 #include <cstring>
 #include <string>
 
 extern "C" const char* launcher_backend_name(void) { return "Dear ImGui"; }
+
+// `volatile` on purpose. Under a host build with -Os -ffunction-sections
+// -fdata-sections + -Wl,--gc-sections (gb-recompiled's generated projects),
+// GCC 15.2 miscompiled the plain global: a store to g_th did not stick (read
+// back NULL at the same address unless another statement intervened). Marking
+// it volatile forces every read/write to hit memory and sidesteps the bug.
+// The theme pointer is set once per launcher run and read every frame, so the
+// volatile access cost is irrelevant.
+const LauncherTheme* volatile g_th = nullptr;
 
 namespace {
 
@@ -53,7 +75,7 @@ namespace {
 // (Ported from launcher_ng's "Fix launcher DPI layout and text alignment".)
 float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
-const LauncherTheme* g_th = nullptr;
+// g_th moved to external linkage above the anonymous namespace (see note).
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
 // Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
@@ -1025,9 +1047,18 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         const bool digital = has_swap_art && m->s.pad_mode[p] == 2;
         const LauncherTexture& art = has_swap_art
             ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
-        const float aw = px(120);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - aw) * 0.5f);
-        image_fit(art, 120, 70);
+        // Center on the ACTUAL fitted width, not the 120px box: a landscape pad
+        // (SNES/PSX/GBA/Genesis) fills the box, but a PORTRAIT handheld (GB/GBC)
+        // fits to ~half the width and would otherwise sit left-aligned.
+        const float box_w = 120.0f, box_h = 70.0f;
+        float draw_w = px(box_w);
+        if (art.id && art.w > 0 && art.h > 0) {
+            float s = (px(box_w) / art.w < px(box_h) / art.h)
+                        ? px(box_w) / (float)art.w : px(box_h) / (float)art.h;
+            draw_w = art.w * s;
+        }
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - draw_w) * 0.5f);
+        image_fit(art, box_w, box_h);
     }
     ImGui::Dummy(ImVec2(0, px(6)));
 
@@ -1883,7 +1914,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     ImGui::SetCursorPosY(hdr_top);
     ImGui::BeginGroup();
         ImGui::SetWindowFontScale(1.55f);
-        ImGui::TextUnformatted(m->game_name);
+        ImGui::TextUnformatted(m->game_name ? m->game_name : "(null)");
         ImGui::SetWindowFontScale(1.0f);
         if (m->platform && m->platform[0]) {
             ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
@@ -2033,11 +2064,24 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // verify nav rendering without a physical pad. Off => normal auto behaviour
     // (ring appears on pad/keyboard, hides on mouse).
     if (const char* nv = SDL_getenv("LNG_NAV_ALWAYS"); nv && nv[0] == '1')
-        io.ConfigNavCursorVisibleAlways = true;
+#if !defined(IMGUI_VERSION_NUM) || IMGUI_VERSION_NUM >= 19100
+        io.ConfigNavCursorVisibleAlways = true;   // 1.91+ only; 1.90 shows the
+                                                  // nav cursor on demand anyway
+#endif
 
+    // Force `th` to be materialized before the store. Under the host -Os build,
+    // GCC 15.2 otherwise miscompiled `g_th = th` (the value never reached the
+    // global — read back as NULL). This barrier + the `volatile` on g_th make
+    // the store reliably observable. Do not remove without re-verifying on the
+    // gb-recompiled (-Os + ANGLE) build.
+    __asm__ __volatile__("" : : "r"(th) : "memory");
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
+#ifdef LNG_GLES2
+    ImGui_ImplOpenGL3_Init("#version 100");   // GLES 2 GLSL (host ANGLE backend)
+#else
     ImGui_ImplOpenGL3_Init("#version 330");
+#endif
 
     // Box art: per-game path from the ABI when given (multi-variant repos
     // stage one file per variant in a shared build dir), else the default.

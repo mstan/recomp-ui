@@ -99,8 +99,11 @@ static int is_gb_profile(const LauncherModel* m) {
 }
 
 static const char* gb_binds_file_path(void) {
+    // gb-recompiled drives input from runtime_prefs.ini keyboard.<btn>.0 lines
+    // (keybinds.ini [controls] is vestigial). The seam points keybinds_path at
+    // the exe-anchored runtime_prefs.ini; fall back to it by name too.
     return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
-             ? g_launcher_keybinds_path : "keybinds.ini";
+             ? g_launcher_keybinds_path : "runtime_prefs.ini";
 }
 
 static const char* genesis_binds_file_path(void) {

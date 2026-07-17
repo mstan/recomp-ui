@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
             gi.region      = "USA";
             gi.sram_path   = "saves/save.sav";
             gi.boxart_path = "assets/img/boxart.tga";  // placeholder if absent
+            gi.widescreen_supported = is_color ? 1 : 0;  // preview MMX2's opt-in 16:9 (EXPERIMENTAL)
             s.screen_kind  = 0;    // DMG palette (kGbScreenKindNames)
             s.window_scale = 4;
             variant_owns_demo = 1;

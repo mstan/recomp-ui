@@ -23,14 +23,32 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     SDL_zerop(p);
 
     SDL_SetMainReady();   // we built with SDL_MAIN_HANDLED (real main() is entry)
+#ifdef LNG_GLES2
+    // The host links ANGLE's libGLESv2/libEGL; SDL must create the context
+    // through that same ES library (via EGL), or the directly-linked ANGLE
+    // entry points run with no current context and crash on the first GL call.
+    // Must be set BEFORE SDL_Init. Mirrors gb-recompiled's own platform init.
+    SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {   // SDL2: 0 == success
         fprintf(stderr, "[launcher] SDL_Init failed: %s\n", SDL_GetError());
         return false;
     }
 
+    // GL dialect. Default: desktop GL 3.3 core (matches the vendored ImGui
+    // opengl3 backend + "#version 330"). A host that reuses its OWN ImGui copy
+    // compiled for GLES 2 (e.g. gb-recompiled, which renders through ANGLE)
+    // defines LNG_GLES2 so the launcher's context MATCHES that backend — a
+    // core-profile context with a GLES2 backend has no VAO and crashes.
+#ifdef LNG_GLES2
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);   // ES 2.0, matching the host backend
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 

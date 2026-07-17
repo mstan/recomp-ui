@@ -3,7 +3,14 @@
 #include "launcher_debug.h"
 #include "launcher_sdlcompat.h"   // SDL2/SDL3 event-symbol shim + GL header
 
+// A host that already compiles the stb_image_write implementation (e.g.
+// gb-recompiled's gb_printer.c) defines RECOMP_UI_HOST_STB_WRITE so this TU
+// pulls in the DECLARATIONS only and links against the host's single copy —
+// otherwise two implementations collide at link time. Standalone recomp-ui
+// (no host stb) leaves it undefined and provides the implementation here.
+#ifndef RECOMP_UI_HOST_STB_WRITE
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#endif
 #include "third_party/stb_image_write.h"
 
 #include <stdio.h>

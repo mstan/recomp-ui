@@ -199,3 +199,47 @@ function(recomp_target_launcher_ui TGT)
             VERBATIM)
     endif()
 endfunction()
+
+# recomp_stage_launcher_assets(<exe_target> [BOXART <path>] [BOXART_NAME <name>])
+#
+# Staging-ONLY helper (no source compilation) for hosts that compile the
+# recomp-ui launcher into a SHARED runtime library (e.g. gb-recompiled's gbrt)
+# and therefore can't use recomp_target_launcher_ui() — its POST_BUILD asset
+# copy has to attach to the final EXE target, not the static lib. Call this on
+# the game exe from the generated project's CMake. Stages the shared chrome +
+# the Game Boy family controller/logo art + optional per-game box art next to
+# the exe (the flat assets/fonts + assets/img layout the launcher loads).
+function(recomp_stage_launcher_assets TGT)
+    cmake_parse_arguments(RSA "" "BOXART;BOXART_NAME" "" ${ARGN})
+    add_custom_command(TARGET ${TGT} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${TGT}>/assets/fonts
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${TGT}>/assets/img
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${RUI_ASSETS}/common/fonts/LatoLatin-Regular.ttf
+                ${RUI_ASSETS}/common/fonts/LatoLatin-Bold.ttf
+                $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${RUI_ASSETS}/common/img/brand_mark.tga
+                ${RUI_ASSETS}/common/img/verdict_ok.tga
+                ${RUI_ASSETS}/common/img/verdict_warn.tga
+                ${RUI_ASSETS}/common/img/verdict_bad.tga
+                ${RUI_ASSETS}/common/img/verdict_none.tga
+                ${RUI_ASSETS}/consoles/gb/img/pad_gb.tga
+                ${RUI_ASSETS}/consoles/gb/img/pad_gbc.tga
+                ${RUI_ASSETS}/consoles/gb/img/brand_gb.tga
+                ${RUI_ASSETS}/consoles/gb/img/brand_gbc.tga
+                $<TARGET_FILE_DIR:${TGT}>/assets/img/
+        VERBATIM)
+    # Per-game box art (24/32-bit TGA). The seam points GameInfo.boxart_path at
+    # "assets/img/boxart.tga" (or BOXART_NAME) next to the exe.
+    if(RSA_BOXART AND EXISTS ${RSA_BOXART})
+        set(RSA_DEST "boxart.tga")
+        if(RSA_BOXART_NAME)
+            set(RSA_DEST "${RSA_BOXART_NAME}")
+        endif()
+        add_custom_command(TARGET ${TGT} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${RSA_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/${RSA_DEST}
+            VERBATIM)
+    endif()
+endfunction()
