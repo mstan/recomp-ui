@@ -156,7 +156,14 @@ void launcher_model_init(LauncherModel* m,
         if (!ok) m->s.window_width = kWindowWidths[0];
     }
     if (m->has_supersampling) m->s.supersampling = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
-    if (m->has_screen_kind)   m->s.screen_kind   = clampi(m->s.screen_kind, 0, 3);
+    if (m->has_screen_kind) {
+        // Clamp against the active profile's screen-model vocabulary (GBA has
+        // 5 LCD models; the legacy PSX-era set has 4) — see screen_kind_vocab.
+        const SystemProfile* sk_prof = (const SystemProfile*)m->profile;
+        int sk_n = (sk_prof && sk_prof->screen_kind_names && sk_prof->screen_kind_count > 0)
+                     ? sk_prof->screen_kind_count : 4;
+        m->s.screen_kind = clampi(m->s.screen_kind, 0, sk_n - 1);
+    }
     if (m->has_texture_filter) m->s.texture_filter = m->s.texture_filter ? 1 : 0;
     if (m->has_renderer)      m->s.renderer      = m->s.renderer ? 1 : 0;
     if (m->has_frame_interp) {
@@ -437,12 +444,27 @@ const char* launcher_model_texture_filter_label(const LauncherModel* m) {
     return m->s.texture_filter ? "Bilinear" : "Nearest";
 }
 
+// Screen-model vocabulary: the active SystemProfile's own set when it has one
+// (e.g. GBA's 5 LCD models), else the legacy 4-entry PSX-era set above.
+static const char* const* screen_kind_vocab(const LauncherModel* m, int* out_n) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->screen_kind_names && prof->screen_kind_count > 0) {
+        *out_n = prof->screen_kind_count;
+        return prof->screen_kind_names;
+    }
+    *out_n = 4;
+    return kScreenKindNames;
+}
+
 void launcher_model_cycle_screen_kind(LauncherModel* m) {
-    m->s.screen_kind = (clampi(m->s.screen_kind, 0, 3) + 1) % 4;
+    int n = 4; (void)screen_kind_vocab(m, &n);
+    m->s.screen_kind = (clampi(m->s.screen_kind, 0, n - 1) + 1) % n;
 }
 
 const char* launcher_model_screen_kind_label(const LauncherModel* m) {
-    return kScreenKindNames[clampi(m->s.screen_kind, 0, 3)];
+    int n = 4;
+    const char* const* names = screen_kind_vocab(m, &n);
+    return names[clampi(m->s.screen_kind, 0, n - 1)];
 }
 
 void launcher_model_toggle_frame_interp(LauncherModel* m) {

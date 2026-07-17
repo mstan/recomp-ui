@@ -29,6 +29,7 @@
 
 #include "consoles/snes/snes_profile.h"
 #include "consoles/psx/psx_profile.h"
+#include "consoles/gba/gba_profile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,7 +54,6 @@ extern "C" {
 
 LNG_STUB_PROFILE(n64,    "NINTENDO 64",        "ROM");
 LNG_STUB_PROFILE(genesis,"GENESIS",            "ROM");
-LNG_STUB_PROFILE(gba,    "GAME BOY ADVANCE",   "ROM");
 LNG_STUB_PROFILE(nes,    "NINTENDO",           "ROM");
 LNG_STUB_PROFILE(gbc,    "GAME BOY COLOR",     "ROM");
 LNG_STUB_PROFILE(smsgg,  "MASTER SYSTEM",      "ROM");
@@ -67,9 +67,9 @@ static inline const SystemProfile* launcher_system_by_id(const char* name) {
     if (!name || !name[0]) return NULL;
     if (launcher_console_is_psx(name))  return &kSystemProfilePsx;
     if (launcher_console_is_snes(name)) return &kSystemProfileSnes;
+    if (launcher_console_is_gba(name))  return &kSystemProfileGba;
     if (lps_streq_ci(name, "n64") || lps_streq_ci(name, "nintendo64")) return &kSystemProfile_n64;
     if (lps_streq_ci(name, "genesis") || lps_streq_ci(name, "megadrive")) return &kSystemProfile_genesis;
-    if (lps_streq_ci(name, "gba")) return &kSystemProfile_gba;
     if (lps_streq_ci(name, "nes")) return &kSystemProfile_nes;
     if (lps_streq_ci(name, "gbc")) return &kSystemProfile_gbc;
     if (lps_streq_ci(name, "smsgg") || lps_streq_ci(name, "sms") || lps_streq_ci(name, "gg"))
@@ -91,7 +91,7 @@ static inline const SystemProfile* launcher_system_infer(const RecompLauncherCGa
         if (lps_streq_ci(gi->platform, "SUPER NINTENDO"))    return &kSystemProfileSnes;
         if (lps_streq_ci(gi->platform, "NINTENDO 64"))       return &kSystemProfile_n64;
         if (lps_streq_ci(gi->platform, "GENESIS"))           return &kSystemProfile_genesis;
-        if (lps_streq_ci(gi->platform, "GAME BOY ADVANCE"))  return &kSystemProfile_gba;
+        if (lps_streq_ci(gi->platform, "GAME BOY ADVANCE"))  return &kSystemProfileGba;
         if (lps_streq_ci(gi->platform, "NINTENDO"))          return &kSystemProfile_nes;
         if (lps_streq_ci(gi->platform, "GAME BOY COLOR"))    return &kSystemProfile_gbc;
         if (lps_streq_ci(gi->platform, "MASTER SYSTEM"))     return &kSystemProfile_smsgg;

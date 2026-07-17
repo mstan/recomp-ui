@@ -104,6 +104,7 @@ function(recomp_target_launcher_ui TGT)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/pad.tga
                 ${RUI_ASSETS}/img/pad_analog.tga ${RUI_ASSETS}/img/pad_digital.tga
+                ${RUI_ASSETS}/img/pad_gba.tga
                 ${RUI_ASSETS}/img/memcard.tga
                 ${RUI_ASSETS}/img/verdict_ok.tga ${RUI_ASSETS}/img/verdict_warn.tga
                 ${RUI_ASSETS}/img/verdict_bad.tga ${RUI_ASSETS}/img/verdict_none.tga

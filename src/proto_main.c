@@ -71,6 +71,13 @@ int main(int argc, char** argv) {
             s.window_width = 1280; s.renderer = 1; s.supersampling = 1;
             s.screen_kind = 1; s.frame_interp = 0; s.spu_hq = 1; s.aspect_index = 1;
         }
+        if (lpr_is(variant, "gba")) {
+            // Preview a GBA title: the one battery .sav (save row in the GAME
+            // card), a "configured" LCD screen model, 3x integer scale.
+            gi.sram_path  = "saves/save.sav";
+            s.screen_kind = 3;   // Backlit (kGbaScreenKindNames)
+            s.window_scale = 3;
+        }
     }
 
     // Flip these to preview the 2-player + SRAM module set (what a save-game

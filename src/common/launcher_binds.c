@@ -44,10 +44,15 @@ static const int kKbIndexSnes[LNG_SNES_PAD_BUTTON_COUNT] = {
 
 // Resolve the keybinds-index table (and its length) for the model's ACTIVE
 // SystemProfile. PSX is handled entirely by the native bridge below (see
-// is_psx_profile()) before this is ever consulted, so every caller here is
-// SNES-shaped (12 buttons) today.
+// is_psx_profile()) before this is ever consulted; GBA persists through the
+// generic store with its own 10-button vocabulary (kGbaKbIndex,
+// consoles/gba/gba_profile.h); everything else is SNES-shaped (12 buttons).
 static const int* active_kb_index(const LauncherModel* m, int* out_n) {
-    (void)m;
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    if (prof && prof->id && !strcmp(prof->id, "gba")) {
+        *out_n = LNG_GBA_PAD_BUTTON_COUNT;
+        return kGbaKbIndex;
+    }
     *out_n = LNG_SNES_PAD_BUTTON_COUNT;
     return kKbIndexSnes;
 }

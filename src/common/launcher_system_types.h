@@ -84,6 +84,12 @@ typedef struct SystemProfile {
     const char* const* panels_dashboard;           // composition (panel ids, in slot order)
     const char* const* panels_settings;
     const char* const* panels_controller;
+    // Screen-model vocabulary for the "Screen model" cycle (video.screen_kind
+    // capability). NULL/0 => the legacy 4-entry PSX-era set (Raw/CRT/
+    // Composite/Trinitron, launcher_model.c) — existing rows are positional
+    // initializers, so trailing zero-init keeps them on the legacy set.
+    const char* const* screen_kind_names;
+    int                screen_kind_count;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

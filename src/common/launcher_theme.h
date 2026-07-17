@@ -103,11 +103,39 @@ static inline LauncherTheme launcher_theme_psx(void) {
     return t;
 }
 
-// Pick a built-in theme by name ("psx" -> PlayStation; anything else -> default CRT).
+// "Game Boy Advance" theme. The handheld LCD era: a deep indigo ground (the
+// AGB-001 shell), ONE saturated indigo-violet accent for brand + primary
+// action, and NO CRT scanlines (a backlit LCD never had them). Same layout and
+// design language as the default; only the palette + scanline flag differ.
+static inline LauncherTheme launcher_theme_gba(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.047f, 0.043f, 0.090f, 1.0f); // #0C0B17 indigo-black
+    t.background2     = lng_rgba(0.082f, 0.075f, 0.145f, 1.0f); // #151325 lifted center
+    t.panel           = lng_rgba(0.094f, 0.086f, 0.165f, 1.0f); // #18162A card
+    t.panel_hovered   = lng_rgba(0.145f, 0.133f, 0.247f, 1.0f); // #25223F
+    t.control         = lng_rgba(0.118f, 0.110f, 0.200f, 1.0f); // #1E1C33 button
+    t.control_hovered = lng_rgba(0.161f, 0.149f, 0.271f, 1.0f); // #292645
+    t.border          = lng_rgba(0.204f, 0.188f, 0.325f, 1.0f); // #343053 hairline
+    t.accent          = lng_rgba(0.463f, 0.427f, 0.945f, 1.0f); // #766DF1 GBA indigo
+    t.accent_dim      = lng_rgba(0.325f, 0.290f, 0.741f, 1.0f); // #534ABD pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.text            = lng_rgba(0.922f, 0.918f, 0.957f, 1.0f); // #EBEAF4
+    t.text_muted      = lng_rgba(0.525f, 0.510f, 0.647f, 1.0f); // #8682A5
+    /* good/warn keep their semantic colors; focus stays cyan (reads on indigo). */
+    t.scanlines       = 0;                       // LCD, not CRT: flat
+    return t;
+}
+
+// Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
+// Advance; anything else -> default CRT).
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
         return launcher_theme_psx();
+    if (name && (name[0] == 'g' || name[0] == 'G') &&
+        (name[1] == 'b' || name[1] == 'B') &&
+        (name[2] == 'a' || name[2] == 'A'))
+        return launcher_theme_gba();
     return launcher_theme_default();
 }
 
