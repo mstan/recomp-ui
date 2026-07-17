@@ -1,5 +1,24 @@
 # recomp-ui + PSX prototype — HANDOFF (2026-07-16)
 
+> **STATUS UPDATE (later, 2026-07-16).** This is a point-in-time PSX-era
+> snapshot; several details below are now stale. Since it was written:
+> - The source tree was **restructured** into `src/common/` (core) +
+>   `src/consoles/<id>/` units + `assets/common|consoles/<id>/`. `SystemProfile`
+>   rows now live in `src/consoles/<id>/<id>_profile.h`, aggregated by
+>   `src/launcher_system.h`. `docs/ARCHITECTURE.md` reflects the current shapes
+>   (incl. `PadModeDef`, `ControllerSpec.modes/has_pad_binds`,
+>   `VideoSpec.widescreen_cells`, `RomFilterSpec`).
+> - Console units now exist for **snes, psx, gba, genesis**. The PSX bind page
+>   renders the real 24-input DualShock vocabulary and the disc-verdict panel
+>   renders (serial/region/ISO) — the two PSX "NOT FINALIZED" items about those
+>   are addressed; treat the rest of that section as historical until re-checked.
+> - **Genesis** adds three new capabilities used by the shared UI: a custom
+>   pad-mode list (`ControllerSpec.modes`, 3-Button/6-Button, mode-driven rebind
+>   row count), a per-row **GAMEPAD** bind column (`has_pad_binds`, persisted via
+>   `src/consoles/genesis/genesis_binds.c` → settings.ini `[input.pN]`), and a
+>   widescreen "extra cells / side" stepper (`VideoSpec.widescreen_cells`).
+> Read `docs/ARCHITECTURE.md` for the authoritative, current contract.
+
 Context for continuing this work in a fresh session. Read `docs/ARCHITECTURE.md`
 first — it is the design contract for the panel/module system.
 

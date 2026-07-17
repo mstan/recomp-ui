@@ -4,7 +4,9 @@
 #
 #     set(RECOMP_UI_ROOT <path-to-recomp-ui>)   # or add as a git submodule
 #     include(${RECOMP_UI_ROOT}/recomp_ui.cmake)
-#     recomp_target_launcher_ui(<host_target> [BOXART <path-to-boxart.tga>])
+#     recomp_target_launcher_ui(<host_target> [BOXART <path-to-boxart.tga>]
+#                                              [BOXART_NAME <dest-basename.tga>]
+#                                              [PAD <pad.tga>] [BRAND <brand.tga>])
 #
 # This is the console-agnostic extraction of the SNES-recomp "launcher_ng"
 # Dear ImGui launcher: same UI, same behavior, generic C ABI
@@ -42,7 +44,11 @@ set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 enable_language(CXX)
 
 function(recomp_target_launcher_ui TGT)
-    cmake_parse_arguments(RUI "" "BOXART;PAD;BRAND" "" ${ARGN})
+    # BOXART_NAME: destination basename for BOXART under assets/img/ (default
+    # "boxart.tga"). Needed when several targets stage into ONE exe dir (Sonic
+    # 3 & Knuckles builds three modes side by side) and each needs its own
+    # box art file — pairs with GameInfo.boxart_path the runtime reads.
+    cmake_parse_arguments(RUI "" "BOXART;BOXART_NAME;PAD;BRAND" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -61,6 +67,7 @@ function(recomp_target_launcher_ui TGT)
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
+        ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
@@ -117,6 +124,9 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/psx/img/pad_digital.tga
                 ${RUI_ASSETS}/consoles/psx/img/memcard.tga
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
+                ${RUI_ASSETS}/consoles/genesis/img/pad_genesis.tga
+                ${RUI_ASSETS}/consoles/genesis/img/brand_genesis.tga
+                ${RUI_ASSETS}/consoles/genesis/img/boxart_sonic1.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a
@@ -128,9 +138,13 @@ function(recomp_target_launcher_ui TGT)
             VERBATIM)
     endif()
     if(RUI_BOXART AND EXISTS ${RUI_BOXART})
+        set(RUI_BOXART_DEST "boxart.tga")
+        if(RUI_BOXART_NAME)
+            set(RUI_BOXART_DEST "${RUI_BOXART_NAME}")
+        endif()
         add_custom_command(TARGET ${TGT} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${RUI_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/boxart.tga
+                    ${RUI_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/${RUI_BOXART_DEST}
             VERBATIM)
     endif()
     # Per-console brand mark (top-left, next to the game title): overrides the

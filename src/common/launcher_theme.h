@@ -126,8 +126,31 @@ static inline LauncherTheme launcher_theme_gba(void) {
     return t;
 }
 
+// "Sega Genesis" theme. The 16-bit cartridge/CRT-arcade era: a cool blue-black
+// ground and ONE bold Sega azure accent for brand + primary action, distinctly
+// more cyan than the PSX royal blue so the two never read alike. CRT scanlines
+// stay ON (this is the tube/cartridge era, same rationale as the default).
+static inline LauncherTheme launcher_theme_genesis(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.035f, 0.047f, 0.075f, 1.0f); // #090C13 blue-black ink
+    t.background2     = lng_rgba(0.059f, 0.082f, 0.129f, 1.0f); // #0F1521 lifted center
+    t.panel           = lng_rgba(0.067f, 0.094f, 0.149f, 1.0f); // #111826 card
+    t.panel_hovered   = lng_rgba(0.106f, 0.153f, 0.235f, 1.0f); // #1B273C
+    t.control         = lng_rgba(0.082f, 0.114f, 0.176f, 1.0f); // #151D2D button
+    t.control_hovered = lng_rgba(0.122f, 0.173f, 0.263f, 1.0f); // #1F2C43
+    t.border          = lng_rgba(0.149f, 0.204f, 0.298f, 1.0f); // #26344C hairline
+    t.accent          = lng_rgba(0.090f, 0.635f, 0.902f, 1.0f); // #17A2E6 Sega azure
+    t.accent_dim      = lng_rgba(0.055f, 0.451f, 0.702f, 1.0f); // #0E73B3 pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.text            = lng_rgba(0.914f, 0.929f, 0.961f, 1.0f); // #E9EDF5
+    t.text_muted      = lng_rgba(0.498f, 0.545f, 0.643f, 1.0f); // #7F8BA4
+    /* good/warn keep their semantic colors; focus stays cyan (reads on blue). */
+    t.scanlines       = 1;                       // CRT/cartridge era: scanlines ON
+    return t;
+}
+
 // Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
-// Advance; anything else -> default CRT).
+// Advance, "genesis" -> Sega Genesis; anything else -> default CRT).
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
@@ -136,6 +159,9 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'b' || name[1] == 'B') &&
         (name[2] == 'a' || name[2] == 'A'))
         return launcher_theme_gba();
+    if (name && (name[0] == 'g' || name[0] == 'G') &&
+        (name[1] == 'e' || name[1] == 'E'))
+        return launcher_theme_genesis();
     return launcher_theme_default();
 }
 

@@ -27,6 +27,7 @@
 #define SDL_EVENT_MOUSE_BUTTON_UP       SDL_MOUSEBUTTONUP
 #define SDL_EVENT_MOUSE_WHEEL           SDL_MOUSEWHEEL
 #define SDL_EVENT_GAMEPAD_BUTTON_DOWN   SDL_CONTROLLERBUTTONDOWN
+#define SDL_EVENT_GAMEPAD_AXIS_MOTION   SDL_CONTROLLERAXISMOTION
 
 // key event fields: SDL3 ev.key.{key,scancode,mod} == SDL2 ev.key.keysym.{sym,scancode,mod}
 #define LNG_EVKEY(ev)    ((ev).key.keysym.sym)
@@ -34,9 +35,14 @@
 #define LNG_EVMOD(ev)    ((ev).key.keysym.mod)
 // gamepad button event field: SDL3 ev.gbutton.button == SDL2 ev.cbutton.button
 #define LNG_EVGBTN(ev)   ((ev).cbutton.button)
+// gamepad axis event fields: SDL3 ev.gaxis.{axis,value} == SDL2 ev.caxis.{axis,value}
+#define LNG_EVGAXIS(ev)    ((ev).caxis.axis)
+#define LNG_EVGAXISVAL(ev) ((ev).caxis.value)
 
 // button->name lookup
 #define SDL_GetGamepadStringForButton(b)  SDL_GameControllerGetStringForButton((SDL_GameControllerButton)(b))
+// axis->name lookup
+#define SDL_GetGamepadStringForAxis(a)    SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)(a))
 typedef SDL_GameControllerButton  LNG_GamepadButton;
 
 // key-modifier masks (SDL3 renamed KMOD_* -> SDL_KMOD_*)
@@ -51,6 +57,8 @@ typedef SDL_GameControllerButton  LNG_GamepadButton;
 #define LNG_EVSCAN(ev)   ((ev).key.scancode)
 #define LNG_EVMOD(ev)    ((ev).key.mod)
 #define LNG_EVGBTN(ev)   ((ev).gbutton.button)
+#define LNG_EVGAXIS(ev)    ((ev).gaxis.axis)
+#define LNG_EVGAXISVAL(ev) ((ev).gaxis.value)
 typedef SDL_GamepadButton  LNG_GamepadButton;
 #endif
 
