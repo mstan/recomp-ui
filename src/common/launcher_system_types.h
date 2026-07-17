@@ -110,6 +110,13 @@ typedef struct SystemProfile {
     // 1 => hide the Sample-rate cycle in the AUDIO panel (the nesrecomp
     // runner has no audio-frequency setting; only Volume). 0 = legacy (show).
     int hide_audio_freq;
+    // Top-left brand-mark image filename (in assets/img/, staged by
+    // recomp_ui.cmake). NULL => the shared "brand_mark.tga" (the Nintendo
+    // colour swoosh). A console overrides it with its own mark — NES uses the
+    // red "Nintendo" pill ("brand_nes.tga"). Mirrors controller.image: a
+    // trailing field, so existing positional profile rows zero-init to NULL and
+    // keep the shared mark.
+    const char* brand_image;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

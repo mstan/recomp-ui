@@ -679,7 +679,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
         if (!s_pw_editing) {
             ImGui::AlignTextToFramePadding();
             if (m->password_text[0]) ImGui::TextUnformatted(m->password_text);
-            else ImGui::TextColored(col(th.text_muted), "no %s yet", label);
+            else ImGui::TextColored(col(th.text_muted), "(Not set)");
             ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
             if (ImGui::Button("Edit", ImVec2(bw, px(30)))) {
                 snprintf(s_pw_buf, sizeof(s_pw_buf), "%s", m->password_text);
@@ -1785,10 +1785,20 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
 
     // ---- Marquee header: brand · GAME TITLE · subtitle .......... [nav] ----
     ImVec2 hp = ImGui::GetCursorScreenPos();
-    // Vertically center the brand mark against the two-line title block (drop it
-    // down ~9px so it doesn't sit high against the first line).
+    // Vertically center the brand mark against the two-line title block (game
+    // title at 1.55x + platform at 1.0x). Computed from the mark's fitted height
+    // so a short wide mark (e.g. the NES "Nintendo" pill, ~4:1) sits centered
+    // between the two lines rather than hugging the first.
     float hdr_top = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(hdr_top + px(9));
+    float line_h  = ImGui::GetTextLineHeight();
+    float block_h = line_h * 1.55f + ImGui::GetStyle().ItemSpacing.y + line_h;
+    float brand_h = px(33);
+    if (g_brand.id && g_brand.w > 0 && g_brand.h > 0) {
+        float s = (px(44) / g_brand.w < px(33) / g_brand.h) ? px(44) / (float)g_brand.w
+                                                            : px(33) / (float)g_brand.h;
+        brand_h = g_brand.h * s;
+    }
+    ImGui::SetCursorPosY(hdr_top + (block_h - brand_h) * 0.5f);
     image_fit(g_brand, 44, 33); ImGui::SameLine(0, px(12));
     ImGui::SetCursorPosY(hdr_top);
     ImGui::BeginGroup();
@@ -1952,7 +1962,16 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_pad_digital = launcher_texture_load(
                 asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
     }
-    g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
+    {
+        // Brand mark: per-console override from the active SystemProfile
+        // (brand_image), else the shared Nintendo swoosh. NES uses the red
+        // "Nintendo" pill so it doesn't wear the SNES logo.
+        const SystemProfile* bprof = (const SystemProfile*)m->profile;
+        const char* brand_img = (bprof && bprof->brand_image) ? bprof->brand_image
+                                                              : "brand_mark.tga";
+        g_brand = launcher_texture_load(
+            asset((std::string("assets/img/") + brand_img).c_str()).c_str());
+    }
     g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
     g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());
     g_verdict_bad   = launcher_texture_load(asset("assets/img/verdict_bad.tga").c_str());

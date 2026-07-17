@@ -58,7 +58,7 @@ static const char* const kNesRomPatterns[] = { "*.nes" };
 static const SystemProfile kSystemProfileNes = {
     /* id       */ "nes",
     /* platform */ "NINTENDO ENTERTAINMENT SYSTEM",
-    /* theme    */ NULL,        // default CRT-console theme
+    /* theme    */ "nes",       // graphite + Nintendo-red NES theme
     /* rom_noun */ "ROM",
     /* controller */ {
         kNesPadButtons, LNG_NES_PAD_BUTTON_COUNT,
@@ -88,6 +88,7 @@ static const SystemProfile kSystemProfileNes = {
                               "NES ROM (.nes)" },
     /* renderer_labels   */ kNesRendererLabels,   // Accelerated/Software (SDL output)
     /* hide_audio_freq   */ 1,      // runner has no audio-frequency setting (Volume only)
+    /* brand_image       */ "brand_nes.tga",      // red "Nintendo" pill, not the SNES swoosh
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------
@@ -100,7 +101,7 @@ static inline int launcher_console_is_nes(const char* name) {
 // defaults onto the C ABI GameInfo. Per-game fields (name, CRC, sram_path,
 // widescreen_supported, password save, zapper) are set by the host AFTER this.
 static inline void launcher_profile_apply_nes(RecompLauncherCGameInfo* gi) {
-    gi->theme    = NULL;               // default CRT-console theme
+    gi->theme    = "nes";              // graphite + Nintendo-red NES theme
     gi->platform = "NINTENDO ENTERTAINMENT SYSTEM";
     gi->rom_noun = "ROM";
     // Every nesrecomp runner supports integer scaling; Mesen HD texture packs
