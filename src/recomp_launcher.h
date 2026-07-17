@@ -169,6 +169,17 @@ typedef struct RecompLauncherCGameInfo {
      * build dir stage one file per variant (e.g. "assets/img/boxart_firered
      * .tga") and point each exe's GameInfo here. */
     const char* boxart_path;
+
+    /* Game-supplied aspect vocabulary: overrides the built-in PSX-style
+     * 4:3/16:9/21:9 set. Settings.aspect_index cycles 0..num_aspect_labels-1;
+     * index 0 should be the native aspect. The host maps the committed index
+     * onto its own render parameter (e.g. gbarecomp --view-width).
+     * aspect_experimental=1 draws the amber EXPERIMENTAL tag next to the
+     * cycle (the snesrecomp/psxrecomp widescreen convention for per-game
+     * enhancement surfaces that are still maturing). */
+    const char* const* aspect_labels;
+    int  num_aspect_labels;
+    int  aspect_experimental;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

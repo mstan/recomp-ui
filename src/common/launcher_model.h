@@ -138,6 +138,12 @@ typedef struct {
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
+    // Game-supplied aspect vocabulary (GameInfo.aspect_labels): when set,
+    // the aspect cycle walks these 0..num_aspect_labels-1 instead of the
+    // built-in 4:3/16:9/21:9 mask set; aspect_experimental tags the row.
+    const char* const* aspect_labels;
+    int  num_aspect_labels;
+    bool aspect_experimental;
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.

@@ -77,6 +77,17 @@ int main(int argc, char** argv) {
             gi.sram_path  = "saves/save.sav";
             s.screen_kind = 3;   // Backlit (kGbaScreenKindNames)
             s.window_scale = 3;
+            // LNG_DEMO_FULL=1 additionally previews a game-supplied aspect
+            // vocabulary (the Mega Man Zero extended-view shape).
+            static const char* const kGbaAspectPreview[] = {
+                "3:2 (Native)", "9:5 (288 px)", "12:5 (384 px)", "6:2 (480 px)"
+            };
+            const char* gd = getenv("LNG_DEMO_FULL");
+            if (gd && gd[0] == '1') {
+                gi.aspect_labels       = kGbaAspectPreview;
+                gi.num_aspect_labels   = 4;
+                gi.aspect_experimental = 1;
+            }
         }
     }
 

@@ -94,20 +94,28 @@ function(recomp_target_launcher_ui TGT)
     endif()
 
     # ---- stage runtime assets next to the exe -----------------------------------
+    # Repo layout mirrors src/: assets/common/ (chrome shared by every
+    # console) + assets/consoles/<id>/ (per-console art). The RUNTIME layout
+    # next to the exe stays flat (assets/fonts + assets/img) — the launcher's
+    # load paths are unchanged; only the repo organization is per-console.
     add_custom_command(TARGET ${TGT} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${TGT}>/assets/fonts
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${TGT}>/assets/img
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${RUI_ASSETS}/fonts/LatoLatin-Regular.ttf
-                ${RUI_ASSETS}/fonts/LatoLatin-Bold.ttf
+                ${RUI_ASSETS}/common/fonts/LatoLatin-Regular.ttf
+                ${RUI_ASSETS}/common/fonts/LatoLatin-Bold.ttf
                 $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${RUI_ASSETS}/img/brand_mark.tga ${RUI_ASSETS}/img/pad.tga
-                ${RUI_ASSETS}/img/pad_analog.tga ${RUI_ASSETS}/img/pad_digital.tga
-                ${RUI_ASSETS}/img/pad_gba.tga
-                ${RUI_ASSETS}/img/memcard.tga
-                ${RUI_ASSETS}/img/verdict_ok.tga ${RUI_ASSETS}/img/verdict_warn.tga
-                ${RUI_ASSETS}/img/verdict_bad.tga ${RUI_ASSETS}/img/verdict_none.tga
+                ${RUI_ASSETS}/common/img/brand_mark.tga
+                ${RUI_ASSETS}/common/img/verdict_ok.tga
+                ${RUI_ASSETS}/common/img/verdict_warn.tga
+                ${RUI_ASSETS}/common/img/verdict_bad.tga
+                ${RUI_ASSETS}/common/img/verdict_none.tga
+                ${RUI_ASSETS}/consoles/snes/img/pad.tga
+                ${RUI_ASSETS}/consoles/psx/img/pad_analog.tga
+                ${RUI_ASSETS}/consoles/psx/img/pad_digital.tga
+                ${RUI_ASSETS}/consoles/psx/img/memcard.tga
+                ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a

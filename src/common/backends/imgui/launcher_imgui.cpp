@@ -1095,10 +1095,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
-        if (m->aspect_mask) {   // PSX-style: 4:3/16:9/21:9 cycle (supersedes the legacy checkbox)
+        if (m->aspect_mask || m->num_aspect_labels > 0) {   // PSX-style cycle, or a game-supplied vocabulary
             row_label("Aspect ratio", th, cw);
             if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
                 launcher_model_cycle_aspect(m);
+            if (m->aspect_experimental) experimental_tag(th);
         } else if (m->widescreen_supported) {   // legacy module: only for games that support it
             row_label("Widescreen 16:9", th, cw);
             bool ws = m->s.widescreen != 0;
@@ -1135,10 +1136,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_supersampling(m);
     }
 
-    if (m->aspect_mask) {
+    if (m->aspect_mask || m->num_aspect_labels > 0) {
         row_label("Aspect ratio", th);
         if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
             launcher_model_cycle_aspect(m);
+        if (m->aspect_experimental) experimental_tag(th);
     } else if (m->widescreen_supported) {
         row_label("Widescreen 16:9", th);
         bool ws = m->s.widescreen != 0;

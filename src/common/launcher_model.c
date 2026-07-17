@@ -109,6 +109,9 @@ void launcher_model_init(LauncherModel* m,
         m->disc_verify_cb       = game->disc_verify;      // real disc verdict (PSX), or NULL
         m->memcard_inspect_cb   = game->memcard_inspect;  // real memcard summary (PSX), or NULL
         m->boxart_path          = game->boxart_path;      // NULL => default boxart.tga
+        m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
+        m->num_aspect_labels    = game->num_aspect_labels;
+        m->aspect_experimental  = game->aspect_experimental != 0;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -141,7 +144,10 @@ void launcher_model_init(LauncherModel* m,
     }
 
     // ---- validate/clamp aspect_index against the offered set ----
-    if (m->aspect_mask) {
+    if (m->aspect_labels && m->num_aspect_labels > 0) {
+        // Game-supplied vocabulary: a plain 0..n-1 cycle, every entry offered.
+        m->s.aspect_index = clampi(m->s.aspect_index, 0, m->num_aspect_labels - 1);
+    } else if (m->aspect_mask) {
         int idx = clampi(m->s.aspect_index, 0, 2);
         // walk down from the requested index to the nearest offered aspect;
         // 4:3 (bit0, index 0) is always offered so this always terminates.
@@ -350,6 +356,13 @@ bool launcher_model_aspect_offered(const LauncherModel* m, int index) {
 }
 
 void launcher_model_cycle_aspect(LauncherModel* m) {
+    if (m->aspect_labels && m->num_aspect_labels > 0) {
+        // Game-supplied vocabulary: plain 0..n-1 cycle.
+        m->s.aspect_index =
+            (clampi(m->s.aspect_index, 0, m->num_aspect_labels - 1) + 1) %
+            m->num_aspect_labels;
+        return;
+    }
     if (!m->aspect_mask) return;   // gated: legacy widescreen-bool games no-op
     int idx = clampi(m->s.aspect_index, 0, 2);
     for (int i = 0; i < 3; ++i) {
@@ -359,6 +372,9 @@ void launcher_model_cycle_aspect(LauncherModel* m) {
 }
 
 const char* launcher_model_aspect_label(const LauncherModel* m) {
+    if (m->aspect_labels && m->num_aspect_labels > 0)
+        return m->aspect_labels[clampi(m->s.aspect_index, 0,
+                                       m->num_aspect_labels - 1)];
     static const char* kLabels[3] = {
         "4:3 (Native)", "16:9 (Widescreen)", "21:9 (Ultrawide)"
     };
