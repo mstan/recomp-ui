@@ -7,7 +7,7 @@
 #include "launcher_system.h"
 
 #include "crc32.h"
-#include "memcard_format.h"
+#include "consoles/psx/memcard_format.h"   // PSX-specific; used only under SAVE_MEMCARD
 #include "sha256.h"
 #include "ips_patch.h"
 

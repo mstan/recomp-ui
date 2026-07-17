@@ -47,25 +47,27 @@ function(recomp_target_launcher_ui TGT)
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
     target_sources(${TGT} PRIVATE
-        # console-agnostic launcher core (C)
-        ${RUI_SRC}/launcher_model.c
-        ${RUI_SRC}/launcher_platform_sdl2.c
-        ${RUI_SRC}/launcher_gl.c
-        ${RUI_SRC}/launcher_input.c
-        ${RUI_SRC}/launcher_files.c
-        ${RUI_SRC}/memcard_format.c   # standalone PS1 blank memory-card image writer
-        ${RUI_SRC}/launcher_debug.c
-        ${RUI_SRC}/launcher_binds.c
-        ${RUI_SRC}/launcher_ng_capi.c          # implements recomp_launcher_run_window()
+        # console-agnostic launcher core (C) — src/common/
+        ${RUI_SRC}/common/launcher_model.c
+        ${RUI_SRC}/common/launcher_platform_sdl2.c
+        ${RUI_SRC}/common/launcher_gl.c
+        ${RUI_SRC}/common/launcher_input.c
+        ${RUI_SRC}/common/launcher_files.c
+        ${RUI_SRC}/common/launcher_debug.c
+        ${RUI_SRC}/common/launcher_binds.c
+        ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/third_party/tinyfiledialogs.c
+        # console-specific helpers (src/consoles/<id>/) — always compiled, only
+        # reached when the active SystemProfile opts into the capability
+        ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
-        ${RUI_SRC}/crc32.c
-        ${RUI_SRC}/sha256.c
-        ${RUI_SRC}/keybinds.c
-        ${RUI_SRC}/ips_patch.c          # MSU-1 IPS auto-patching (launcher_model.c)
+        ${RUI_SRC}/common/crc32.c
+        ${RUI_SRC}/common/sha256.c
+        ${RUI_SRC}/common/keybinds.c
+        ${RUI_SRC}/common/ips_patch.c   # MSU-1 IPS auto-patching (launcher_model.c)
         # Dear ImGui backend (the shipping UI) + vendored ImGui (C++)
-        ${RUI_SRC}/backends/imgui/launcher_imgui.cpp
+        ${RUI_SRC}/common/backends/imgui/launcher_imgui.cpp
         ${RUI_IMGUI}/imgui.cpp
         ${RUI_IMGUI}/imgui_draw.cpp
         ${RUI_IMGUI}/imgui_tables.cpp
@@ -75,7 +77,9 @@ function(recomp_target_launcher_ui TGT)
     )
 
     target_include_directories(${TGT} PRIVATE
-        ${RUI_SRC}                   # recomp_launcher.h + launcher_ng headers + relative third_party/stb_*.h
+        ${RUI_SRC}                   # recomp_launcher.h / launcher_profile.h / launcher_system.h
+                                     # + "third_party/..." + "consoles/<id>/..." includes
+        ${RUI_SRC}/common            # launcher core headers (bare-name includes)
         ${RUI_IMGUI}
         ${RUI_IMGUI}/backends
     )
