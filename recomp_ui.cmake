@@ -46,6 +46,28 @@ function(recomp_target_launcher_ui TGT)
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
+    # ImGui provider. Normally recomp-ui compiles its OWN vendored Dear ImGui
+    # (fully self-contained — the SNES/PSX/GBA standalone consumers). But an
+    # rt64-based N64 host already links Dear ImGui (rt64's debug inspector), and
+    # two ImGui copies in one binary collide at link (duplicate symbols). Such a
+    # host sets RECOMP_UI_HOST_IMGUI=ON and points RECOMP_UI_HOST_IMGUI_INCLUDE
+    # at its ImGui + backends headers; recomp-ui then compiles ONLY launcher
+    # code against those headers and links the host's ImGui core/backends. The
+    # launcher UI is version-guarded (see launcher_imgui.cpp) so it builds
+    # against the host's ImGui even when older than the vendored one.
+    if(RECOMP_UI_HOST_IMGUI)
+        message(STATUS "recomp-ui: using HOST Dear ImGui (${RECOMP_UI_HOST_IMGUI_INCLUDE})")
+        set(_rui_imgui_sources)   # host compiles imgui core + backends
+    else()
+        set(_rui_imgui_sources
+            ${RUI_IMGUI}/imgui.cpp
+            ${RUI_IMGUI}/imgui_draw.cpp
+            ${RUI_IMGUI}/imgui_tables.cpp
+            ${RUI_IMGUI}/imgui_widgets.cpp
+            ${RUI_IMGUI}/backends/imgui_impl_sdl2.cpp
+            ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp)
+    endif()
+
     target_sources(${TGT} PRIVATE
         # console-agnostic launcher core (C) — src/common/
         ${RUI_SRC}/common/launcher_model.c
@@ -69,23 +91,22 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/sha1.c        # cartridge ROM identity (GBA/SNES gate on SHA-1)
         ${RUI_SRC}/common/keybinds.c
         ${RUI_SRC}/common/ips_patch.c   # MSU-1 IPS auto-patching (launcher_model.c)
-        # Dear ImGui backend (the shipping UI) + vendored ImGui (C++)
+        # Dear ImGui backend (the shipping UI) + vendored ImGui core/backends
+        # (the latter omitted when a host provides its own — see above)
         ${RUI_SRC}/common/backends/imgui/launcher_imgui.cpp
-        ${RUI_IMGUI}/imgui.cpp
-        ${RUI_IMGUI}/imgui_draw.cpp
-        ${RUI_IMGUI}/imgui_tables.cpp
-        ${RUI_IMGUI}/imgui_widgets.cpp
-        ${RUI_IMGUI}/backends/imgui_impl_sdl2.cpp
-        ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp
+        ${_rui_imgui_sources}
     )
 
     target_include_directories(${TGT} PRIVATE
         ${RUI_SRC}                   # recomp_launcher.h / launcher_profile.h / launcher_system.h
                                      # + "third_party/..." + "consoles/<id>/..." includes
         ${RUI_SRC}/common            # launcher core headers (bare-name includes)
-        ${RUI_IMGUI}
-        ${RUI_IMGUI}/backends
     )
+    if(RECOMP_UI_HOST_IMGUI)
+        target_include_directories(${TGT} PRIVATE ${RECOMP_UI_HOST_IMGUI_INCLUDE})
+    else()
+        target_include_directories(${TGT} PRIVATE ${RUI_IMGUI} ${RUI_IMGUI}/backends)
+    endif()
 
     target_compile_definitions(${TGT} PRIVATE
         RECOMP_LAUNCHER           # un-gate the GUI launcher block in the host's main()

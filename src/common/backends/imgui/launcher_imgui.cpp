@@ -38,6 +38,21 @@
 #endif
 #include "imgui_impl_opengl3.h"
 
+// Compatibility with pre-1.91 Dear ImGui (an rt64-based host links its own
+// ImGui — e.g. 1.90.x — which recomp-ui builds against in HOST_IMGUI mode).
+// These identifiers were renamed/added in 1.91; map them to their 1.90 forms
+// so the same launcher source compiles against either. (No effect on 1.91+,
+// where IMGUI_VERSION_NUM gates the shim out.)
+#if !defined(IMGUI_VERSION_NUM) || IMGUI_VERSION_NUM < 19100
+  #ifndef ImGuiChildFlags_Borders
+  #define ImGuiChildFlags_Borders ImGuiChildFlags_Border
+  #endif
+  #ifndef ImGuiButtonFlags_EnableNav
+  // 1.90's InvisibleButton participates in nav by default; the opt-in flag is 0.
+  #define ImGuiButtonFlags_EnableNav 0
+  #endif
+#endif
+
 #include <cstring>
 #include <string>
 
@@ -162,8 +177,13 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     style.Colors[ImGuiCol_ScrollbarGrab]   = col(th.border);
     style.Colors[ImGuiCol_ScrollbarGrabHovered] = col(th.control_hovered);
     // Gamepad/keyboard focus ring: bright cyan so a Deck user always sees where
-    // they are. (NavHighlight is the pre-1.91.4 alias of NavCursor.)
+    // they are. NavCursor is the 1.91.4+ name; older ImGui (e.g. an rt64 host on
+    // 1.90.x) calls the same slot NavHighlight.
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19140
     style.Colors[ImGuiCol_NavCursor]       = col(th.focus_ring);
+#else
+    style.Colors[ImGuiCol_NavHighlight]    = col(th.focus_ring);
+#endif
     ImGui::GetStyle() = style;
 }
 
@@ -617,9 +637,11 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
         ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
         // The disc-verdict block already reports Region in its checklist, so
-        // don't repeat it here (it would show a redundant/blank second row).
-        if (!disc_verdict)
-            kv_row("Region", m->region[0] ? m->region : "", th, false, false);
+        // don't repeat it here. Otherwise show Region only when the host gave
+        // one — an empty value would render a bare "Region" label with nothing
+        // beside it, which reads as a bug.
+        if (!disc_verdict && m->region[0])
+            kv_row("Region", m->region, th, false, false);
         kv_row("File",   m->rom_file, th, false, false);
         ImGui::EndTable();
     }
@@ -2213,8 +2235,12 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // Test hook: force the focus ring always-on so scripted screenshots can
     // verify nav rendering without a physical pad. Off => normal auto behaviour
     // (ring appears on pad/keyboard, hides on mouse).
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19140
+    // ConfigNavCursorVisibleAlways is 1.91.4+; a pre-1.91.4 host (rt64 1.90.x)
+    // simply keeps the default auto-visibility for the test hook.
     if (const char* nv = SDL_getenv("LNG_NAV_ALWAYS"); nv && nv[0] == '1')
         io.ConfigNavCursorVisibleAlways = true;
+#endif
 
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
