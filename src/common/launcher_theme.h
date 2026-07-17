@@ -26,6 +26,10 @@ typedef struct {
     LngColor accent;          // the one bold place: brand + primary CTA
     LngColor accent_dim;      // gradient partner / pressed
     LngColor accent_text;
+    LngColor accent2;         // SECONDARY accent for section headings/eyebrows.
+                              // Defaults to `accent` (one-accent look); a theme
+                              // sets it apart for a dual-accent identity (N64:
+                              // red primary + logo-blue headings).
     LngColor text;
     LngColor text_muted;
     LngColor good;        // verified / connected (phosphor mint)
@@ -63,6 +67,7 @@ static inline LauncherTheme launcher_theme_default(void) {
     t.accent          = lng_rgba(0.604f, 0.361f, 1.000f, 1.0f); // #9A5CFF electric violet
     t.accent_dim      = lng_rgba(0.431f, 0.247f, 0.812f, 1.0f); // #6E3FCF gradient/pressed
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent by default
     t.text            = lng_rgba(0.925f, 0.933f, 0.965f, 1.0f); // #ECEEF6
     t.text_muted      = lng_rgba(0.529f, 0.565f, 0.659f, 1.0f); // #8790A8
     t.good            = lng_rgba(0.275f, 0.890f, 0.608f, 1.0f); // #46E39B phosphor mint
@@ -96,6 +101,7 @@ static inline LauncherTheme launcher_theme_psx(void) {
     t.accent          = lng_rgba(0.180f, 0.490f, 1.000f, 1.0f); // #2E7DFF PlayStation blue
     t.accent_dim      = lng_rgba(0.102f, 0.353f, 0.839f, 1.0f); // #1A5AD6 pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (blue)
     t.text            = lng_rgba(0.910f, 0.925f, 0.961f, 1.0f); // #E8ECF5
     t.text_muted      = lng_rgba(0.494f, 0.541f, 0.639f, 1.0f); // #7E8AA3
     /* good/warn keep their semantic colors; focus stays cyan (reads clearly on blue). */
@@ -119,6 +125,7 @@ static inline LauncherTheme launcher_theme_gba(void) {
     t.accent          = lng_rgba(0.463f, 0.427f, 0.945f, 1.0f); // #766DF1 GBA indigo
     t.accent_dim      = lng_rgba(0.325f, 0.290f, 0.741f, 1.0f); // #534ABD pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (indigo)
     t.text            = lng_rgba(0.922f, 0.918f, 0.957f, 1.0f); // #EBEAF4
     t.text_muted      = lng_rgba(0.525f, 0.510f, 0.647f, 1.0f); // #8682A5
     /* good/warn keep their semantic colors; focus stays cyan (reads on indigo). */
@@ -142,9 +149,10 @@ static inline LauncherTheme launcher_theme_n64(void) {
     t.control         = lng_rgba(0.125f, 0.129f, 0.145f, 1.0f); // #202125 button
     t.control_hovered = lng_rgba(0.176f, 0.184f, 0.204f, 1.0f); // #2D2F34
     t.border          = lng_rgba(0.204f, 0.212f, 0.235f, 1.0f); // #34363C hairline
-    t.accent          = lng_rgba(0.878f, 0.227f, 0.184f, 1.0f); // #E03A2F Nintendo red
+    t.accent          = lng_rgba(0.878f, 0.227f, 0.184f, 1.0f); // #E03A2F logo red (primary/CTA)
     t.accent_dim      = lng_rgba(0.686f, 0.145f, 0.114f, 1.0f); // #AF251D pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = lng_rgba(0.204f, 0.451f, 0.878f, 1.0f); // #3473E0 logo blue (headings)
     t.text            = lng_rgba(0.929f, 0.933f, 0.945f, 1.0f); // #EDEEF1 near-white
     t.text_muted      = lng_rgba(0.541f, 0.557f, 0.596f, 1.0f); // #8A8E98 neutral grey
     /* good/warn keep their semantic colors; focus stays cyan (reads on graphite). */

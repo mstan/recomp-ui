@@ -289,12 +289,13 @@ void eyebrow_tracked(const char* s) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
-    // accent tick
+    // accent tick (secondary accent — section headings read in the theme's
+    // heading color, distinct from the primary CTA on dual-accent themes)
     dl->AddRectFilled(ImVec2(p.x, p.y + h*0.12f), ImVec2(p.x + px(3.0f), p.y + h*0.9f),
-                      imcol(th.accent), px(1.5f));
+                      imcol(th.accent2), px(1.5f));
     // letter-spaced text
     float x = p.x + px(10.0f);
-    ImU32 c = imcol(th.accent);
+    ImU32 c = imcol(th.accent2);
     char buf[2] = {0,0};
     for (const char* q = s; *q; ++q) {
         buf[0] = *q;
@@ -1007,7 +1008,7 @@ void draw_tpak_modal(LauncherModel* m, const LauncherTheme& th) {
     const bool inspected = m->tpak_inspected[slot];
     const RecompLauncherCTpak* info = &m->tpak_info[slot];
 
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::Text("TRANSFER PAK  \xC2\xB7  PORT %d", slot + 1);
     ImGui::PopStyleColor();
     ImGui::Separator();
@@ -1764,7 +1765,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
 void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const int p = m->cfg_player;
     if (begin_panel("cfg_src", 0)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
         ImGui::Text("CONTROLLER - PLAYER %d", p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
         row_label("Input source", th);
         ImGui::SetNextItemWidth(px(200));
@@ -1824,7 +1825,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // fields, not keys — reflect that in the card title and the capture
         // placeholder.
         const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
         if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
         else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
@@ -2003,9 +2004,14 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     // Vertically center the brand mark against the two-line title block (drop it
     // down ~9px so it doesn't sit high against the first line).
     float hdr_top = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(hdr_top + px(9));
-    image_fit(g_brand, 44, 33); ImGui::SameLine(0, px(12));
-    ImGui::SetCursorPosY(hdr_top);
+    // Header brand mark — drawn only when the profile ships one. A profile can
+    // opt out (empty brand_image, e.g. N64 leads with its wordmark instead), in
+    // which case the title block starts flush at the left with no reserved gap.
+    if (g_brand.id && g_brand.w > 0) {
+        ImGui::SetCursorPosY(hdr_top + px(9));
+        image_fit(g_brand, 44, 33); ImGui::SameLine(0, px(12));
+        ImGui::SetCursorPosY(hdr_top);
+    }
     ImGui::BeginGroup();
         ImGui::SetWindowFontScale(1.55f);
         ImGui::TextUnformatted(m->game_name);
@@ -2252,10 +2258,14 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // set one. Keeps the top-left mark matched to the system on screen.
     {
         const SystemProfile* bprof = (const SystemProfile*)m->profile;
-        const char* brand_file = (bprof && bprof->brand_image)
+        // NULL brand_image => the shared dots; a non-NULL EMPTY string => the
+        // profile opts out of a corner emblem entirely (N64 leads with its
+        // wordmark). Only load when there's an actual filename.
+        const char* brand_file = bprof && bprof->brand_image
                                    ? bprof->brand_image : "brand_mark.tga";
-        g_brand = launcher_texture_load(
-            asset((std::string("assets/img/") + brand_file).c_str()).c_str());
+        if (brand_file && brand_file[0])
+            g_brand = launcher_texture_load(
+                asset((std::string("assets/img/") + brand_file).c_str()).c_str());
         // Optional platform wordmark: loads only if the profile names one AND
         // the file is present (recomp-ui ships none — a console wordmark may be
         // a third-party trademark). Missing file => header falls back to text.
