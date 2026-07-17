@@ -36,6 +36,22 @@ void launcher_binds_load(LauncherModel* m, const char* config_path, const char* 
 // keybinds.ini and refresh the model's display string.
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode);
 
+// Generic GAMEPAD-bind kind codes for launcher_binds_set_pad_button()'s `kind`
+// argument. Values mirror the engine's GamepadBindKind exactly (and equal the
+// console-native genesis_binds.h RUI_GEN_BIND_* — both anchored to the engine,
+// not to each other). The toolkit-agnostic backends use THESE so they need no
+// console-specific header.
+#define LNG_PADBIND_NONE   0
+#define LNG_PADBIND_BUTTON 1   // `code` = SDL_GameControllerButton
+#define LNG_PADBIND_AXIS   2   // `code` = SDL_GameControllerAxis, `axis_dir` = +1/-1
+
+// A player button's GAMEPAD bind was captured (has_pad_binds consoles only —
+// Genesis). kind/code/axis_dir use the LNG_PADBIND_* encoding above.
+// Persists through the console's native bridge and refreshes the model's
+// pad_binds display string. No-op on consoles without a pad-bind store.
+void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
+                                   int kind, int code, int axis_dir);
+
 // Reset one player's keyboard bindings to defaults and persist.
 void launcher_binds_reset_player(LauncherModel* m, int player);
 

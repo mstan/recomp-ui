@@ -6,6 +6,7 @@
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
 #include "consoles/nes/nes_binds.h"   // NES-native keybind bridge (nesrecomp keybinds.c format)
+#include "consoles/genesis/genesis_binds.h"   // Genesis-native bridge (settings.ini [input.pN])
 
 #include <ctype.h>
 #include <stdio.h>
@@ -83,6 +84,23 @@ static const char* keybinds_file_path(void) {
              ? g_launcher_keybinds_path : "keybinds.ini";
 }
 
+// ---- Genesis-native bind bridge ----------------------------------------------
+// Lives in consoles/genesis/genesis_binds.c — for a Genesis SystemProfile,
+// persistence routes through segagenesisrecomp's own settings.ini
+// [input.pN] key.<Name>/pad.<Name> format (runner/app_config.c) instead of
+// the generic keybinds.c store, so rebinds actually reach the game's
+// g_input_map. Note the DIFFERENT default filename: the Genesis engine's
+// bind store is settings.ini, not keybinds.ini.
+static int is_genesis_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && !strcmp(prof->id, "genesis");
+}
+
+static const char* genesis_binds_file_path(void) {
+    return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
+             ? g_launcher_keybinds_path : "settings.ini";
+}
+
 // The engine's config.ini [KeyMap] keys, in LngHotkey order.
 static const char* kHotkeyKey[LNG_HK_COUNT] = {
     "Fullscreen", "Reset", "Pause", "PauseDimmed", "Turbo",
@@ -108,6 +126,23 @@ static const char* scancode_label(SDL_Scancode sc) {
     return (n && n[0]) ? n : "(unbound)";
 }
 
+// Display label for a Genesis gamepad bind: SDL's own controller button/axis
+// names ("dpup", "a", "leftshoulder"; axes get a direction suffix, "leftx+").
+static void genesis_pad_label(int kind, int code, int axis_dir, char* out, size_t cap) {
+    if (kind == RUI_GEN_BIND_BUTTON) {
+        const char* n = SDL_GetGamepadStringForButton((LNG_GamepadButton)code);
+        copy_str(out, cap, (n && n[0]) ? n : "(unbound)");
+    } else if (kind == RUI_GEN_BIND_AXIS) {
+        const char* n = SDL_GetGamepadStringForAxis(code);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s%c", (n && n[0]) ? n : "axis",
+                 axis_dir < 0 ? '-' : '+');
+        copy_str(out, cap, buf);
+    } else {
+        copy_str(out, cap, "(unbound)");
+    }
+}
+
 static void reload_player_display(LauncherModel* m, int player) {
     if (is_psx_profile(m)) {
         for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
@@ -121,6 +156,18 @@ static void reload_player_display(LauncherModel* m, int player) {
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_nes_binds_get(
                          keybinds_file_path(), player - 1, b)));
+        return;
+    }
+    if (is_genesis_profile(m)) {
+        const char* path = genesis_binds_file_path();
+        for (int b = 0; b < LNG_GENESIS_PAD_BUTTON_COUNT; ++b) {
+            copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                     scancode_label((SDL_Scancode)rui_genesis_binds_get_key(path, player - 1, b)));
+            int kind = 0, code = 0, dir = 0;
+            rui_genesis_binds_get_pad(path, player - 1, b, &kind, &code, &dir);
+            genesis_pad_label(kind, code, dir,
+                              m->pad_binds[player - 1][b], sizeof(m->pad_binds[player - 1][b]));
+        }
         return;
     }
     int n = 0;
@@ -309,6 +356,8 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
         rui_nes_zapper_get(keybinds_file_path(), &zm, &zc);
         m->zapper_mouse     = zm != 0;
         m->zapper_crosshair = zc != 0;
+    } else if (is_genesis_profile(m)) {
+        rui_genesis_binds_init(genesis_binds_file_path());   // overlay settings.ini [input.pN] onto engine defaults
     } else {
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
@@ -340,6 +389,13 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
                  scancode_label((SDL_Scancode)scancode));
         return;
     }
+    if (is_genesis_profile(m)) {
+        if (b < 0 || b >= LNG_GENESIS_PAD_BUTTON_COUNT) return;
+        rui_genesis_binds_set_key(genesis_binds_file_path(), player - 1, b, scancode);
+        copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                 scancode_label((SDL_Scancode)scancode));
+        return;
+    }
     int n = 0;
     const int* kb_index = active_kb_index(m, &n);
     if (b < 0 || b >= n) return;
@@ -347,6 +403,19 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
     recompui_keybinds_save();
     copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
              scancode_label((SDL_Scancode)scancode));
+}
+
+void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
+                                   int kind, int code, int axis_dir) {
+    if (player < 1 || player > 2) return;
+    // Gamepad binds only exist on the Genesis bridge today (has_pad_binds
+    // consoles). Every other profile's store is scancode-only — no-op there
+    // (the UI never offers the control outside has_pad_binds).
+    if (!is_genesis_profile(m)) return;
+    if (b < 0 || b >= LNG_GENESIS_PAD_BUTTON_COUNT) return;
+    rui_genesis_binds_set_pad(genesis_binds_file_path(), player - 1, b, kind, code, axis_dir);
+    genesis_pad_label(kind, code, axis_dir,
+                      m->pad_binds[player - 1][b], sizeof(m->pad_binds[player - 1][b]));
 }
 
 void launcher_binds_reset_player(LauncherModel* m, int player) {
@@ -358,6 +427,11 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
     }
     if (is_nes_profile(m)) {
         rui_nes_binds_reset(keybinds_file_path(), player - 1);
+        reload_player_display(m, player);
+        return;
+    }
+    if (is_genesis_profile(m)) {
+        rui_genesis_binds_reset(genesis_binds_file_path(), player - 1);
         reload_player_display(m, player);
         return;
     }

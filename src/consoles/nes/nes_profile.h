@@ -88,7 +88,7 @@ static const SystemProfile kSystemProfileNes = {
                               "NES ROM (.nes)" },
     /* renderer_labels   */ kNesRendererLabels,   // Accelerated/Software (SDL output)
     /* hide_audio_freq   */ 1,      // runner has no audio-frequency setting (Volume only)
-    /* brand_image       */ "brand_nes.tga",      // red "Nintendo" pill, not the SNES swoosh
+    /* brand             */ "brand_nes.tga",      // red "Nintendo" pill, not the SNES swoosh
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

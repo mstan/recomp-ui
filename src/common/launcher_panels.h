@@ -29,8 +29,8 @@ extern "C" {
 
 typedef enum {
     LNG_SLOT_MAIN = 0,   // primary column (dashboard: art-led GAME; settings: DISPLAY)
-    LNG_SLOT_SIDE,       // secondary column (dashboard: CONTROLLER; settings: AUDIO)
-    LNG_SLOT_WIDE,       // spans the full width (SYSTEM/BIOS, HOTKEYS, CONTROLLER-view page)
+    LNG_SLOT_SIDE,       // secondary column (dashboard: CONTROLLER; settings: AUDIO, then SYSTEM stacked below it)
+    LNG_SLOT_WIDE,       // spans the full width (HOTKEYS, CONTROLLER-view page)
 } LngPanelSlot;
 
 // A panel is a composition unit (docs/ARCHITECTURE.md "Concrete C shape").

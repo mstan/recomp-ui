@@ -35,12 +35,24 @@ extern "C" {
 // ---- Controller module -------------------------------------------------------
 typedef struct { const char* label; int code; } ButtonDef;
 
+// A named pad MODE a console offers. `mode` is the value stored in
+// RecompLauncherCSettings.pad_mode[player]; `label` is the selector segment
+// text; `button_count` is how many LEADING entries of ControllerSpec.buttons[]
+// the rebind page shows in that mode (a Genesis 3-button pad has no X/Y/Z/Mode
+// rows). A profile that leaves ControllerSpec.modes NULL keeps the legacy
+// PSX-shaped selector (Hybrid/Analog/D-Pad, gated by allow_hybrid) with the
+// full button set in every mode — PSX itself is untouched by this concept.
+typedef struct { int mode; const char* label; int button_count; } PadModeDef;
+
 typedef struct {
     const ButtonDef* buttons; int button_count;   // per-system base set (rebind page)
     const char* image;                             // base pad art (fallback / no pad-mode)
     const char* image_analog, *image_digital;       // optional mode-swap pair (PSX-style)
     int  max_players;                              // 1, 2 or 4
     int  has_pad_mode;                              // analog/digital selector offered
+    // ---- appended additively (older positional initializers zero-fill) ----
+    const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
+    int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------
@@ -59,6 +71,8 @@ typedef struct {
     int linear_filter, widescreen;                  // SNES-ish legacy surface
     int renderer, supersampling, screen_kind, frame_interp, aspect, texture_filter,
         antialiasing, spu_hq, skip_fmv, turbo_loads, bios, deadzone; // PSX-ish deep surface
+    // appended additively (older positional initializers zero-fill):
+    int widescreen_cells;   // Genesis-ish: "extra cells per side" stepper shown while widescreen is on
 } VideoSpec;
 
 // ---- Verify module --------------------------------------------------------------
@@ -110,13 +124,11 @@ typedef struct SystemProfile {
     // 1 => hide the Sample-rate cycle in the AUDIO panel (the nesrecomp
     // runner has no audio-frequency setting; only Volume). 0 = legacy (show).
     int hide_audio_freq;
-    // Top-left brand-mark image filename (in assets/img/, staged by
-    // recomp_ui.cmake). NULL => the shared "brand_mark.tga" (the Nintendo
-    // colour swoosh). A console overrides it with its own mark — NES uses the
-    // red "Nintendo" pill ("brand_nes.tga"). Mirrors controller.image: a
-    // trailing field, so existing positional profile rows zero-init to NULL and
-    // keep the shared mark.
-    const char* brand_image;
+    // Per-console brand mark drawn in the header (top-left, next to the game
+    // title). NULL => the shared default "brand_mark.tga"; a console sets this
+    // to ship its own logo (NES "brand_nes.tga", Genesis "brand_genesis.tga").
+    // Appended last so existing positional profile rows zero-fill it.
+    const char* brand;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

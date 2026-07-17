@@ -58,6 +58,9 @@ int main(int argc, char** argv) {
     //   LNG_VARIANT=snes -> Super Nintendo (CRT theme, SNES pad, widescreen)
     // Unset = neutral default. See launcher_profile.h — one row per system.
     static const char* kPreviewLanguages[2] = { "English", "Japanese" };
+    // Set by a variant that manages its OWN LNG_DEMO_FULL preview so the generic
+    // (SNES-shaped) demo block below doesn't clobber it with MSU-1 / 1-player.
+    int variant_owns_demo = 0;
     const char* variant = getenv("LNG_VARIANT");
     if (variant && variant[0]) {
         launcher_profile_apply(variant, &gi);
@@ -104,12 +107,35 @@ int main(int argc, char** argv) {
                 gi.aspect_experimental = 1;
             }
         }
+        if (lpr_is(variant, "genesis") || lpr_is(variant, "megadrive") ||
+            lpr_is(variant, "md")) {
+            // Preview a Sonic-class Genesis title: 2 players (both controller
+            // cards, the 3-Button/6-Button pad-mode selector, and the KEY +
+            // GAMEPAD rebind grid), widescreen ON so the "Extra cells / side"
+            // stepper is visible, real Sonic 1 box art, the SEGA GENESIS brand.
+            // LNG_GAME picks which title, to show the SAVE row present vs absent:
+            //   sonic1  (default) — no battery SRAM  -> no SAVE row
+            //   sonic3k           — battery SRAM      -> SAVE row (Import/Clear)
+            gi.region      = "USA";
+            gi.num_players = 2;
+            gi.boxart_path = "assets/img/boxart_sonic1.tga";  // real cart art
+            s.widescreen   = 1;      // reveals the Genesis widescreen-cells stepper
+            s.window_scale = 3;
+            const char* g = getenv("LNG_GAME");
+            if (g && (g[0] == '3' || lpr_is(g, "sonic3k") || lpr_is(g, "s3k"))) {
+                gi.name      = "Sonic 3 & Knuckles";
+                gi.sram_path = "saves/sonic3k.srm";  // battery cart -> SAVE row
+            } else {
+                gi.name      = "Sonic The Hedgehog";  // no battery -> no SAVE row
+            }
+            variant_owns_demo = 1;   // keep the generic demo block from overriding
+        }
     }
 
     // Flip these to preview the 2-player + SRAM module set (what a save-game
     // capable, 2-player host contributes), e.g. LNG_DEMO_FULL=1.
     const char* demo = SDL_getenv("LNG_DEMO_FULL");
-    if (demo && demo[0] == '1') {
+    if (!variant_owns_demo && demo && demo[0] == '1') {
         gi.num_players = 1;
         gi.sram_path   = "saves/save.srm";
         gi.widescreen_supported = 1;

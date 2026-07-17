@@ -69,6 +69,11 @@ typedef struct RecompLauncherCSettings {
     int  integer_scale;       // bool: snap the game image to integer multiples
     int  hdpack_enabled;      // bool: load a Mesen-format HD texture pack
     char hdpack_dir[512];     // folder containing the pack's hires.txt
+    // ---- Genesis-style widescreen width (SystemProfile.video.widescreen_cells
+    // consoles only) — how many extra 8-px background cells EACH SIDE renders
+    // while `widescreen` is on. 0 = unset (host predates this field) -> the
+    // model defaults it to 8, the Genesis engine default. Appended additively.
+    int  widescreen_cells;    // 1..16
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----

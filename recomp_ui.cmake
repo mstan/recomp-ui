@@ -4,7 +4,9 @@
 #
 #     set(RECOMP_UI_ROOT <path-to-recomp-ui>)   # or add as a git submodule
 #     include(${RECOMP_UI_ROOT}/recomp_ui.cmake)
-#     recomp_target_launcher_ui(<host_target> [BOXART <path-to-boxart.tga>])
+#     recomp_target_launcher_ui(<host_target> [BOXART <path-to-boxart.tga>]
+#                                              [BOXART_NAME <dest-basename.tga>]
+#                                              [PAD <pad.tga>] [BRAND <brand.tga>])
 #
 # This is the console-agnostic extraction of the SNES-recomp "launcher_ng"
 # Dear ImGui launcher: same UI, same behavior, generic C ABI
@@ -42,7 +44,11 @@ set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 enable_language(CXX)
 
 function(recomp_target_launcher_ui TGT)
-    cmake_parse_arguments(RUI "" "BOXART;PAD;BRAND" "" ${ARGN})
+    # BOXART_NAME: destination basename for BOXART under assets/img/ (default
+    # "boxart.tga"). Needed when several targets stage into ONE exe dir (Sonic
+    # 3 & Knuckles builds three modes side by side) and each needs its own
+    # box art file — pairs with GameInfo.boxart_path the runtime reads.
+    cmake_parse_arguments(RUI "" "BOXART;BOXART_NAME;PAD;BRAND" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -62,6 +68,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
         ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
+        ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
@@ -90,6 +97,18 @@ function(recomp_target_launcher_ui TGT)
     target_compile_definitions(${TGT} PRIVATE
         RECOMP_LAUNCHER           # un-gate the GUI launcher block in the host's main()
         SDL_MAIN_HANDLED)         # our real main() is the entry point (no SDL_main redirect)
+
+    # OpenGL: the ImGui GL3 backend + launcher_gl.c need the system GL library.
+    # Link it here so a host gets it from this ONE call (self-contained) rather
+    # than having to remember to link OpenGL itself — mirrors the standalone
+    # CMakeLists.txt. SDL2 is still the host's to provide (its provenance varies:
+    # vendored, find_package, etc.); GL is a uniform system lib, so it lives here.
+    if(WIN32)
+        target_link_libraries(${TGT} PRIVATE opengl32)
+    else()
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(${TGT} PRIVATE OpenGL::GL ${CMAKE_DL_LIBS})
+    endif()
 
     if(NOT MSVC)
         # the vendored ImGui + tinyfiledialogs compile clean; nothing extra needed.
@@ -120,6 +139,9 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
                 ${RUI_ASSETS}/consoles/nes/img/pad_nes.tga
                 ${RUI_ASSETS}/consoles/nes/img/brand_nes.tga
+                ${RUI_ASSETS}/consoles/genesis/img/pad_genesis.tga
+                ${RUI_ASSETS}/consoles/genesis/img/brand_genesis.tga
+                ${RUI_ASSETS}/consoles/genesis/img/boxart_sonic1.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a
@@ -131,9 +153,13 @@ function(recomp_target_launcher_ui TGT)
             VERBATIM)
     endif()
     if(RUI_BOXART AND EXISTS ${RUI_BOXART})
+        set(RUI_BOXART_DEST "boxart.tga")
+        if(RUI_BOXART_NAME)
+            set(RUI_BOXART_DEST "${RUI_BOXART_NAME}")
+        endif()
         add_custom_command(TARGET ${TGT} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${RUI_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/boxart.tga
+                    ${RUI_BOXART} $<TARGET_FILE_DIR:${TGT}>/assets/img/${RUI_BOXART_DEST}
             VERBATIM)
     endif()
     # Per-console brand mark (top-left, next to the game title): overrides the

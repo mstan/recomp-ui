@@ -142,9 +142,19 @@ void launcher_model_init(LauncherModel* m,
 
     // ---- gate pad_mode per player ----
     if (m->pad_mode_supported) {
+        const SystemProfile* pm_prof = (const SystemProfile*)m->profile;
+        const ControllerSpec* pm_spec = pm_prof ? &pm_prof->controller : NULL;
         for (int p = 0; p < 2; ++p) {
             if (!m->pad_mode_selectable) {
                 m->s.pad_mode[p] = m->locked_pad_mode;
+            } else if (pm_spec && pm_spec->modes && pm_spec->mode_count > 0) {
+                // Custom mode list (Genesis 3-Button/6-Button): any listed
+                // mode value is valid; anything else snaps to the first
+                // listed mode. The Hybrid rule below is PSX-only semantics.
+                int ok = 0;
+                for (int i = 0; i < pm_spec->mode_count; ++i)
+                    if (pm_spec->modes[i].mode == m->s.pad_mode[p]) { ok = 1; break; }
+                if (!ok) m->s.pad_mode[p] = pm_spec->modes[0].mode;
             } else if (!m->allow_hybrid && m->s.pad_mode[p] == 0) {
                 m->s.pad_mode[p] = 1;   // snap Hybrid -> Analog
             }
@@ -194,6 +204,15 @@ void launcher_model_init(LauncherModel* m,
         m->s.deadzone[1] = m->s.deadzone[0];
     }
 
+    // ---- widescreen extra-cells (video.widescreen_cells consoles, e.g.
+    // Genesis): 0 = unset host -> the engine default of 8; else clamp 1..16. ----
+    {
+        const SystemProfile* ws_prof = (const SystemProfile*)m->profile;
+        if (ws_prof && ws_prof->video.widescreen_cells)
+            m->s.widescreen_cells = m->s.widescreen_cells
+                                      ? clampi(m->s.widescreen_cells, 1, 16) : 8;
+    }
+
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
     launcher_model_set_rom(m, initial_rom);
@@ -224,6 +243,8 @@ void launcher_model_init(LauncherModel* m,
             safe_copy(m->binds[0][b], sizeof(m->binds[0][b]),
                       b < LNG_BTN_COUNT ? kP1Defaults[b] : "(unbound)");
             safe_copy(m->binds[1][b], sizeof(m->binds[1][b]), "(unbound)");
+            safe_copy(m->pad_binds[0][b], sizeof(m->pad_binds[0][b]), "(unbound)");
+            safe_copy(m->pad_binds[1][b], sizeof(m->pad_binds[1][b]), "(unbound)");
         }
     }
     for (int h = 0; h < LNG_HK_COUNT; ++h)
@@ -380,6 +401,20 @@ void launcher_model_toggle_filter(LauncherModel* m) {
 void launcher_model_toggle_widescreen(LauncherModel* m) {
     if (!m->widescreen_supported) return;   // gated: no-op when unsupported
     m->s.widescreen = !m->s.widescreen;
+}
+
+void launcher_model_ws_cells_delta(LauncherModel* m, int delta) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (!prof || !prof->video.widescreen_cells) return;   // gated per console
+    int v = m->s.widescreen_cells ? m->s.widescreen_cells : 8;
+    m->s.widescreen_cells = clampi(v + delta, 1, 16);
+}
+
+const char* launcher_model_ws_cells_label(const LauncherModel* m) {
+    static char buf[16];
+    int v = m->s.widescreen_cells ? clampi(m->s.widescreen_cells, 1, 16) : 8;
+    snprintf(buf, sizeof(buf), "%d cells", v);
+    return buf;
 }
 
 bool launcher_model_aspect_offered(const LauncherModel* m, int index) {
@@ -819,9 +854,33 @@ void launcher_model_skip_msu1_patch(LauncherModel* m) {
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
     if (!m->pad_mode_supported || !m->pad_mode_selectable) return;   // gated/locked
     player = clampi(player, 0, 1);
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const ControllerSpec* spec = prof ? &prof->controller : NULL;
+    if (spec && spec->modes && spec->mode_count > 0) {
+        // Custom mode list (Genesis): accept listed mode values only.
+        for (int i = 0; i < spec->mode_count; ++i)
+            if (spec->modes[i].mode == mode) { m->s.pad_mode[player] = mode; return; }
+        return;
+    }
     mode = clampi(mode, 0, 2);
     if (mode == 0 && !m->allow_hybrid) mode = 1;   // Hybrid hidden -> snap to Analog
     m->s.pad_mode[player] = mode;
+}
+
+int launcher_model_active_button_count(const LauncherModel* m, int player) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int bc = prof ? prof->controller.button_count : LNG_BTN_COUNT;
+    if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
+        player = clampi(player, 0, 1);
+        for (int i = 0; i < prof->controller.mode_count; ++i)
+            if (prof->controller.modes[i].mode == m->s.pad_mode[player]) {
+                bc = prof->controller.modes[i].button_count;
+                break;
+            }
+    }
+    if (bc > LNG_MAX_BUTTONS) bc = LNG_MAX_BUTTONS;
+    if (bc < 0) bc = 0;
+    return bc;
 }
 
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
@@ -872,9 +931,17 @@ void launcher_model_begin_capture(LauncherModel* m, int b) {
     if (b < 0 || b >= bc) return;
     m->hk_capturing = false;
     m->capturing    = true;
+    m->capture_pad  = false;
     m->capture_btn  = b;
 }
-void launcher_model_cancel_capture(LauncherModel* m) { m->capturing = false; }
+void launcher_model_begin_pad_capture(LauncherModel* m, int b) {
+    launcher_model_begin_capture(m, b);
+    if (m->capturing) m->capture_pad = true;   // begin_capture validated b
+}
+void launcher_model_cancel_capture(LauncherModel* m) {
+    m->capturing   = false;
+    m->capture_pad = false;
+}
 
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h) {
     if (h < 0 || h >= LNG_HK_COUNT) return;
