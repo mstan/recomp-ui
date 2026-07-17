@@ -674,12 +674,10 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(label);
         ImGui::PopStyleColor();
-        // Value column: after the label plus a gap, but at least px(76) so short
-        // labels ("Mantra") still align. A wider label ("Password") pushes the
-        // value right instead of clipping under it.
-        float pw_col = ImGui::CalcTextSize(label).x + px(th.spacing_md);
-        if (pw_col < px(76)) pw_col = px(76);
-        ImGui::SameLine(pw_col);
+        // Value sits right after the label's actual end with comfortable
+        // padding — a RELATIVE gap, not an absolute column, so a wider label
+        // ("Password") never clips under the value regardless of row indent.
+        ImGui::SameLine(0.0f, px(th.spacing_lg));
         const float bw = px(84);
         if (!s_pw_editing) {
             ImGui::AlignTextToFramePadding();
