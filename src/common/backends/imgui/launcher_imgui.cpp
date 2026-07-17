@@ -1930,8 +1930,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     // divider at the very top of the band
     ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
         origin, ImVec2(origin.x + fullw, origin.y + px(1.5f)),
-        imcol(th.border, 0.2f), imcol(th.accent, 0.7f),
-        imcol(th.accent, 0.7f), imcol(th.border, 0.2f));
+        imcol(th.border, 0.2f), imcol(th.accent2, 0.7f),
+        imcol(th.accent2, 0.7f), imcol(th.border, 0.2f));
 
     // CTA centred in the remaining band height (glow clears the rule on both sides)
     const float band_y = origin.y + px(1.5f);
@@ -2044,9 +2044,9 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         float fw = ImGui::GetContentRegionAvail().x;
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilledMultiColor(u, ImVec2(u.x + fw, u.y + px(2.0f)),
-            imcol(th.accent, 0.9f), imcol(th.accent, 0.15f),
-            imcol(th.accent, 0.15f), imcol(th.accent, 0.9f));
-        glow_rect(dl, u, ImVec2(u.x + fw*0.5f, u.y + px(2.0f)), 0, th.accent, 0.5f, 3);
+            imcol(th.accent2, 0.9f), imcol(th.accent2, 0.15f),
+            imcol(th.accent2, 0.15f), imcol(th.accent2, 0.9f));
+        glow_rect(dl, u, ImVec2(u.x + fw*0.5f, u.y + px(2.0f)), 0, th.accent2, 0.5f, 3);
     }
     ImGui::Dummy(ImVec2(0, px(12.0f)));
     (void)hp;
