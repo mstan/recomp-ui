@@ -44,8 +44,14 @@ extern "C" const char* launcher_backend_name(void) { return "Dear ImGui"; }
 
 namespace {
 
-float  g_scale = 1.0f;
-float  px(float logical) { return logical * g_scale; }
+// ImGui coordinates are already DPI-independent: the SDL2 platform reports the
+// window in points and the GL backend applies DisplayFramebufferScale when it
+// submits vertices to the (Retina/HiDPI) drawable. Scaling widget geometry here
+// too would DOUBLE every size on HiDPI (and make labels collide with their
+// controls), so keep all layout tokens in logical units. Fonts are logical-
+// sized as well; the renderer scales their atlas with the framebuffer.
+// (Ported from launcher_ng's "Fix launcher DPI layout and text alignment".)
+float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
@@ -65,7 +71,7 @@ char        g_pick_buf[512] = {};    // ROM picker result
 // const Theme*) has no room for the layout-context fill_h flag that
 // draw_game_panel needs (fill the column height in the wide 2-column
 // dashboard vs hug its content in the narrow stacked layout). Same pattern as
-// the other per-frame context globals below (g_scale, g_th, g_pads).
+// the other per-frame context globals below (g_th, g_pads).
 bool g_game_fill_h = false;
 
 // ---- panel registry lookup helper ------------------------------------------
@@ -88,7 +94,8 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig cfg; cfg.OversampleH = 2; cfg.OversampleV = 2;
-    const float body = th.font_body * scale;
+    (void)scale;   // DPI is handled by the framebuffer scale, not by re-scaling layout/fonts
+    const float body = th.font_body;
     // Cover Basic Latin + Latin-1 AND General Punctuation so em/en dashes and
     // curly quotes used in the game notes render as glyphs, not "?" tofu.
     static const ImWchar kRanges[] = {
@@ -135,7 +142,6 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path) {
     // Gamepad/keyboard focus ring: bright cyan so a Deck user always sees where
     // they are. (NavHighlight is the pre-1.91.4 alias of NavCursor.)
     style.Colors[ImGuiCol_NavCursor]       = col(th.focus_ring);
-    style.ScaleAllSizes(scale);
     ImGui::GetStyle() = style;
 }
 
@@ -374,7 +380,7 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta) {
 void row_label(const char* text, const LauncherTheme& th) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(th.text_muted), "%s", text);
-    ImGui::SameLine(px(170.0f));
+    ImGui::SameLine(0.0f, px(th.spacing_md));  // flow from label width (no fixed-x overlap)
 }
 
 // ---- views -----------------------------------------------------------------
@@ -533,7 +539,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
         if (art_h > px(320.0f)) art_h = px(320.0f);   // allow a larger hero box art
         if (art_h < px(216.0f)) art_h = px(216.0f);   // keep it big enough to balance the side column
-        hero_boxart_centered(g_boxart, art_h / g_scale, availw);
+        hero_boxart_centered(g_boxart, art_h, availw);
     }
     ImGui::Dummy(ImVec2(0, px(10)));
 
@@ -812,7 +818,7 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
             char cid[16]; snprintf(cid, sizeof(cid), "mcc%d", slot);
             char pid[16]; snprintf(pid, sizeof(pid), "mcp%d", slot);
             begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
-                if (begin_panel(pid, cw / g_scale, false))
+                if (begin_panel(pid, cw, false))
                     draw_memcard_slot(m, *th, slot);
                 end_panel();
             end_container();
@@ -862,7 +868,7 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
     char eb[16];  snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
 
-    if (!begin_panel(id, w / g_scale, false)) { end_panel(); return; }
+    if (!begin_panel(id, w, false)) { end_panel(); return; }
     ImGui::PushID(p);
     eyebrow(eb);
 
@@ -1294,8 +1300,8 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TableNextColumn();
             ImGui::PushID(h);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%-13s", launcher_hotkey_name((LngHotkey)h));
-            ImGui::SameLine(px(130));
+            ImGui::TextColored(col(th.text_muted), "%s", launcher_hotkey_name((LngHotkey)h));
+            ImGui::SameLine(0.0f, px(th.spacing_sm));
             const bool cap = m->hk_capturing && m->capture_hk == (LngHotkey)h;
             const char* lbl = cap ? "[ press... ]"
                             : m->hotkeys[h][0] ? m->hotkeys[h] : "(unbound)";
@@ -1720,6 +1726,14 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     long smoke_frames = 0, frame = 0;
     if (const char* sf = SDL_getenv("LNG_SMOKE_FRAMES")) smoke_frames = SDL_atoi(sf);
 
+    // Test hook: LNG_FORCE_SCALE simulates a HiDPI display (see the platform
+    // layer, which enlarges the window and reports a logical/pixel split). When
+    // active, feed that split to ImGui so it renders at pixel density over a
+    // logical-sized layout — validating the DPI-independent layout on any OS.
+    // Unset => stock ImGui behavior (the SDL/GL backend's own framebuffer scale).
+    const char* force_scale_env = SDL_getenv("LNG_FORCE_SCALE");
+    const bool force_dpi = force_scale_env && force_scale_env[0] && SDL_atof(force_scale_env) > 1.0;
+
     while (m->action == LNG_ACTION_NONE && !p->should_quit) {
         if (smoke_frames > 0 && ++frame > smoke_frames) { m->action = LNG_ACTION_QUIT; break; }
 
@@ -1732,7 +1746,6 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         }
 
         launcher_platform_refresh_metrics(p);
-        g_scale = p->display_scale;
         if (applied_scale != p->display_scale) {
             apply_scale(*th, p->display_scale, font_path.c_str());
             applied_scale = p->display_scale;
@@ -1744,6 +1757,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         ImGui_ImplOpenGL3_NewFrame();
         LNG_ImplSDL_NewFrame();
+        if (force_dpi) {   // Windows has no native point/pixel split — inject it
+            ImGuiIO& io = ImGui::GetIO();
+            io.DisplaySize = ImVec2((float)p->logical_w, (float)p->logical_h);
+            io.DisplayFramebufferScale = ImVec2(p->display_scale, p->display_scale);
+        }
         ImGui::NewFrame();
         draw_ui(m, *th, p->logical_w, p->logical_h);
         ImGui::Render();

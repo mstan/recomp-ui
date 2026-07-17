@@ -12,6 +12,7 @@
 // buffer scale, so at 125%/150% the compositor downscales and text softens.
 // That single gap is the entire reason for the SDL3 follow-up.
 
+#include <stdlib.h>
 #include "launcher_platform.h"
 
 #include <stdio.h>
@@ -33,9 +34,22 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
+    // Test hook: LNG_FORCE_SCALE=<1..4> simulates a HiDPI display on ANY platform
+    // (incl. Windows, which has no native point/pixel split) — the window is
+    // created that many times larger in pixels while the UI keeps laying out in
+    // the original logical size, so the DPI-independent layout + framebuffer
+    // scaling can be validated end to end. See launcher_platform_refresh_metrics.
+    int win_w = logical_w, win_h = logical_h;
+    {
+        const char* fs = getenv("LNG_FORCE_SCALE");
+        if (fs && fs[0]) {
+            float v = (float)atof(fs);
+            if (v > 1.0f && v <= 4.0f) { win_w = (int)(logical_w * v); win_h = (int)(logical_h * v); }
+        }
+    }
     p->window = SDL_CreateWindow(title ? title : "Launcher",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 logical_w, logical_h,
+                                 win_w, win_h,
                                  SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
                                  SDL_WINDOW_ALLOW_HIGHDPI);
     if (!p->window) {
@@ -86,6 +100,21 @@ void launcher_platform_refresh_metrics(LauncherPlatform* p) {
         }
     }
     if (s <= 0.0f) s = 1.0f;
+    // Test hook (see launcher_platform_open): when LNG_FORCE_SCALE enlarged the
+    // window, treat it as a HiDPI display — the LOGICAL size is pixel/scale, and
+    // that scale drives DisplayFramebufferScale so ImGui renders at pixel density
+    // over a logical-sized layout (the Retina/Deck model, on any OS).
+    {
+        const char* fs = getenv("LNG_FORCE_SCALE");
+        if (fs && fs[0]) {
+            float v = (float)atof(fs);
+            if (v > 1.0f && v <= 4.0f) {
+                s = v;
+                p->logical_w = (int)(p->pixel_w / v);
+                p->logical_h = (int)(p->pixel_h / v);
+            }
+        }
+    }
     p->display_scale = s;
 }
 
