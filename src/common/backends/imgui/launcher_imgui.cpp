@@ -696,6 +696,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     if (sp[0]) { FILE* f = fopen(sp, "rb"); if (f) { fseek(f, 0, SEEK_END); sz = ftell(f); fclose(f); } }
     const bool has_save = sz >= 0;
 
+    const float bw = px(84);
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Save");
@@ -703,14 +704,26 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SameLine(px(76));
     ImGui::AlignTextToFramePadding();
     if (has_save) {
-        char lbl[160];
-        if (sz >= 1024) snprintf(lbl, sizeof lbl, "%s  (%.0f KB)", base, sz / 1024.0);
-        else            snprintf(lbl, sizeof lbl, "%s  (%ld B)", base, sz);
-        ImGui::TextUnformatted(lbl);
+        // Just the file name (no size annotation) — right-elided with "…" so a
+        // long name never runs under the Import/Clear buttons to its right.
+        const float buttons_w = bw * 2 + px(th.spacing_sm);
+        const float avail = ImGui::GetContentRegionAvail().x - buttons_w - px(th.spacing_md);
+        char shown[128];
+        snprintf(shown, sizeof shown, "%s", base);
+        if (avail > 0 && ImGui::CalcTextSize(shown).x > avail) {
+            size_t n = strlen(base);
+            while (n > 0) {
+                char tmp[132];
+                snprintf(tmp, sizeof tmp, "%.*s\xE2\x80\xA6", (int)n, base);  // "<head>…"
+                if (ImGui::CalcTextSize(tmp).x <= avail) { snprintf(shown, sizeof shown, "%s", tmp); break; }
+                --n;
+            }
+            if (n == 0) snprintf(shown, sizeof shown, "\xE2\x80\xA6");
+        }
+        ImGui::TextUnformatted(shown);
     } else {
         ImGui::TextColored(col(th.text_muted), "no save yet");
     }
-    const float bw = px(84);
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
     static const char* kSramPatterns[] = { "*.srm", "*.sav" };
     if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
