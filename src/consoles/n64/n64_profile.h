@@ -88,6 +88,7 @@ static const SystemProfile kSystemProfileN64 = {
     /* rom_filter        */ { kN64RomPatterns, LNG_N64_ROM_PATTERN_COUNT,
                               "N64 ROM (.z64 .n64 .v64)" },
     /* brand_image       */ "brand_n64.tga",   // four-color N64 mark, not the shared dots
+    /* wordmark_image     */ "wordmark_n64.tga", // optional; absent => "NINTENDO 64" text
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

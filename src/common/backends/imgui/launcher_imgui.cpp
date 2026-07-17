@@ -57,6 +57,9 @@ ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
+// Optional platform wordmark (SystemProfile.wordmark_image) — rendered in the
+// header instead of the platform text when the asset is present. Absent => text.
+LauncherTexture g_wordmark;
 // N64 Transfer Pak cartridge art, indexed by host cart_kind: [0] empty/unknown
 // (gray GB shell), [1] red, [2] blue, [3] yellow, [4] green. Loaded only for a
 // tpak game; real GB cart PNGs from the RmlUi launchers (assets/consoles/n64).
@@ -2007,7 +2010,12 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         ImGui::SetWindowFontScale(1.55f);
         ImGui::TextUnformatted(m->game_name);
         ImGui::SetWindowFontScale(1.0f);
-        if (m->platform && m->platform[0]) {
+        // Platform lockup: the wordmark image when a host supplied one
+        // (SystemProfile.wordmark_image), else the plain platform text.
+        if (g_wordmark.id && g_wordmark.w > 0) {
+            ImGui::Dummy(ImVec2(0, px(2)));
+            image_fit(g_wordmark, 240, 20);
+        } else if (m->platform && m->platform[0]) {
             ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
             ImGui::TextUnformatted(m->platform);
             ImGui::PopStyleColor();
@@ -2248,6 +2256,12 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                                    ? bprof->brand_image : "brand_mark.tga";
         g_brand = launcher_texture_load(
             asset((std::string("assets/img/") + brand_file).c_str()).c_str());
+        // Optional platform wordmark: loads only if the profile names one AND
+        // the file is present (recomp-ui ships none — a console wordmark may be
+        // a third-party trademark). Missing file => header falls back to text.
+        if (bprof && bprof->wordmark_image && bprof->wordmark_image[0])
+            g_wordmark = launcher_texture_load(
+                asset((std::string("assets/img/") + bprof->wordmark_image).c_str()).c_str());
     }
     // Transfer Pak cartridge art (only a tpak game needs it): real GB cart PNGs
     // keyed by cart_kind, empty shell at index 0 (see g_cart / draw_tpak_cart).
@@ -2338,6 +2352,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_verdict_bad);
     launcher_texture_free(&g_verdict_none);
     launcher_texture_free(&g_memcard);
+    launcher_texture_free(&g_wordmark);
     for (int i = 0; i < 5; ++i) launcher_texture_free(&g_cart[i]);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();

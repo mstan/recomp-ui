@@ -111,6 +111,12 @@ typedef struct SystemProfile {
     // "brand_mark.tga"; a console sets its own (N64: the four-color logo) so
     // the top-left mark matches the active system, not a shared default.
     const char* brand_image;
+    // Optional platform WORDMARK image (assets/img/<file>) rendered in the
+    // header in place of the plain `platform` TEXT when the file is present.
+    // NULL => always text. The file is NOT shipped by recomp-ui (a console's
+    // wordmark may be a third-party trademark); an absent file falls back to
+    // the text, so this is inert unless a host drops the asset in.
+    const char* wordmark_image;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------
