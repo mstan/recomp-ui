@@ -88,6 +88,14 @@ typedef struct RecompLauncherCGameInfo {
     int            has_expected_crc;
     const uint8_t (*known_sha256)[32];
     size_t         num_known_sha256;
+    /* Accepted SHA-1 fingerprints as 40-char lowercase hex strings — the
+     * identity cartridge consoles (GBA, SNES) actually gate on. The launcher
+     * computes SHA-1 over the picked ROM and matches any entry, so its
+     * "verified" check agrees with the game runtime's real gate. NULL/0 =>
+     * no SHA-1 check. Preferred over expected_crc for those consoles (a
+     * CRC32 is dump-specific; SHA-1 is the canonical ROM identity). */
+    const char* const* known_sha1_hex;
+    size_t         num_known_sha1;
     int            widescreen_supported;   /* hide Widescreen settings when 0 */
     /* How many players the GAME supports (1 or 2). The launcher hides the
      * Player 2 row entirely when this is 1 — e.g. Mega Man X is 1-player, so a

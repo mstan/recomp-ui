@@ -43,6 +43,11 @@ static const ButtonDef kPsxPadButtons[] = {
 static const char* const kPanelsDashboardPsx[] = { "game", "controller", "save", NULL };
 static const char* const kPanelsSettingsPsx[]   = { "video", "audio", "system", "hotkeys", NULL };
 
+// ---- ROM (disc) file-picker filter ----------------------------------------------
+static const char* const kPsxDiscPatterns[] = { "*.cue", "*.bin", "*.iso", "*.img", "*.pbp", "*.chd" };
+#define LNG_PSX_DISC_PATTERN_COUNT \
+    ((int)(sizeof(kPsxDiscPatterns) / sizeof(kPsxDiscPatterns[0])))
+
 // ---- SystemProfile row ----------------------------------------------------------
 static const SystemProfile kSystemProfilePsx = {
     /* id       */ "psx",
@@ -83,6 +88,10 @@ static const SystemProfile kSystemProfilePsx = {
     /* panels_dashboard  */ kPanelsDashboardPsx,
     /* panels_settings   */ kPanelsSettingsPsx,
     /* panels_controller */ kPanelsControllerCommon,
+    /* screen_kind_names */ NULL,   /* legacy Raw/CRT/Composite/Trinitron set */
+    /* screen_kind_count */ 0,
+    /* rom_filter        */ { kPsxDiscPatterns, LNG_PSX_DISC_PATTERN_COUNT,
+                              "PlayStation disc (.cue .bin .iso .img .pbp .chd)" },
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

@@ -65,6 +65,7 @@ function(recomp_target_launcher_ui TGT)
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
         ${RUI_SRC}/common/sha256.c
+        ${RUI_SRC}/common/sha1.c        # cartridge ROM identity (GBA/SNES gate on SHA-1)
         ${RUI_SRC}/common/keybinds.c
         ${RUI_SRC}/common/ips_patch.c   # MSU-1 IPS auto-patching (launcher_model.c)
         # Dear ImGui backend (the shipping UI) + vendored ImGui (C++)

@@ -77,6 +77,15 @@ typedef struct { int mode; /* 0 rom-hash, 1 disc-verdict */ VerifyProbeFn probe;
 // hardcoded panel); PSX opts into a tailored subset instead — see its row.
 #define LNG_HOTKEYS_ALL 0x7FFu
 
+// ---- ROM file-picker filter --------------------------------------------------
+// The native "Change ROM" dialog's extension filter, per console — so a GBA
+// game offers *.gba, a PSX game *.cue/*.bin, never a hardcoded SNES set.
+// patterns is a tinyfiledialogs glob list ("*.gba"); desc is the filter label.
+typedef struct {
+    const char* const* patterns; int pattern_count;
+    const char* desc;                              // e.g. "Game Boy Advance ROM (.gba)"
+} RomFilterSpec;
+
 typedef struct SystemProfile {
     const char* id, *platform, *theme, *rom_noun;
     ControllerSpec controller;   SaveSpec save;   VideoSpec video;   VerifySpec verify;
@@ -90,6 +99,9 @@ typedef struct SystemProfile {
     // initializers, so trailing zero-init keeps them on the legacy set.
     const char* const* screen_kind_names;
     int                screen_kind_count;
+    // "Change ROM" native-dialog filter (per console). All-zero => the
+    // built-in SNES default (back-compat); every built-out console sets it.
+    RomFilterSpec rom_filter;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

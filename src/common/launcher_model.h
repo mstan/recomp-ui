@@ -155,6 +155,8 @@ typedef struct {
     int             has_expected_crc;
     const uint8_t (*known_sha256)[32];
     size_t          num_known_sha256;
+    const char* const* known_sha1_hex;   // accepted SHA-1 (40-hex), cartridge gate
+    size_t          num_known_sha1;
 
     // ---- controller pad-mode caps (PlayStation-style analog/digital) ----
     bool     pad_mode_supported;    // false => no selector/art swap; generic pad.tga
@@ -202,7 +204,8 @@ typedef struct {
     char     rom_crc_str[16];        // "1B4B2E9C"
     char     rom_sha_str[24];        // "9c2e…d41f"
     bool     crc_match;
-    bool     sha_match;
+    bool     sha_match;      // any known_sha256 matched
+    bool     sha1_match;     // any known_sha1_hex matched
 
     // ---- disc-verdict result (verify.mode==1 systems only; PSX today) ----
     // See VerifyResult above. Untouched (all-zero) for verify.mode==0 systems

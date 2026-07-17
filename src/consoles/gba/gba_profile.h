@@ -61,6 +61,11 @@ static const char* const kGbaScreenKindNames[] = {
 #define LNG_GBA_SCREEN_KIND_COUNT \
     ((int)(sizeof(kGbaScreenKindNames) / sizeof(kGbaScreenKindNames[0])))
 
+// ---- ROM file-picker filter -----------------------------------------------------
+static const char* const kGbaRomPatterns[] = { "*.gba", "*.agb", "*.bin" };
+#define LNG_GBA_ROM_PATTERN_COUNT \
+    ((int)(sizeof(kGbaRomPatterns) / sizeof(kGbaRomPatterns[0])))
+
 // ---- SystemProfile row ----------------------------------------------------------
 static const SystemProfile kSystemProfileGba = {
     /* id       */ "gba",
@@ -98,6 +103,8 @@ static const SystemProfile kSystemProfileGba = {
     /* panels_controller */ kPanelsControllerCommon,
     /* screen_kind_names */ kGbaScreenKindNames,
     /* screen_kind_count */ LNG_GBA_SCREEN_KIND_COUNT,
+    /* rom_filter        */ { kGbaRomPatterns, LNG_GBA_ROM_PATTERN_COUNT,
+                              "Game Boy Advance ROM (.gba)" },
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

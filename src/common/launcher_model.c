@@ -9,6 +9,7 @@
 #include "crc32.h"
 #include "consoles/psx/memcard_format.h"   // PSX-specific; used only under SAVE_MEMCARD
 #include "sha256.h"
+#include "sha1.h"
 #include "ips_patch.h"
 
 #include <stdio.h>
@@ -81,6 +82,8 @@ void launcher_model_init(LauncherModel* m,
         m->expected_crc         = game->expected_crc;
         m->has_expected_crc     = game->has_expected_crc;
         m->known_sha256         = game->known_sha256;
+        m->known_sha1_hex       = game->known_sha1_hex;
+        m->num_known_sha1       = game->num_known_sha1;
         m->num_known_sha256     = game->num_known_sha256;
 
         m->pad_mode_supported   = game->pad_mode_supported != 0;
@@ -237,6 +240,7 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
     m->rom_size[0] = '\0';
     m->crc_match = false;
     m->sha_match = false;
+    m->sha1_match = false;
     if (m->rom_present) {
         FILE* f = fopen(m->rom_full, "rb");
         if (f) {
@@ -258,6 +262,24 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
                     m->crc_match = m->has_expected_crc && crc == m->expected_crc;
                     for (size_t k = 0; k < m->num_known_sha256; ++k)
                         if (memcmp(sha, m->known_sha256[k], 32) == 0) { m->sha_match = true; break; }
+                    // SHA-1: the cartridge-console identity gate (GBA/SNES).
+                    if (m->num_known_sha1 && m->known_sha1_hex) {
+                        uint8_t s1[20]; char s1hex[41];
+                        recompui_sha1_compute(body, blen, s1);
+                        recompui_sha1_hex(s1, s1hex);
+                        for (size_t k = 0; k < m->num_known_sha1; ++k) {
+                            const char* want = m->known_sha1_hex[k];
+                            if (!want) continue;
+                            /* case-insensitive 40-hex compare */
+                            int eq = 1;
+                            for (int c = 0; c < 40 && eq; ++c) {
+                                char a = s1hex[c], b = want[c];
+                                if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+                                if (a != b) eq = 0;
+                            }
+                            if (eq && want[40] == '\0') { m->sha1_match = true; break; }
+                        }
+                    }
                 }
                 free(buf);
             }
@@ -317,11 +339,13 @@ const char* launcher_model_rom_path(const LauncherModel* m) {
 
 bool launcher_model_rom_verified(const LauncherModel* m) {
     if (!m->rom_present) return false;
-    const int has_crc = m->has_expected_crc;
-    const int has_sha = m->num_known_sha256 > 0;
-    if (!has_crc && !has_sha) return false;   // no fingerprint => can't vouch
-    if (has_crc && !m->crc_match) return false;
-    if (has_sha && !m->sha_match) return false;
+    const int has_crc  = m->has_expected_crc;
+    const int has_sha  = m->num_known_sha256 > 0;
+    const int has_sha1 = m->num_known_sha1 > 0;
+    if (!has_crc && !has_sha && !has_sha1) return false;   // no fingerprint => can't vouch
+    if (has_crc  && !m->crc_match)  return false;
+    if (has_sha  && !m->sha_match)  return false;
+    if (has_sha1 && !m->sha1_match) return false;
     return true;
 }
 

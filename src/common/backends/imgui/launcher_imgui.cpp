@@ -587,9 +587,23 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     ImGui::Dummy(ImVec2(0, px(12)));
     char change_label[32];
     snprintf(change_label, sizeof(change_label), "Change %s", noun);
-    if (ImGui::Button(change_label, ImVec2(availw, px(34))))
-        if (launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf)))
-            launcher_model_set_rom(m, g_pick_buf);
+    if (ImGui::Button(change_label, ImVec2(availw, px(34)))) {
+        // Native file dialog filter comes from the active console's
+        // SystemProfile.rom_filter — never a hardcoded SNES set. Falls back
+        // to launcher_pick_rom's built-in filter only if a profile omits it.
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        char title[48];
+        snprintf(title, sizeof(title), "Select %s", noun);
+        bool picked;
+        if (prof && prof->rom_filter.patterns && prof->rom_filter.pattern_count > 0)
+            picked = launcher_pick_file(title, prof->rom_filter.patterns,
+                                        prof->rom_filter.pattern_count,
+                                        prof->rom_filter.desc,
+                                        g_pick_buf, sizeof(g_pick_buf));
+        else
+            picked = launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf));
+        if (picked) launcher_model_set_rom(m, g_pick_buf);
+    }
 
     // MSU-1 patch-available sub-block: this game ships an IPS patch that
     // converts the verified vanilla ROM into its MSU-1 streamed-audio variant.

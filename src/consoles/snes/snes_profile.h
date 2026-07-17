@@ -30,6 +30,11 @@ static const ButtonDef kSnesPadButtons[] = {
 // ---- panel composition --------------------------------------------------------
 static const char* const kPanelsSettingsSnes[]  = { "video", "audio", "hotkeys", NULL };
 
+// ---- ROM file-picker filter -----------------------------------------------------
+static const char* const kSnesRomPatterns[] = { "*.sfc", "*.smc", "*.fig", "*.swc" };
+#define LNG_SNES_ROM_PATTERN_COUNT \
+    ((int)(sizeof(kSnesRomPatterns) / sizeof(kSnesRomPatterns[0])))
+
 // ---- SystemProfile row ----------------------------------------------------------
 static const SystemProfile kSystemProfileSnes = {
     /* id       */ "snes",
@@ -53,6 +58,10 @@ static const SystemProfile kSystemProfileSnes = {
     /* panels_dashboard  */ kPanelsDashboardCommon,
     /* panels_settings   */ kPanelsSettingsSnes,
     /* panels_controller */ kPanelsControllerCommon,
+    /* screen_kind_names */ NULL,   /* legacy Raw/CRT/Composite/Trinitron set */
+    /* screen_kind_count */ 0,
+    /* rom_filter        */ { kSnesRomPatterns, LNG_SNES_ROM_PATTERN_COUNT,
+                              "SNES ROM (.sfc .smc .fig .swc)" },
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------
