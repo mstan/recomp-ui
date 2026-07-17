@@ -85,12 +85,14 @@ static const SystemProfile kSystemProfileGba = {
     },
     /* verify */  { 0, NULL },    // rom-hash mode (CRC32/SHA-256 pin, like SNES carts)
     // GBA's hotkey catalog: everything except LNG_HK_PAUSE_DIMMED (an
-    // SNES-engine-only attract-loop affordance) and LNG_HK_TOGGLE_RENDERER
-    // (gbarecomp has one renderer). The window-resize pair stays — GBA windows
-    // are integer-scaled like SNES.
+    // SNES-engine-only attract-loop affordance), LNG_HK_TOGGLE_RENDERER
+    // (gbarecomp has one renderer), and LNG_HK_RESET (gbarecomp has no
+    // in-process reset; relaunching the exe is the reset). The window-resize
+    // pair stays — GBA windows are integer-scaled like SNES.
     /* hotkeys_mask */ (uint32_t)(LNG_HOTKEYS_ALL &
                                    ~(1u << LNG_HK_PAUSE_DIMMED) &
-                                   ~(1u << LNG_HK_TOGGLE_RENDERER)),
+                                   ~(1u << LNG_HK_TOGGLE_RENDERER) &
+                                   ~(1u << LNG_HK_RESET)),
     /* panels_dashboard  */ kPanelsDashboardCommon,
     /* panels_settings   */ kPanelsSettingsGba,
     /* panels_controller */ kPanelsControllerCommon,
