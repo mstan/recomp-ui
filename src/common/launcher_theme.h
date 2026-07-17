@@ -149,8 +149,56 @@ static inline LauncherTheme launcher_theme_genesis(void) {
     return t;
 }
 
+// "Game Boy" (DMG) theme. The original 1989 handheld's reflective pea-green
+// LCD: an olive-tinted dark ground and the classic Game Boy screen green as the
+// one accent (the #9bbc0f/#306230 dot-matrix palette). Backlit-launcher chrome,
+// so NO CRT scanlines — the DMG panel was a passive reflective LCD, not a tube.
+static inline LauncherTheme launcher_theme_gb(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.043f, 0.055f, 0.031f, 1.0f); // #0B0E08 olive-black
+    t.background2     = lng_rgba(0.071f, 0.090f, 0.051f, 1.0f); // #12170D lifted center
+    t.panel           = lng_rgba(0.082f, 0.102f, 0.059f, 1.0f); // #151A0F card
+    t.panel_hovered   = lng_rgba(0.122f, 0.153f, 0.086f, 1.0f); // #1F2716
+    t.control         = lng_rgba(0.098f, 0.125f, 0.071f, 1.0f); // #192012 button
+    t.control_hovered = lng_rgba(0.141f, 0.176f, 0.098f, 1.0f); // #242D19
+    t.border          = lng_rgba(0.180f, 0.220f, 0.125f, 1.0f); // #2E3820 hairline
+    t.accent          = lng_rgba(0.545f, 0.675f, 0.059f, 1.0f); // #8BAC0F GB screen green
+    t.accent_dim      = lng_rgba(0.376f, 0.510f, 0.098f, 1.0f); // #608219 pressed/gradient
+    t.accent_text     = lng_rgba(0.043f, 0.055f, 0.031f, 1.0f); // dark ink on the bright green
+    t.text            = lng_rgba(0.914f, 0.929f, 0.878f, 1.0f); // #E9EDE0 warm off-white
+    t.text_muted      = lng_rgba(0.545f, 0.573f, 0.475f, 1.0f); // #8B9279
+    /* good/warn keep their semantic colors; focus stays cyan (reads on olive). */
+    t.scanlines       = 0;                       // reflective LCD, not CRT: flat
+    return t;
+}
+
+// "Game Boy Color" theme. The 1998 color handheld (the translucent "Berry" /
+// "Grape" shells + the rainbow wordmark): a cool near-black ground and a vivid
+// berry-magenta accent, distinct from every other console's blue/green/indigo.
+// Still a backlit-style launcher over a reflective color LCD — scanlines OFF.
+static inline LauncherTheme launcher_theme_gbc(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.055f, 0.039f, 0.063f, 1.0f); // #0E0A10 aubergine-black
+    t.background2     = lng_rgba(0.090f, 0.063f, 0.102f, 1.0f); // #17101A lifted center
+    t.panel           = lng_rgba(0.102f, 0.071f, 0.114f, 1.0f); // #1A121D card
+    t.panel_hovered   = lng_rgba(0.157f, 0.106f, 0.176f, 1.0f); // #281B2D
+    t.control         = lng_rgba(0.129f, 0.090f, 0.145f, 1.0f); // #211725 button
+    t.control_hovered = lng_rgba(0.180f, 0.125f, 0.204f, 1.0f); // #2E2034
+    t.border          = lng_rgba(0.235f, 0.161f, 0.263f, 1.0f); // #3C2943 hairline
+    t.accent          = lng_rgba(0.859f, 0.239f, 0.616f, 1.0f); // #DB3D9D GBC berry magenta
+    t.accent_dim      = lng_rgba(0.643f, 0.157f, 0.451f, 1.0f); // #A42873 pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.text            = lng_rgba(0.937f, 0.918f, 0.945f, 1.0f); // #EFEAF1
+    t.text_muted      = lng_rgba(0.596f, 0.541f, 0.620f, 1.0f); // #988A9E
+    /* good/warn keep their semantic colors; focus stays cyan (reads on aubergine). */
+    t.scanlines       = 0;                       // color LCD, not CRT: flat
+    return t;
+}
+
 // Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
-// Advance, "genesis" -> Sega Genesis; anything else -> default CRT).
+// Advance, "gbc" -> Game Boy Color, "gb" -> Game Boy (DMG), "genesis" -> Sega
+// Genesis; anything else -> default CRT). Note the "gb*" order: match "gba"
+// and "gbc" (3rd char) BEFORE the bare "gb" fallback.
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
@@ -159,6 +207,13 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'b' || name[1] == 'B') &&
         (name[2] == 'a' || name[2] == 'A'))
         return launcher_theme_gba();
+    if (name && (name[0] == 'g' || name[0] == 'G') &&
+        (name[1] == 'b' || name[1] == 'B') &&
+        (name[2] == 'c' || name[2] == 'C'))
+        return launcher_theme_gbc();
+    if (name && (name[0] == 'g' || name[0] == 'G') &&
+        (name[1] == 'b' || name[1] == 'B'))
+        return launcher_theme_gb();
     if (name && (name[0] == 'g' || name[0] == 'G') &&
         (name[1] == 'e' || name[1] == 'E'))
         return launcher_theme_genesis();

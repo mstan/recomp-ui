@@ -6,6 +6,7 @@
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
 #include "consoles/genesis/genesis_binds.h"   // Genesis-native bridge (settings.ini [input.pN])
+#include "consoles/gb/gb_binds.h"     // Game Boy-native bridge (keybinds.ini [controls])
 
 #include <ctype.h>
 #include <stdio.h>
@@ -86,6 +87,22 @@ static int is_genesis_profile(const LauncherModel* m) {
     return prof && prof->id && !strcmp(prof->id, "genesis");
 }
 
+// ---- Game Boy-native bind bridge ---------------------------------------------
+// Lives in consoles/gb/gb_binds.c — for a gb/gbc SystemProfile, persistence
+// routes through gb-recompiled's own keybinds.ini [controls] format (SDL
+// scancode names) instead of the generic keybinds.c store, so rebinds reach
+// the game. Single player (the Game Boy is a one-player handheld). Both the
+// "gb" and "gbc" profiles share this bridge; the default file is keybinds.ini.
+static int is_gb_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && (!strcmp(prof->id, "gb") || !strcmp(prof->id, "gbc"));
+}
+
+static const char* gb_binds_file_path(void) {
+    return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
+             ? g_launcher_keybinds_path : "keybinds.ini";
+}
+
 static const char* genesis_binds_file_path(void) {
     return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
              ? g_launcher_keybinds_path : "settings.ini";
@@ -151,6 +168,14 @@ static void reload_player_display(LauncherModel* m, int player) {
             genesis_pad_label(kind, code, dir,
                               m->pad_binds[player - 1][b], sizeof(m->pad_binds[player - 1][b]));
         }
+        return;
+    }
+    if (is_gb_profile(m)) {
+        if (player != 1) return;   // Game Boy is single-player
+        const char* path = gb_binds_file_path();
+        for (int b = 0; b < LNG_GB_PAD_BUTTON_COUNT; ++b)
+            copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                     scancode_label((SDL_Scancode)rui_gb_binds_get(path, b)));
         return;
     }
     int n = 0;
@@ -321,6 +346,8 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
         rui_psx_binds_init(psx_keybinds_file_path());   // load/generate psx_keybinds.c-format keybinds.ini
     } else if (is_genesis_profile(m)) {
         rui_genesis_binds_init(genesis_binds_file_path());   // overlay settings.ini [input.pN] onto engine defaults
+    } else if (is_gb_profile(m)) {
+        rui_gb_binds_init(gb_binds_file_path());   // load/generate keybinds.ini [controls] (gb-recompiled format)
     } else {
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
@@ -341,6 +368,13 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
     if (is_genesis_profile(m)) {
         if (b < 0 || b >= LNG_GENESIS_PAD_BUTTON_COUNT) return;
         rui_genesis_binds_set_key(genesis_binds_file_path(), player - 1, b, scancode);
+        copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
+                 scancode_label((SDL_Scancode)scancode));
+        return;
+    }
+    if (is_gb_profile(m)) {
+        if (player != 1 || b < 0 || b >= LNG_GB_PAD_BUTTON_COUNT) return;
+        rui_gb_binds_set(gb_binds_file_path(), b, scancode);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                  scancode_label((SDL_Scancode)scancode));
         return;
@@ -376,6 +410,12 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
     }
     if (is_genesis_profile(m)) {
         rui_genesis_binds_reset(genesis_binds_file_path(), player - 1);
+        reload_player_display(m, player);
+        return;
+    }
+    if (is_gb_profile(m)) {
+        if (player != 1) return;
+        rui_gb_binds_reset(gb_binds_file_path());
         reload_player_display(m, player);
         return;
     }

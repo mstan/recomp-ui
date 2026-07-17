@@ -92,6 +92,23 @@ int main(int argc, char** argv) {
                 gi.aspect_experimental = 1;
             }
         }
+        if (lpr_is(variant, "gb") || lpr_is(variant, "gbc") ||
+            lpr_is(variant, "gameboy") || lpr_is(variant, "gameboycolor") ||
+            lpr_is(variant, "dmg") || lpr_is(variant, "cgb")) {
+            // Preview a Game Boy family title: the one battery .sav (folds into
+            // the GAME card), a "configured" LCD palette, 4x integer scale. The
+            // "gbc" variant shows the GAME BOY COLOR branding + a color title;
+            // "gb" shows the DMG branding + a DMG title.
+            int is_color = lpr_is(variant, "gbc") ||
+                           lpr_is(variant, "gameboycolor") || lpr_is(variant, "cgb");
+            gi.name        = is_color ? "Megaman Xtreme 2" : "Tetris";
+            gi.region      = "USA";
+            gi.sram_path   = "saves/save.sav";
+            gi.boxart_path = "assets/img/boxart.tga";  // placeholder if absent
+            s.screen_kind  = 0;    // DMG palette (kGbScreenKindNames)
+            s.window_scale = 4;
+            variant_owns_demo = 1;
+        }
         if (lpr_is(variant, "genesis") || lpr_is(variant, "megadrive") ||
             lpr_is(variant, "md")) {
             // Preview a Sonic-class Genesis title: 2 players (both controller

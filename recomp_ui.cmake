@@ -48,7 +48,14 @@ function(recomp_target_launcher_ui TGT)
     # "boxart.tga"). Needed when several targets stage into ONE exe dir (Sonic
     # 3 & Knuckles builds three modes side by side) and each needs its own
     # box art file — pairs with GameInfo.boxart_path the runtime reads.
-    cmake_parse_arguments(RUI "" "BOXART;BOXART_NAME;PAD;BRAND" "" ${ARGN})
+    # HOST_IMGUI: the host target already compiles Dear ImGui (imgui.cpp +
+    # imgui_impl_sdl2/opengl3) — reuse that ONE copy instead of linking a
+    # second, which would be a duplicate-symbol / ODR clash. IMGUI_DIR is the
+    # host's ImGui source dir (must contain imgui.h + backends/imgui_impl_*.h)
+    # that recomp-ui's own backend glue (launcher_imgui.cpp) compiles against.
+    # Used by gb-recompiled, whose runtime already vendors + uses ImGui for its
+    # in-game menu. Omit both to keep the default self-contained vendored ImGui.
+    cmake_parse_arguments(RUI "" "BOXART;BOXART_NAME;PAD;BRAND;HOST_IMGUI;IMGUI_DIR" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -68,6 +75,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
+        ${RUI_SRC}/consoles/gb/gb_binds.c          # Game Boy-native keybinds.ini [controls] bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
@@ -75,22 +83,41 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/sha1.c        # cartridge ROM identity (GBA/SNES gate on SHA-1)
         ${RUI_SRC}/common/keybinds.c
         ${RUI_SRC}/common/ips_patch.c   # MSU-1 IPS auto-patching (launcher_model.c)
-        # Dear ImGui backend (the shipping UI) + vendored ImGui (C++)
+        # recomp-ui's own Dear ImGui backend glue (the shipping UI). ALWAYS
+        # compiled — it is recomp-ui code, not vendored ImGui.
         ${RUI_SRC}/common/backends/imgui/launcher_imgui.cpp
-        ${RUI_IMGUI}/imgui.cpp
-        ${RUI_IMGUI}/imgui_draw.cpp
-        ${RUI_IMGUI}/imgui_tables.cpp
-        ${RUI_IMGUI}/imgui_widgets.cpp
-        ${RUI_IMGUI}/backends/imgui_impl_sdl2.cpp
-        ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp
     )
+
+    # Vendored Dear ImGui (C++) — compiled only when the host does NOT already
+    # provide it. Under HOST_IMGUI the host's single copy is reused (below).
+    if(NOT RUI_HOST_IMGUI)
+        target_sources(${TGT} PRIVATE
+            ${RUI_IMGUI}/imgui.cpp
+            ${RUI_IMGUI}/imgui_draw.cpp
+            ${RUI_IMGUI}/imgui_tables.cpp
+            ${RUI_IMGUI}/imgui_widgets.cpp
+            ${RUI_IMGUI}/backends/imgui_impl_sdl2.cpp
+            ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp
+        )
+    endif()
+
+    # ImGui include dir: the host's under HOST_IMGUI (so launcher_imgui.cpp
+    # compiles against the SAME imgui.h the host's single copy was built from),
+    # else recomp-ui's vendored tree.
+    set(RUI_IMGUI_INC ${RUI_IMGUI})
+    if(RUI_HOST_IMGUI)
+        if(NOT RUI_IMGUI_DIR)
+            message(FATAL_ERROR "recomp_target_launcher_ui(HOST_IMGUI ...) requires IMGUI_DIR <host imgui source dir>")
+        endif()
+        set(RUI_IMGUI_INC ${RUI_IMGUI_DIR})
+    endif()
 
     target_include_directories(${TGT} PRIVATE
         ${RUI_SRC}                   # recomp_launcher.h / launcher_profile.h / launcher_system.h
                                      # + "third_party/..." + "consoles/<id>/..." includes
         ${RUI_SRC}/common            # launcher core headers (bare-name includes)
-        ${RUI_IMGUI}
-        ${RUI_IMGUI}/backends
+        ${RUI_IMGUI_INC}
+        ${RUI_IMGUI_INC}/backends
     )
 
     target_compile_definitions(${TGT} PRIVATE
@@ -139,6 +166,10 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/genesis/img/pad_genesis.tga
                 ${RUI_ASSETS}/consoles/genesis/img/brand_genesis.tga
                 ${RUI_ASSETS}/consoles/genesis/img/boxart_sonic1.tga
+                ${RUI_ASSETS}/consoles/gb/img/pad_gb.tga
+                ${RUI_ASSETS}/consoles/gb/img/pad_gbc.tga
+                ${RUI_ASSETS}/consoles/gb/img/brand_gb.tga
+                ${RUI_ASSETS}/consoles/gb/img/brand_gbc.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a
