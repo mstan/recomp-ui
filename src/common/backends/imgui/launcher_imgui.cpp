@@ -380,6 +380,27 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta) {
     ImGui::PopID();
 }
 
+// ±1 stepper for the Genesis widescreen "extra cells per side" control. Unlike
+// the ±5 `stepper` above it reads its display string from the model
+// (launcher_model_ws_cells_label => "8 cells") so the clamp/format live in one
+// place, and it steps by a single cell.
+void ws_cells_stepper(const char* id, LauncherModel* m, int* out_delta) {
+    ImGui::PushID(id);
+    const float bh = px(30), fw = px(72);
+    if (ImGui::Button("-", ImVec2(px(32), bh))) *out_delta = -1;
+    ImGui::SameLine(0, px(6));
+    const char* buf = launcher_model_ws_cells_label(m);
+    float cx = ImGui::GetCursorPosX();
+    ImVec2 ts = ImGui::CalcTextSize(buf);
+    ImGui::SetCursorPosX(cx + (fw - ts.x) * 0.5f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(buf);
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPosX(cx + fw + px(6));
+    if (ImGui::Button("+", ImVec2(px(32), bh))) *out_delta = +1;
+    ImGui::PopID();
+}
+
 // "Label ......... [control]" row: label baseline-aligned to the control.
 // col_w > 0 reserves a FIXED label column so the control starts at the same x
 // on every row — the caller passes the widest label's width (+gap) to line all
@@ -932,11 +953,22 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
 // itself hidden when !allow_hybrid, matching the real RmlUi PSX launcher.
 void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     struct Seg { int mode; const char* label; };
-    Seg segs[3];
+    Seg segs[8];
     int n = 0;
-    if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
-    segs[n++] = { 1, "Analog" };
-    segs[n++] = { 2, "D-Pad" };
+    // A console with a custom pad-mode list (ControllerSpec.modes, e.g. Genesis
+    // 3-Button/6-Button) drives the segments from that list; otherwise the
+    // legacy PSX-shaped Hybrid/Analog/D-Pad set (Hybrid gated by allow_hybrid).
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
+        int mc = prof->controller.mode_count;
+        if (mc > (int)(sizeof(segs) / sizeof(segs[0]))) mc = (int)(sizeof(segs) / sizeof(segs[0]));
+        for (int i = 0; i < mc; ++i)
+            segs[n++] = { prof->controller.modes[i].mode, prof->controller.modes[i].label };
+    } else {
+        if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
+        segs[n++] = { 1, "Analog" };
+        segs[n++] = { 2, "D-Pad" };
+    }
 
     const float gap = px(4.0f);
     const float seg_w = (w - gap * (n - 1)) / n;
@@ -971,11 +1003,14 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     const float cw    = inner;   // controls span the card => flush by construction
 
     // pad art centered in the card: PSX-style games swap analog/digital art
-    // with the mode; consoles without pad modes (SNES) always show the
-    // generic pad.tga.
+    // with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
+    // which has pad modes but a SINGLE pad image) always show the generic
+    // g_pad. The swap only happens when the profile actually ships the pair.
     {
-        const bool digital = m->pad_mode_supported && m->s.pad_mode[p] == 2;
-        const LauncherTexture& art = m->pad_mode_supported
+        const SystemProfile* aprof = (const SystemProfile*)m->profile;
+        const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
+        const bool digital = has_swap_art && m->s.pad_mode[p] == 2;
+        const LauncherTexture& art = has_swap_art
             ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
         const float aw = px(120);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - aw) * 0.5f);
@@ -1152,6 +1187,19 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_fullscreen_toggle;
 }
 
+// Whether the DISPLAY card should grow to fit its content (AutoResizeY) rather
+// than sit at the legacy fixed band height. True for the deep PSX surface, and
+// also for a console that renders the extra widescreen-cells row (Genesis) once
+// widescreen is on — that row is a 4th line the 3-row fixed height would clip.
+// Gated exactly like the row itself so the SNES legacy surface stays pinned to
+// the fixed height (byte-identical to before this console existed).
+bool video_card_grows(const LauncherModel* m) {
+    if (any_deep_display(m)) return true;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    return prof && prof->video.widescreen_cells &&
+           m->widescreen_supported && m->s.widescreen != 0;
+}
+
 // Inline amber "EXPERIMENTAL" tag, drawn on the same row right after a control
 // whose feature is not yet production-ready. Currently every SNES 16:9
 // widescreen path is experimental (per-game rendering still maturing), so the
@@ -1186,6 +1234,14 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
             experimental_tag(th);
+            // Genesis-style "extra cells per side" stepper: only when the
+            // console opts in (video.widescreen_cells) AND widescreen is on.
+            const SystemProfile* wprof = (const SystemProfile*)m->profile;
+            if (wprof && wprof->video.widescreen_cells && m->s.widescreen != 0) {
+                row_label("Extra cells / side", th, cw);
+                int d = 0; ws_cells_stepper("wscells", m, &d);
+                if (d) launcher_model_ws_cells_delta(m, d);
+            }
         }
         return;
     }
@@ -1294,7 +1350,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 // row_h band with no_scroll (legacy minimal surface) — exactly the sizing
 // draw_settings used to pick inline, now co-located with its own content.
 void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
-    if (any_deep_display(m)) {
+    if (video_card_grows(m)) {
         if (begin_panel("disp", 0, false)) draw_display_controls(m, *th);
         end_panel();
     } else {
@@ -1493,7 +1549,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
     const float row_h = px(198.0f);   // legacy fixed band height
 
-    const bool deep_display = any_deep_display(m);
+    const bool deep_display = video_card_grows(m);
     const bool deep_audio   = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
 
     const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
@@ -1595,24 +1651,41 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     } end_panel();
 
     if (begin_panel("cfg_binds", 0)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
-        ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
-
         // Responsive grid: fit as many label+chip columns as the width allows
         // (1..4) instead of one tall column with dead space to the right.
         const SystemProfile* prof = (const SystemProfile*)m->profile;
         const ControllerSpec& spec = prof->controller;
+        // A pad-bind console (Genesis) offers a KEY chip AND a GAMEPAD chip per
+        // row — the RmlUi launcher's "Set key" / "Set pad" pair. Otherwise the
+        // grid is keyboard-only, exactly as before.
+        const bool has_pad = spec.has_pad_binds != 0;
+
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+        ImGui::Text("%s - PLAYER %d", has_pad ? "INPUT BINDINGS" : "KEYBOARD BINDINGS", p + 1);
+        ImGui::PopStyleColor(); ImGui::Spacing();
+
+        // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
+        // X/Y/Z/Mode); non-mode systems get their full button_count.
+        const int nbtn = launcher_model_active_button_count(m, p);
 
         // Label column width is sized to the WIDEST label this system's spec
         // actually uses (e.g. PSX's "Triangle") instead of a constant tuned
         // for SNES's shorter names ("Select") — otherwise longer per-system
         // vocab overlaps the bind-chip button next to it.
         float label_col_w = px(70.0f);
-        for (int b = 0; b < spec.button_count; ++b) {
+        for (int b = 0; b < nbtn; ++b) {
             float w = ImGui::CalcTextSize(spec.buttons[b].label).x + px(20.0f);
             if (w > label_col_w) label_col_w = w;
         }
-        const float cell_w = label_col_w + px(170.0f);
+        // Two-chip cells (KEY + GAMEPAD) use narrower chips so a row still fits
+        // a sensible column count; single-chip cells keep the wider chip AND the
+        // exact legacy cell width (label + 170) so non-pad consoles (SNES/PSX/
+        // GBA) pack columns byte-identically to before this column existed.
+        const float chip_w   = has_pad ? px(118.0f) : px(160.0f);
+        const float chip_gap = px(6.0f);
+        const float cell_w = has_pad
+            ? (label_col_w + chip_w + chip_gap + chip_w + px(16.0f))
+            : (label_col_w + px(170.0f));
         int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
         if (cols < 1) cols = 1;
         if (cols > 4) cols = 4;
@@ -1623,17 +1696,30 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
             for (int c = 0; c < cols; ++c)
                 ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
-            for (int b = 0; b < spec.button_count; ++b) {
+            for (int b = 0; b < nbtn; ++b) {
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
                 ImGui::SameLine(label_col_w);
-                const bool cap = m->capturing && m->capture_btn == b;
-                if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                if (ImGui::Button(cap ? "[ press a key... ]" : m->binds[p][b], ImVec2(px(160), 0)))
+                // KEY chip
+                const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
+                if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                if (ImGui::Button(cap_key ? "[ press a key... ]" : m->binds[p][b], ImVec2(chip_w, 0)))
                     launcher_model_begin_capture(m, b);
-                if (cap) ImGui::PopStyleColor();
+                if (cap_key) ImGui::PopStyleColor();
+                // GAMEPAD chip (pad-bind consoles only)
+                if (has_pad) {
+                    ImGui::SameLine(0, chip_gap);
+                    ImGui::PushID("pad");
+                    const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
+                    const char* pl = m->pad_binds[p][b][0] ? m->pad_binds[p][b] : "(unbound)";
+                    if (cap_pad) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                    if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl, ImVec2(chip_w, 0)))
+                        launcher_model_begin_pad_capture(m, b);
+                    if (cap_pad) ImGui::PopStyleColor();
+                    ImGui::PopID();
+                }
                 ImGui::PopID();
             }
             ImGui::EndTable();
@@ -1764,8 +1850,23 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     // Vertically center the brand mark against the two-line title block (drop it
     // down ~9px so it doesn't sit high against the first line).
     float hdr_top = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(hdr_top + px(9));
-    image_fit(g_brand, 44, 33); ImGui::SameLine(0, px(12));
+    // Brand slot: the shared default is a 44x33 square mark. A console that
+    // ships its OWN (typically wide) wordmark (SystemProfile.brand, e.g. the
+    // Genesis logo) draws it larger — sized to a target HEIGHT with proportional
+    // width — so the logo reads clearly. This shifts THIS console's title to the
+    // right but leaves every other console's header pixel-for-pixel unchanged
+    // (their brand box stays 44x33 and `own_brand` is false).
+    const SystemProfile* hprof = (const SystemProfile*)m->profile;
+    const bool own_brand = hprof && hprof->brand && hprof->brand[0];
+    float brand_w = 44.0f, brand_h = 33.0f, brand_drop = 9.0f;
+    if (own_brand && g_brand.h > 0) {
+        brand_h = 32.0f;
+        brand_w = brand_h * (float)g_brand.w / (float)g_brand.h;   // preserve aspect
+        if (brand_w > 130.0f) brand_w = 130.0f;                    // sane upper bound
+        brand_drop = 7.0f;
+    }
+    ImGui::SetCursorPosY(hdr_top + px(brand_drop));
+    image_fit(g_brand, brand_w, brand_h); ImGui::SameLine(0, px(12));
     ImGui::SetCursorPosY(hdr_top);
     ImGui::BeginGroup();
         ImGui::SetWindowFontScale(1.55f);
@@ -1829,8 +1930,38 @@ bool is_modifier_scancode(SDL_Scancode sc) {
 
 // Keyboard capture for the rebind editors. Player buttons persist a SCANCODE to
 // keybinds.ini; system hotkeys persist a KEYCODE+mods to config.ini [KeyMap].
+// GAMEPAD binds (has_pad_binds consoles, e.g. Genesis) persist a button/axis
+// through the console's native bridge instead.
 bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     if (!m->capturing && !m->hk_capturing) return false;
+
+    // ---- GAMEPAD bind capture (capture_pad set; Genesis only) --------------
+    // Swallow everything while listening; Esc cancels; a controller button
+    // press or a decisive axis push (past a dead threshold) commits the bind.
+    if (m->capturing && m->capture_pad) {
+        if (ev.type == SDL_EVENT_KEY_DOWN && LNG_EVKEY(ev) == SDLK_ESCAPE) {
+            launcher_model_cancel_capture(m);
+            return true;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+            launcher_binds_set_pad_button(m, m->cfg_player + 1, m->capture_btn,
+                                          LNG_PADBIND_BUTTON, (int)LNG_EVGBTN(ev), 0);
+            launcher_model_cancel_capture(m);
+            return true;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            int val = (int)LNG_EVGAXISVAL(ev);
+            if (val >= 20000 || val <= -20000) {   // ignore rest/jitter near center
+                launcher_binds_set_pad_button(m, m->cfg_player + 1, m->capture_btn,
+                                              LNG_PADBIND_AXIS, (int)LNG_EVGAXIS(ev),
+                                              val < 0 ? -1 : +1);
+                launcher_model_cancel_capture(m);
+            }
+            return true;
+        }
+        return true;   // swallow all other input while capturing a pad bind
+    }
+
     if (ev.type != SDL_EVENT_KEY_DOWN) return true;   // swallow input while capturing
     if (LNG_EVKEY(ev) == SDLK_ESCAPE) {
         launcher_model_cancel_capture(m);
@@ -1928,7 +2059,13 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_pad_digital = launcher_texture_load(
                 asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
     }
-    g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
+    {   // per-console brand mark (SystemProfile.brand) or the shared default
+        const SystemProfile* bprof = (const SystemProfile*)m->profile;
+        const char* brand_img = (bprof && bprof->brand && bprof->brand[0])
+                                    ? bprof->brand : "brand_mark.tga";
+        g_brand = launcher_texture_load(
+            asset((std::string("assets/img/") + brand_img).c_str()).c_str());
+    }
     g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
     g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());
     g_verdict_bad   = launcher_texture_load(asset("assets/img/verdict_bad.tga").c_str());

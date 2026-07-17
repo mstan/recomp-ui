@@ -229,9 +229,18 @@ typedef struct {
     // rebind capture state machine
     bool      capturing;         // capturing a player button
     int       capture_btn;       // generic index into the active profile's ControllerSpec.buttons[] (0..button_count-1)
+    // When capturing, whether the GAMEPAD bind (button/axis) is being captured
+    // instead of the keyboard scancode — only reachable on consoles whose
+    // ControllerSpec sets has_pad_binds (Genesis; the engine stores a gamepad
+    // button/axis bind per logical button alongside the keyboard scancode).
+    bool      capture_pad;
     bool      hk_capturing;      // capturing a system hotkey
     LngHotkey capture_hk;
     char      binds[2][LNG_MAX_BUTTONS][32];  // per-player keyboard binding labels, indexed like capture_btn
+    // Per-player GAMEPAD binding labels (has_pad_binds consoles only; e.g.
+    // "dpup", "a", "leftx+", "(unbound)"). Parallel to binds[], filled by
+    // launcher_binds.c's per-console bridge alongside the keyboard labels.
+    char      pad_binds[2][LNG_MAX_BUTTONS][32];
     char      hotkeys[LNG_HK_COUNT][32];    // [KeyMap] value strings, e.g. "Ctrl+R"
 } LauncherModel;
 
@@ -264,6 +273,20 @@ void launcher_model_open_config(LauncherModel* m, int player);  // -> Controller
 void launcher_model_cycle_scale(LauncherModel* m);   // 1..6 wrap
 void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
+
+// ---- widescreen extra cells (SystemProfile.video.widescreen_cells consoles,
+// e.g. Genesis: N extra 8-px background cells rendered per side while
+// widescreen is on). Clamped 1..16; no-op when the profile doesn't opt in. ----
+void launcher_model_ws_cells_delta(LauncherModel* m, int delta);
+const char* launcher_model_ws_cells_label(const LauncherModel* m);   // "8 cells"
+
+// ---- active rebind vocabulary size for one player -------------------------
+// The number of leading ControllerSpec.buttons[] entries the rebind page
+// shows for `player` right now: on a profile with a custom pad-mode list
+// (ControllerSpec.modes, e.g. Genesis 3-Button/6-Button) this follows the
+// player's CURRENT mode's button_count; otherwise it is the profile's full
+// button_count. Always <= LNG_MAX_BUTTONS.
+int launcher_model_active_button_count(const LauncherModel* m, int player);
 
 // ---- aspect ratio (PSX-style; only meaningful when aspect_mask != 0) ----
 // Cycle through the OFFERED aspects only (4:3 always offered; 16:9/21:9 per
@@ -356,6 +379,10 @@ void launcher_model_skip_cancel(LauncherModel* m);
 // (0..button_count-1) — NOT necessarily an LngButton value once the active
 // system isn't SNES-shaped (e.g. PSX has 16 buttons).
 void launcher_model_begin_capture(LauncherModel* m, int b);
+// Begin capturing the GAMEPAD bind (button or axis) for button `b` instead of
+// a keyboard scancode. Only meaningful on has_pad_binds consoles (Genesis) —
+// the UI never offers it elsewhere; a stray call is harmless (Esc cancels).
+void launcher_model_begin_pad_capture(LauncherModel* m, int b);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);
