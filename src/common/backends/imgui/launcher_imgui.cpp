@@ -1769,13 +1769,25 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     ImGui_ImplOpenGL3_Init("#version 330");
 
     g_boxart = launcher_texture_load(asset("assets/img/boxart.tga").c_str());
-    // pad.tga is 24-bit (no alpha) with a flat backdrop baked in -> key it
-    // out so the pad art sits transparently on the panel.
-    g_pad    = launcher_texture_load_colorkey(asset("assets/img/pad.tga").c_str(), 24);
-    // pad_analog.tga / pad_digital.tga are already 32-bit with real alpha (no
-    // colorkey backdrop) -> the plain alpha-respecting loader, not colorkey.
-    g_pad_analog  = launcher_texture_load(asset("assets/img/pad_analog.tga").c_str());
-    g_pad_digital = launcher_texture_load(asset("assets/img/pad_digital.tga").c_str());
+    // Controller art comes from the active SystemProfile's ControllerSpec —
+    // never hardcoded console filenames in this common backend. Conventions:
+    // `image` is 24-bit TGA with a flat backdrop baked in -> keyed out so the
+    // pad art sits transparently on the panel; `image_analog`/`image_digital`
+    // (the optional PSX-style mode-swap pair) are 32-bit with real alpha ->
+    // the plain alpha-respecting loader, not colorkey.
+    {
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        const char* pad_img = (prof && prof->controller.image)
+                                ? prof->controller.image : "pad.tga";
+        g_pad = launcher_texture_load_colorkey(
+            asset((std::string("assets/img/") + pad_img).c_str()).c_str(), 24);
+        if (prof && prof->controller.image_analog)
+            g_pad_analog = launcher_texture_load(
+                asset((std::string("assets/img/") + prof->controller.image_analog).c_str()).c_str());
+        if (prof && prof->controller.image_digital)
+            g_pad_digital = launcher_texture_load(
+                asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
+    }
     g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
     g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
     g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());

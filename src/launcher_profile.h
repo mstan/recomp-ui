@@ -1,4 +1,4 @@
-// launcher_profile.h — per-system "variant profiles".
+// launcher_profile.h — per-system "variant profiles" (ABI apply dispatcher).
 //
 // A variant profile bundles a whole console's launcher identity as ONE unit so
 // theme, controller art, platform label, ROM noun, and capability set can never
@@ -15,19 +15,29 @@
 // This header only sets the DATA (theme name, platform, rom_noun, capability
 // flags); it never hardcodes a look into the core.
 //
-// Adding a new system = add one row here. Nothing else in the core changes.
+// Built-out consoles keep their apply row in their own unit under
+// src/consoles/<id>/<id>_profile.h (launcher_profile_apply_<id>() + the name
+// matcher) — this header just dispatches by name. Consoles still stubbed get
+// an identity-only row inline below until they are built out.
+//
+// Adding a new system = add src/consoles/<id>/ and one dispatch line here.
 
 #ifndef LAUNCHER_PROFILE_H
 #define LAUNCHER_PROFILE_H
 
 #include "recomp_launcher.h"
+#include "consoles/snes/snes_profile.h"
+#include "consoles/psx/psx_profile.h"
 #include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Case-insensitive first-two-chars match helper (avoids <ctype.h> in a header).
+// Case-insensitive exact-string match helper (avoids <ctype.h> in a header).
+// Kept for source compatibility with existing hosts/harnesses that call it
+// (e.g. proto_main.c); new per-console code uses lps_streq_ci
+// (launcher_system_types.h) / the launcher_console_is_<id>() matchers.
 static inline int lpr_is(const char* a, const char* b) {
     if (!a || !b) return 0;
     for (; *a && *b; ++a, ++b) {
@@ -46,34 +56,9 @@ static inline int lpr_is(const char* a, const char* b) {
 static inline int launcher_profile_apply(const char* name, RecompLauncherCGameInfo* gi) {
     if (!gi) return 0;
 
-    // --- PlayStation ---------------------------------------------------------
-    if (lpr_is(name, "psx") || lpr_is(name, "ps1") || lpr_is(name, "playstation")) {
-        gi->theme    = "psx";              // PlayStation blue, no CRT scanlines
-        gi->platform = "PLAYSTATION";
-        gi->rom_noun = "Disc";
-        // Controller: PSX has analog/digital pad modes + swapping DualShock art.
-        gi->pad_mode_supported  = 1;
-        gi->pad_mode_selectable = 1;       // per-game lock_mode may set this to 0
-        gi->allow_hybrid        = 1;
-        gi->aspect_mask         = 0x1;     // 4:3 always; game adds 16:9 (0x2) / 21:9 (0x4)
-        // Full PS1 settings surface.
-        gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 1;
-        gi->has_antialiasing = 1; gi->has_texture_filter = 1; gi->has_screen_kind = 1;
-        gi->has_frame_interp = 1; gi->has_spu_hq = 1; gi->has_skip_fmv = 1;
-        gi->has_turbo_loads = 1; gi->has_fullscreen_toggle = 1; gi->has_bios = 1;
-        gi->has_deadzone_pct = 1;
-        return 1;
-    }
-
-    // --- Super Nintendo ------------------------------------------------------
-    if (lpr_is(name, "snes") || lpr_is(name, "sfc") || lpr_is(name, "supernintendo")) {
-        gi->theme    = NULL;               // default CRT-console theme (violet + scanlines)
-        gi->platform = "SUPER NINTENDO";
-        gi->rom_noun = "ROM";
-        gi->widescreen_supported = 1;      // 16:9 toggle (legacy aspect path)
-        // (MSU-1 / SRAM are per-game; window scale + linear filter are the defaults.)
-        return 1;
-    }
+    // --- built-out consoles (rows live in src/consoles/<id>/) ----------------
+    if (launcher_console_is_psx(name))  { launcher_profile_apply_psx(gi);  return 1; }
+    if (launcher_console_is_snes(name)) { launcher_profile_apply_snes(gi); return 1; }
 
     // --- other systems: identity now, capabilities refined as each is built --
     if (lpr_is(name, "n64") || lpr_is(name, "nintendo64")) {

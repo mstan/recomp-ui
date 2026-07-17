@@ -60,6 +60,7 @@ function(recomp_target_launcher_ui TGT)
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
+        ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
         # not need to already compile these)
         ${RUI_SRC}/common/crc32.c
