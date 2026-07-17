@@ -41,6 +41,10 @@ typedef struct {
     const char* image_analog, *image_digital;       // optional mode-swap pair (PSX-style)
     int  max_players;                              // 1, 2 or 4
     int  has_pad_mode;                              // analog/digital selector offered
+    // Alternate bind slots per input the console's bind store keeps (N64's
+    // input.cfg format stores 2 — e.g. Z on both shoulder triggers). 0 (the
+    // trailing zero-fill of every older positional initializer) reads as 1.
+    int  binds_per_input;
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------

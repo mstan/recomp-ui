@@ -16,6 +16,17 @@
 extern "C" {
 #endif
 
+// Most controller ports any console in the ecosystem exposes (N64: 4).
+// Consoles with fewer players never touch the upper slots — hosts that
+// predate the widening only ever wrote [0]/[1], and their memset(0) leaves
+// the new slots in the same "none" state they had implicitly before. Every
+// consumer compiles this header from source (submodule pin), so the layout
+// change is absorbed by the consumer's normal rebuild on a pin bump.
+#define RECOMP_LAUNCHER_MAX_PLAYERS 4
+
+// N64 Transfer Pak slots — one per controller port.
+#define RECOMP_LAUNCHER_MAX_TPAKS 4
+
 // Plain-C mirror of the launcher's internal settings (bools as int).
 typedef struct RecompLauncherCSettings {
     int  output_method;     // 0 SDL, 1 SDL-software, 2 OpenGL
@@ -28,12 +39,12 @@ typedef struct RecompLauncherCSettings {
     int  enable_audio;      // bool
     int  audio_freq;        // Hz
     int  volume;            // 0..100
-    int  player_src[2];     // 0 none, 1 keyboard, 2 gamepad
-    int  deadzone[2];       // 0..100
+    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad
+    int  deadzone[RECOMP_LAUNCHER_MAX_PLAYERS];    // 0..100
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool
     char msu1_dir[512];
-    int  pad_mode[2];       // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital)
+    int  pad_mode[RECOMP_LAUNCHER_MAX_PLAYERS];    // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital)
     int  aspect_index;      // 0 = 4:3, 1 = 16:9, 2 = 21:9
 
     // ---- deeper PSX-style settings (capability-gated; see RecompLauncherCGameInfo
@@ -63,6 +74,24 @@ typedef struct RecompLauncherCSettings {
     // present). 0 = unset (host predates this field) -> the model defaults it
     // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
     int  memcard_enabled[2];
+
+    // ---- audio output device (GameInfo.audio_device_labels consoles) --------
+    // The chosen device's display name as enumerated by the HOST (SDL device
+    // names are stable across runs on the same machine, not across machines —
+    // exactly the contract the N64 SS Anne launcher's launcher.cfg used).
+    // "" = system default. Appended additively.
+    char audio_device[128];
+
+    // ---- N64 Transfer Pak slots (GameInfo.tpak_slots consoles) --------------
+    // Per controller port: the GB cartridge ROM inserted into that port's
+    // Transfer Pak, its battery-save file, and whether the pak responds at
+    // all. Mirrors the SS Anne launcher's per-player card set (launcher.cfg
+    // pN_rom/pN_save/pN_enabled). Empty rom path = no cartridge inserted.
+    // tpak_enabled: 0 = unset (host predates the field / fresh config) -> the
+    // model defaults a slot WITH a rom to enabled; use -1 for explicit off.
+    char tpak_rom_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
+    char tpak_save_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
+    int  tpak_enabled[RECOMP_LAUNCHER_MAX_TPAKS];
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -80,6 +109,21 @@ typedef struct RecompLauncherCMemcard {
     int           used_blocks;    // 0..15
     unsigned char block_used[15]; // per-block: 1 = occupied
 } RecompLauncherCMemcard;
+
+// One Transfer Pak slot's inspection result (filled by the tpak_inspect
+// callback below). The HOST owns all cartridge knowledge — header sniffing,
+// which Gen-1 charmap decodes the trainer name (ASCII for Stadium US, kana
+// for Pocket Monsters Stadium J), what the cart is called on screen — so the
+// launcher stays console-generic and just renders these facts.
+typedef struct RecompLauncherCTpak {
+    int  valid;             // recognized GB cartridge
+    char cart_label[96];    // display name, UTF-8 (kana ok; "" => show the file name)
+    char trainer_name[32];  // decoded save-file trainer name ("" = no/unreadable save)
+    char trainer_id[16];    // decoded trainer ID, ready to display ("" = none)
+    // Cartridge art tint drawn by the launcher's native cart glyph:
+    // 0 unknown/other (gray), 1 red, 2 blue, 3 yellow, 4 green.
+    int  cart_kind;
+} RecompLauncherCTpak;
 
 typedef struct RecompLauncherCGameInfo {
     const char*    name;
@@ -188,6 +232,42 @@ typedef struct RecompLauncherCGameInfo {
     const char* const* aspect_labels;
     int  num_aspect_labels;
     int  aspect_experimental;
+
+    /* ---- audio output device picker (N64/RT64 hosts) --------------------
+     * When num_audio_devices > 0, Settings->Audio grows an "Output device"
+     * dropdown over these HOST-enumerated display names (the host queries
+     * SDL_GetAudioDeviceName itself, pre-launcher, exactly as the SS Anne
+     * launcher did). The pick round-trips through Settings.audio_device by
+     * NAME; a "(system default)" row is always offered first and commits "".
+     * NULL/0 => no device row (every existing console unchanged). */
+    const char* const* audio_device_labels;
+    int  num_audio_devices;
+
+    /* ---- renderer vocabulary override ------------------------------------
+     * When set, the has_renderer cycle walks these 0..num_renderers-1 labels
+     * instead of the built-in Software/OpenGL pair — e.g. the RT64 hosts'
+     * {"Auto","Vulkan","D3D12"} graphics-API pick. Settings.renderer holds
+     * the committed index. NULL/0 => the legacy 2-value toggle. */
+    const char* const* renderer_labels;
+    int  num_renderers;
+
+    /* ---- N64 Transfer Pak (dashboard "tpak" panel) ------------------------
+     * tpak_slots (0..4): how many controller ports offer a Transfer Pak GB
+     * cartridge card. 0 => the panel never composes (Snap, Pikachu). Stadium
+     * passes 4. The launcher edits Settings.tpak_* (ROM/save paths + enabled)
+     * and calls tpak_inspect — the HOST's cartridge brain — on every change
+     * to refresh the card's label/trainer/tint facts. tpak_inspect may be
+     * NULL: cards then show file names with the neutral tint. */
+    int  tpak_slots;
+    int (*tpak_inspect)(const char* rom_path, const char* save_path,
+                        RecompLauncherCTpak* out);
+
+    /* ---- rebind-page opt-out ---------------------------------------------
+     * 1 = hide the keyboard/controller bindings grid on the Configure page
+     * (input source + deadzone remain). For games whose runtime consumes no
+     * bind file at all (PMS-J today) an editor that writes a file nothing
+     * reads would be a lying UI. 0 (default/memset) keeps the grid. */
+    int  hide_rebind;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

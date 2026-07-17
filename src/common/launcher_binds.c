@@ -5,6 +5,7 @@
 #include "keybinds.h"             // engine keyboard-binding store
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
+#include "consoles/n64/n64_binds.h"   // N64-native input.cfg bridge (kb+pad tables)
 
 #include <ctype.h>
 #include <stdio.h>
@@ -73,6 +74,28 @@ static const char* psx_keybinds_file_path(void) {
              ? g_launcher_keybinds_path : "keybinds.ini";
 }
 
+// ---- N64-native input.cfg bridge --------------------------------------------
+// Lives in consoles/n64/n64_binds.c. The N64 runners persist bindings in
+// their own input.cfg format — TWO device-type tables (keyboard, controller —
+// shared by all pads, NOT per-port) with two alternate slots per input, where
+// a controller bind can be a pad button, a signed pad axis, or a raw joystick
+// field. This file only decides WHICH store to use and, for N64, WHICH device
+// table a player edits: the one their current input source selects.
+static int is_n64_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && !strcmp(prof->id, "n64");
+}
+
+static const char* n64_binds_file_path(void) {
+    return (g_launcher_keybinds_path && g_launcher_keybinds_path[0])
+             ? g_launcher_keybinds_path : "input.cfg";
+}
+
+// Device table (0 kb / 1 pad) player p's Configure page edits.
+static int n64_device_for_player(const LauncherModel* m, int player /*0-based*/) {
+    return m->s.player_src[player] == 2 ? 1 : 0;
+}
+
 // The engine's config.ini [KeyMap] keys, in LngHotkey order.
 static const char* kHotkeyKey[LNG_HK_COUNT] = {
     "Fullscreen", "Reset", "Pause", "PauseDimmed", "Turbo",
@@ -100,12 +123,29 @@ static const char* scancode_label(SDL_Scancode sc) {
 
 static void reload_player_display(LauncherModel* m, int player) {
     if (is_psx_profile(m)) {
+        if (player > 2) return;   // PSX store is 2-player
         for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_psx_binds_get(
                          psx_keybinds_file_path(), player - 1, b)));
         return;
     }
+    if (is_n64_profile(m)) {
+        // Per-device-TYPE tables: every player assigned the same device kind
+        // shows (and edits) the same table — exactly the SS Anne contract.
+        const int dev = n64_device_for_player(m, player - 1);
+        for (int b = 0; b < LNG_N64_PAD_BUTTON_COUNT; ++b) {
+            int type = 0, id = -1;
+            rui_n64_binds_get(n64_binds_file_path(), dev, b, 0, &type, &id);
+            rui_n64_binds_label(type, id, m->binds[player - 1][b],
+                                sizeof(m->binds[player - 1][b]));
+            rui_n64_binds_get(n64_binds_file_path(), dev, b, 1, &type, &id);
+            rui_n64_binds_label(type, id, m->binds_alt[player - 1][b],
+                                sizeof(m->binds_alt[player - 1][b]));
+        }
+        return;
+    }
+    if (player > 2) return;   // generic keybinds.c store is 2-player
     int n = 0;
     const int* kb_index = active_kb_index(m, &n);
     for (int b = 0; b < n; ++b) {
@@ -272,15 +312,32 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
     g_launcher_keybinds_path = keybinds_path_in;
     if (is_psx_profile(m)) {
         rui_psx_binds_init(psx_keybinds_file_path());   // load/generate psx_keybinds.c-format keybinds.ini
+    } else if (is_n64_profile(m)) {
+        rui_n64_binds_init(n64_binds_file_path());      // load input.cfg (defaults if absent; never seeds the file)
     } else {
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
-    reload_player_display(m, 1);
-    reload_player_display(m, 2);
+    launcher_binds_refresh(m);
     reload_hotkey_display(m);
 }
 
+void launcher_binds_refresh(LauncherModel* m) {
+    for (int p = 1; p <= LNG_MAX_PLAYERS; ++p)
+        reload_player_display(m, p);
+}
+
+int launcher_binds_wants_pad_capture(const LauncherModel* m, int player) {
+    if (player < 1 || player > LNG_MAX_PLAYERS) return 0;
+    return is_n64_profile(m) && n64_device_for_player(m, player - 1) == 1;
+}
+
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {
+    if (is_n64_profile(m)) {
+        // Keyboard capture into the N64 store routes through the field API
+        // (slot 0) so there is exactly one write path for that store.
+        launcher_binds_set_field(m, player, b, 0, RUI_N64_FIELD_KEY, scancode);
+        return;
+    }
     if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
         if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
@@ -298,7 +355,26 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
              scancode_label((SDL_Scancode)scancode));
 }
 
+void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
+                              int type, int id) {
+    if (!is_n64_profile(m)) return;   // field binds exist only in the N64 store
+    if (player < 1 || player > LNG_MAX_PLAYERS) return;
+    if (b < 0 || b >= LNG_N64_PAD_BUTTON_COUNT) return;
+    const int dev = n64_device_for_player(m, player - 1);
+    rui_n64_binds_set(n64_binds_file_path(), dev, b, slot, type, id);
+    // The table is shared by every player on the same device kind — refresh
+    // ALL players' display strings, not just the one that captured.
+    launcher_binds_refresh(m);
+}
+
 void launcher_binds_reset_player(LauncherModel* m, int player) {
+    if (is_n64_profile(m)) {
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
+        rui_n64_binds_reset_device(n64_binds_file_path(),
+                                   n64_device_for_player(m, player - 1));
+        launcher_binds_refresh(m);
+        return;
+    }
     if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
         rui_psx_binds_reset(psx_keybinds_file_path(), player - 1);

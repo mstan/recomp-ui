@@ -875,6 +875,136 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     end_panel();
 }
 
+// ---- N64 Transfer Pak: one card per controller port -----------------------
+// Composes only for games whose GameInfo passes tpak_slots > 0 (the Stadium
+// titles) — the availability gate below keeps it off every other console/game.
+static const char* elide_left(const char* s, float max_w, char* out, size_t cap);  // fwd (defined below)
+
+int avail_tpak(const LauncherModel* m) { return m->tpak_slots > 0; }
+
+// GB-cartridge silhouette tinted by the host-reported cart kind, drawn native
+// (no per-game art files): body with the classic top shoulder step + a paler
+// label window. Neutral gray when the cart is unknown or absent.
+void draw_tpak_cart_glyph(int cart_kind, float w, float h, bool present) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImU32 body;
+    switch (present ? cart_kind : -1) {
+        case 1:  body = IM_COL32(199, 60, 52, 255);  break;  // red
+        case 2:  body = IM_COL32(58, 98, 198, 255);  break;  // blue
+        case 3:  body = IM_COL32(214, 178, 40, 255); break;  // yellow
+        case 4:  body = IM_COL32(58, 158, 74, 255);  break;  // green
+        case 0:  body = IM_COL32(128, 132, 138, 255); break; // recognized, no tint
+        default: body = IM_COL32(78, 82, 90, 255);   break;  // empty slot
+    }
+    const float step = h * 0.16f;
+    dl->AddRectFilled(ImVec2(p.x, p.y + step), ImVec2(p.x + w, p.y + h), body, px(3.0f));
+    dl->AddRectFilled(ImVec2(p.x + w * 0.10f, p.y), ImVec2(p.x + w * 0.74f, p.y + step + px(3.0f)),
+                      body, px(2.0f));
+    if (present) {
+        const ImU32 label = IM_COL32(230, 226, 212, 235);
+        dl->AddRectFilled(ImVec2(p.x + w * 0.16f, p.y + h * 0.36f),
+                          ImVec2(p.x + w * 0.84f, p.y + h * 0.84f), label, px(2.0f));
+    }
+    ImGui::Dummy(ImVec2(w, h));
+}
+
+static const char* rui_basename(const char* path) {
+    const char* base = path;
+    for (const char* q = path; *q; ++q)
+        if (*q == '/' || *q == '\\') base = q + 1;
+    return base;
+}
+
+void draw_tpak_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
+    char eb[24]; snprintf(eb, sizeof(eb), "TRANSFER PAK %d", slot + 1);
+    eyebrow(eb);
+
+    const bool has_cart  = m->s.tpak_rom_path[slot][0] != '\0';
+    const bool inspected = m->tpak_inspected[slot];
+    const RecompLauncherCTpak* info = &m->tpak_info[slot];
+
+    // cart glyph + cartridge/trainer facts share a row
+    draw_tpak_cart_glyph(inspected ? info->cart_kind : 0, px(40), px(40), has_cart);
+    ImGui::SameLine(0, px(10));
+    ImGui::BeginGroup();
+    if (!has_cart) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "(no cartridge)");
+    } else {
+        const char* label = (inspected && info->cart_label[0])
+                              ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
+        ImGui::TextUnformatted(label);
+        if (inspected && info->trainer_name[0]) {
+            if (info->trainer_id[0])
+                ImGui::TextColored(col(th.text_muted), "Trainer %s  \xC2\xB7  ID %s",
+                                   info->trainer_name, info->trainer_id);
+            else
+                ImGui::TextColored(col(th.text_muted), "Trainer %s", info->trainer_name);
+        } else {
+            ImGui::TextColored(col(th.text_muted), "No save data");
+        }
+    }
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0, px(4)));
+
+    // buttons: Insert/Change + Eject on one row; save picker + Enabled below
+    const float bh = px(28);
+    if (ImGui::Button(has_cart ? "Change" : "Insert...", ImVec2(px(86), bh))) {
+        static const char* kGbPatterns[] = { "*.gb", "*.gbc" };
+        char buf[512];
+        if (launcher_pick_file("Select Game Boy cartridge", kGbPatterns, 2,
+                               "Game Boy cartridge (.gb .gbc)", buf, sizeof(buf)))
+            launcher_model_set_tpak_rom(m, slot, buf);
+    }
+    if (has_cart) {
+        ImGui::SameLine(0, px(6));
+        if (ImGui::Button("Eject", ImVec2(px(58), bh)))
+            launcher_model_clear_tpak(m, slot);
+    }
+    if (has_cart) {
+        // battery-save row: elided path (or the runtime's default) + Browse
+        const float bw = px(30);
+        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+        if (avail < px(40)) avail = px(40);
+        const char* sv = m->s.tpak_save_path[slot][0]
+                           ? rui_basename(m->s.tpak_save_path[slot]) : "(default save)";
+        char elided[128]; elide_left(sv, avail, elided, sizeof(elided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button("...", ImVec2(bw, px(24)))) {
+            static const char* kSavPatterns[] = { "*.sav", "*.srm" };
+            char buf[512];
+            if (launcher_pick_file("Select battery save", kSavPatterns, 2,
+                                   "Battery save (.sav)", buf, sizeof(buf)))
+                launcher_model_set_tpak_save(m, slot, buf);
+        }
+        bool on = launcher_model_tpak_enabled(m, slot);
+        if (ImGui::Checkbox("Enabled", &on)) launcher_model_toggle_tpak(m, slot);
+    }
+}
+
+void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
+    // No outer card/eyebrow: the small per-port cards ARE the UI, laid out in
+    // one full-width row (4 ports side by side), same pattern as the PSX
+    // memory-card row.
+    const int slots = m->tpak_slots;
+    const float gap = px(th->spacing_sm);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float cw = (avail - gap * (slots - 1)) / (float)slots;
+    static const char* kCid[RECOMP_LAUNCHER_MAX_TPAKS] = { "tpc0", "tpc1", "tpc2", "tpc3" };
+    static const char* kPid[RECOMP_LAUNCHER_MAX_TPAKS] = { "tpp0", "tpp1", "tpp2", "tpp3" };
+    for (int slot = 0; slot < slots; ++slot) {
+        if (slot) ImGui::SameLine(0, gap);
+        begin_container(kCid[slot], ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
+            if (begin_panel(kPid[slot], cw, false))
+                draw_tpak_slot(m, *th, slot);
+            end_panel();
+        end_container();
+    }
+}
+
 // PSX-style 3-way pad-mode selector: Hybrid / Analog / D-Pad segmented row.
 // Caller only draws this when pad_mode_supported && pad_mode_selectable (a
 // locked mode draws nothing — there's nothing to pick). The Hybrid segment is
@@ -982,19 +1112,25 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 }
 
 // Lays out the player cards: one card for a 1-player game, two side-by-side
-// for a 2-player game. Driven by the model, never hardcoded.
+// for a 2-player game, a 2x2 grid for a 4-port console (N64). Driven by the
+// model, never hardcoded.
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
-    const int   n   = (m->player_count >= 2) ? 2 : 1;
+    int n = m->player_count;
+    if (n < 1) n = 1;
+    if (n > LNG_MAX_PLAYERS) n = LNG_MAX_PLAYERS;
     const float gap = px(th.spacing_md);
     const float availw = ImGui::GetContentRegionAvail().x;
     // A 2P game splits the row; a 1P game gets ONE card of the same size rather
-    // than a full-width card with a lone pad floating in it.
+    // than a full-width card with a lone pad floating in it. 3-4 players wrap
+    // into rows of two same-size cards.
     float cardw = (availw - gap) * 0.5f;
     if (n == 1 && cardw < px(300.0f)) cardw = availw;   // narrow window: fill
+    static const char* kCardIds[LNG_MAX_PLAYERS] = { "pc0", "pc1", "pc2", "pc3" };
     for (int p = 0; p < n; ++p) {
-        if (p) ImGui::SameLine(0, gap);
-        begin_container(p ? "pc1" : "pc0", ImVec2(cardw, 0), ImGuiChildFlags_AutoResizeY);
+        if (p & 1) ImGui::SameLine(0, gap);
+        else if (p) ImGui::Dummy(ImVec2(0, gap));   // new row of cards
+        begin_container(kCardIds[p], ImVec2(cardw, 0), ImGuiChildFlags_AutoResizeY);
         draw_player_panel(m, th, p, cardw);
         end_container();
     }
@@ -1015,16 +1151,17 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
     const LauncherPanel* game_p = find_composed(prof->panels_dashboard, "game", m);
     const LauncherPanel* ctrl_p = find_composed(prof->panels_dashboard, "controller", m);
     const LauncherPanel* save_p = find_composed(prof->panels_dashboard, "save", m);
+    const LauncherPanel* tpak_p = find_composed(prof->panels_dashboard, "tpak", m);
 
     if (logical_w >= 820) {
         const float gap = px(th.spacing_md);
-        // When a WIDE panel (save) follows this row, the columns must hug
+        // When a WIDE panel (save/tpak) follows this row, the columns must hug
         // their own content (AutoResizeY) instead of stretching to fill the
         // whole scrollable "body" — otherwise there's never any room left
         // below them and the WIDE panel silently draws off the bottom edge.
         // SNES's composition never lists "save" here (save_p == nullptr), so
         // it keeps the original fill-to-height columns byte-identical.
-        const bool hug = (save_p != nullptr);
+        const bool hug = (save_p != nullptr) || (tpak_p != nullptr);
         const ImGuiChildFlags col_flags = hug ? ImGuiChildFlags_AutoResizeY : ImGuiChildFlags_None;
         // Art-led left column sized to the box art; side column takes the rest.
         if (game_p) {
@@ -1051,12 +1188,19 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
                 }
             end_container();
         }
+        // Transfer Pak: a genuinely FULL-WIDTH row under both columns — four
+        // per-port cards need the whole window, not the side column.
+        if (tpak_p) {
+            ImGui::Dummy(ImVec2(0, gap));
+            tpak_p->draw(m, &th);
+        }
     } else {
         if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
         if (game_p && ctrl_p) ImGui::Spacing();
         if (ctrl_p) ctrl_p->draw(m, &th);
         // Narrow single-column layout: memcards stack under the controller.
         if (save_p) { ImGui::Spacing(); save_p->draw(m, &th); }
+        if (tpak_p) { ImGui::Spacing(); tpak_p->draw(m, &th); }
     }
 }
 
@@ -1250,6 +1394,25 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     int dv = 0; stepper("vol", m->s.volume, "%", &dv);
     if (dv) launcher_model_volume_delta(m, dv);
 
+    // Output-device pick (host-enumerated names; N64/RT64 hosts) — "(system
+    // default)" first, committing "" so an unplugged device degrades sanely.
+    if (m->num_audio_devices > 0 && m->audio_device_labels) {
+        row_label("Output device", th, cw);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::BeginCombo("##audiodev", launcher_model_audio_device_label(m))) {
+            if (ImGui::Selectable("(system default)", m->s.audio_device[0] == '\0'))
+                launcher_model_set_audio_device(m, NULL);
+            for (int i = 0; i < m->num_audio_devices; ++i) {
+                const char* name = m->audio_device_labels[i];
+                if (!name || !name[0]) continue;
+                bool sel = strcmp(m->s.audio_device, name) == 0;
+                if (ImGui::Selectable(name, sel))
+                    launcher_model_set_audio_device(m, name);
+            }
+            ImGui::EndCombo();
+        }
+    }
+
     if (m->has_spu_hq) {
         row_label("High-quality SPU", th, cw);
         bool hq = m->s.spu_hq != 0;
@@ -1308,7 +1471,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
 // panel_video_draw, decided from the same "deep" predicate draw_settings used
 // to compute inline.
 void panel_audio_draw(LauncherModel* m, const LauncherTheme* th) {
-    const bool deep_audio = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
+    const bool deep_audio = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */
     if (deep_audio) {
         if (begin_panel("audio", 0, false)) draw_audio_controls(m, *th);
         end_panel();
@@ -1427,7 +1590,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float row_h = px(198.0f);   // legacy fixed band height
 
     const bool deep_display = any_deep_display(m);
-    const bool deep_audio   = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
+    const bool deep_audio   = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */
 
     const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
     const LauncherPanel* audio_p   = find_composed(prof->panels_settings, "audio", m);
@@ -1602,6 +1765,7 @@ const LauncherPanel kPanelRegistry[] = {
     { "game",              LNG_VIEW_DASHBOARD,  LNG_SLOT_MAIN, nullptr,      panel_game_draw },
     { "controller",        LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, nullptr,      panel_controller_draw },
     { "save",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_save,   panel_save_draw },
+    { "tpak",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_tpak,   panel_tpak_draw },
     { "video",             LNG_VIEW_SETTINGS,   LNG_SLOT_MAIN, nullptr,      panel_video_draw },
     { "audio",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, nullptr,      panel_audio_draw },
     { "system",            LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_system, panel_system_draw },

@@ -70,6 +70,11 @@ typedef enum {
 // headroom for future systems without another struct-layout change.
 #define LNG_MAX_BUTTONS 24
 
+// Upper bound on a SystemProfile's ControllerSpec.max_players — sizes the
+// per-player state below. Mirrors RECOMP_LAUNCHER_MAX_PLAYERS (the ABI
+// player-array width, recomp_launcher.h): N64 exposes 4 controller ports.
+#define LNG_MAX_PLAYERS RECOMP_LAUNCHER_MAX_PLAYERS
+
 // System hotkeys — mirrors the engine's config.ini [KeyMap] keys exactly, so
 // editing them here surgically rewrites the same lines config.c parses.
 typedef enum {
@@ -138,6 +143,31 @@ typedef struct {
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
+
+    // ---- N64 Transfer Pak (GameInfo.tpak_slots > 0 games) ------------------
+    // Per-slot facts refreshed via tpak_inspect_cb (the HOST's cartridge
+    // brain — see recomp_launcher.h) on init and on every ROM/save change.
+    // A NULL callback leaves tpak_inspected false and the card shows the
+    // bare file name with the neutral cartridge tint.
+    int  tpak_slots;                 // borrowed; 0 => "tpak" panel never composes
+    int (*tpak_inspect_cb)(const char* rom_path, const char* save_path,
+                           RecompLauncherCTpak* out);
+    RecompLauncherCTpak tpak_info[RECOMP_LAUNCHER_MAX_TPAKS];
+    bool tpak_inspected[RECOMP_LAUNCHER_MAX_TPAKS];
+
+    // ---- audio output device picker (GameInfo.audio_device_labels) --------
+    const char* const* audio_device_labels;   // borrowed; NULL/0 => no device row
+    int  num_audio_devices;
+
+    // ---- renderer vocabulary override (GameInfo.renderer_labels) ----------
+    // When set, launcher_model_toggle_renderer() cycles 0..num_renderers-1
+    // and launcher_model_renderer_label() speaks these labels instead of the
+    // built-in Software/OpenGL pair.
+    const char* const* renderer_labels;
+    int  num_renderers;
+
+    // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
+    bool hide_rebind;
     // Game-supplied aspect vocabulary (GameInfo.aspect_labels): when set,
     // the aspect cycle walks these 0..num_aspect_labels-1 instead of the
     // built-in 4:3/16:9/21:9 mask set; aspect_experimental tags the row.
@@ -218,20 +248,27 @@ typedef struct {
     // ---- transient UI state ----
     LngView   view;
     LngAction action;
-    int       cfg_player;            // 0/1 — which player the Controller view edits
+    int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
     // SDL_JoystickID; name is cached for display if the device disconnects.
-    uint32_t  player_pad_id[2];
-    char      player_pad_name[2][64];
+    uint32_t  player_pad_id[LNG_MAX_PLAYERS];
+    char      player_pad_name[LNG_MAX_PLAYERS][64];
 
     // rebind capture state machine
     bool      capturing;         // capturing a player button
     int       capture_btn;       // generic index into the active profile's ControllerSpec.buttons[] (0..button_count-1)
+    int       capture_slot;      // alternate-bind slot being captured (0 always;
+                                 // 1 only for consoles with two bind slots per
+                                 // input — N64's input.cfg format)
     bool      hk_capturing;      // capturing a system hotkey
     LngHotkey capture_hk;
-    char      binds[2][LNG_MAX_BUTTONS][32];  // per-player keyboard binding labels, indexed like capture_btn
+    // Per-player bind-label display strings, indexed like capture_btn.
+    // binds[] is slot 0 (the primary bind — every console); binds_alt[] is
+    // slot 1, filled only by bind bridges with two slots per input (N64).
+    char      binds[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
+    char      binds_alt[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
     char      hotkeys[LNG_HK_COUNT][32];    // [KeyMap] value strings, e.g. "Ctrl+R"
 } LauncherModel;
 
@@ -319,6 +356,27 @@ void launcher_model_toggle_memcard(LauncherModel* m, int slot);
 // no-op (path left untouched) if the format write fails.
 void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path);
 
+// ---- N64 Transfer Pak slots (tpak_slots only; no-op guarded by slot range) ----
+// Adopt a GB cartridge ROM for one port's Transfer Pak. Re-runs the host's
+// tpak_inspect_cb (when set) to refresh the card's label/trainer/tint facts,
+// and enables the slot (inserting a cart = wanting it on, the SS Anne rule).
+void launcher_model_set_tpak_rom(LauncherModel* m, int slot, const char* path);
+// Eject the cartridge (clears rom+save paths and the inspect facts).
+void launcher_model_clear_tpak(LauncherModel* m, int slot);
+// Point the slot at a different battery-save file; re-inspects.
+void launcher_model_set_tpak_save(LauncherModel* m, int slot, const char* path);
+// Enable/disable the pak on that port (a disabled pak reports absent).
+void launcher_model_toggle_tpak(LauncherModel* m, int slot);
+// True when the slot is enabled (resolves the tri-state tpak_enabled field:
+// >0 on, <0 off, 0 unset => on iff a cartridge is inserted).
+bool launcher_model_tpak_enabled(const LauncherModel* m, int slot);
+
+// ---- audio output device (num_audio_devices only) ----
+// Adopt a device by its host-enumerated display name; NULL/"" => system
+// default. The label helper renders the current pick for the dropdown.
+void launcher_model_set_audio_device(LauncherModel* m, const char* name);
+const char* launcher_model_audio_device_label(const LauncherModel* m);
+
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
@@ -356,6 +414,10 @@ void launcher_model_skip_cancel(LauncherModel* m);
 // (0..button_count-1) — NOT necessarily an LngButton value once the active
 // system isn't SNES-shaped (e.g. PSX has 16 buttons).
 void launcher_model_begin_capture(LauncherModel* m, int b);
+// Same, targeting an explicit alternate-bind slot (0/1). Plain
+// launcher_model_begin_capture() is slot 0. Only consoles whose bind bridge
+// stores two slots per input (N64) show slot-1 chips.
+void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);
