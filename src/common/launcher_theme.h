@@ -126,8 +126,34 @@ static inline LauncherTheme launcher_theme_gba(void) {
     return t;
 }
 
+// "Nintendo 64" theme. The 64-bit cartridge era, but a decade past the CRT
+// arcade look of the default: a neutral graphite ground (the charcoal N64
+// console plastic, deliberately NOT the blue/violet of the others), ONE
+// confident Nintendo red for brand + primary action, and NO scanlines (this
+// unit renders through RT64, a modern HLE GPU — a flat, clean panel, not a
+// faux-CRT). State colors (mint / amber / cyan) are unchanged. Same layout and
+// design language as the default; only the palette + scanline flag differ.
+static inline LauncherTheme launcher_theme_n64(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.075f, 0.078f, 0.086f, 1.0f); // #131417 graphite ink
+    t.background2     = lng_rgba(0.106f, 0.110f, 0.122f, 1.0f); // #1B1C1F lifted center
+    t.panel           = lng_rgba(0.098f, 0.102f, 0.114f, 1.0f); // #191A1D card
+    t.panel_hovered   = lng_rgba(0.145f, 0.153f, 0.169f, 1.0f); // #25272B
+    t.control         = lng_rgba(0.125f, 0.129f, 0.145f, 1.0f); // #202125 button
+    t.control_hovered = lng_rgba(0.176f, 0.184f, 0.204f, 1.0f); // #2D2F34
+    t.border          = lng_rgba(0.204f, 0.212f, 0.235f, 1.0f); // #34363C hairline
+    t.accent          = lng_rgba(0.878f, 0.227f, 0.184f, 1.0f); // #E03A2F Nintendo red
+    t.accent_dim      = lng_rgba(0.686f, 0.145f, 0.114f, 1.0f); // #AF251D pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.text            = lng_rgba(0.929f, 0.933f, 0.945f, 1.0f); // #EDEEF1 near-white
+    t.text_muted      = lng_rgba(0.541f, 0.557f, 0.596f, 1.0f); // #8A8E98 neutral grey
+    /* good/warn keep their semantic colors; focus stays cyan (reads on graphite). */
+    t.scanlines       = 0;                       // RT64 HLE GPU, not a CRT: flat
+    return t;
+}
+
 // Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
-// Advance; anything else -> default CRT).
+// Advance, "n64" -> Nintendo 64; anything else -> default CRT).
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
@@ -136,6 +162,8 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'b' || name[1] == 'B') &&
         (name[2] == 'a' || name[2] == 'A'))
         return launcher_theme_gba();
+    if (name && (name[0] == 'n' || name[0] == 'N') && name[1] == '6' && name[2] == '4')
+        return launcher_theme_n64();
     return launcher_theme_default();
 }
 

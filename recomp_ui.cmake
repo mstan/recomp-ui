@@ -119,6 +119,12 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/psx/img/memcard.tga
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
                 ${RUI_ASSETS}/consoles/n64/img/pad_n64.tga
+                ${RUI_ASSETS}/consoles/n64/img/brand_n64.tga
+                ${RUI_ASSETS}/consoles/n64/img/cart_empty.tga
+                ${RUI_ASSETS}/consoles/n64/img/cart_red.tga
+                ${RUI_ASSETS}/consoles/n64/img/cart_blue.tga
+                ${RUI_ASSETS}/consoles/n64/img/cart_yellow.tga
+                ${RUI_ASSETS}/consoles/n64/img/cart_green.tga
                 $<TARGET_FILE_DIR:${TGT}>/assets/img/
         VERBATIM)
     # Per-console controller image: overrides the default pad.tga (e.g. a

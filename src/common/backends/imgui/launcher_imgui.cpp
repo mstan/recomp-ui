@@ -57,6 +57,10 @@ ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 const LauncherTheme* g_th = nullptr;
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
+// N64 Transfer Pak cartridge art, indexed by host cart_kind: [0] empty/unknown
+// (gray GB shell), [1] red, [2] blue, [3] yellow, [4] green. Loaded only for a
+// tpak game; real GB cart PNGs from the RmlUi launchers (assets/consoles/n64).
+LauncherTexture g_cart[5];
 // Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
 // VerifyResult.verdict (0 none,1 ok,2 warn,3 bad); see draw_verdict_block().
 LauncherTexture g_verdict_ok, g_verdict_warn, g_verdict_bad, g_verdict_none;
@@ -897,31 +901,13 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
 
 int avail_tpak(const LauncherModel* m) { return m->tpak_slots > 0; }
 
-// GB-cartridge silhouette tinted by the host-reported cart kind, drawn native
-// (no per-game art files): body with the classic top shoulder step + a paler
-// label window. Neutral gray when the cart is unknown or absent.
-void draw_tpak_cart_glyph(int cart_kind, float w, float h, bool present) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    ImU32 body;
-    switch (present ? cart_kind : -1) {
-        case 1:  body = IM_COL32(199, 60, 52, 255);  break;  // red
-        case 2:  body = IM_COL32(58, 98, 198, 255);  break;  // blue
-        case 3:  body = IM_COL32(214, 178, 40, 255); break;  // yellow
-        case 4:  body = IM_COL32(58, 158, 74, 255);  break;  // green
-        case 0:  body = IM_COL32(128, 132, 138, 255); break; // recognized, no tint
-        default: body = IM_COL32(78, 82, 90, 255);   break;  // empty slot
-    }
-    const float step = h * 0.16f;
-    dl->AddRectFilled(ImVec2(p.x, p.y + step), ImVec2(p.x + w, p.y + h), body, px(3.0f));
-    dl->AddRectFilled(ImVec2(p.x + w * 0.10f, p.y), ImVec2(p.x + w * 0.74f, p.y + step + px(3.0f)),
-                      body, px(2.0f));
-    if (present) {
-        const ImU32 label = IM_COL32(230, 226, 212, 235);
-        dl->AddRectFilled(ImVec2(p.x + w * 0.16f, p.y + h * 0.36f),
-                          ImVec2(p.x + w * 0.84f, p.y + h * 0.84f), label, px(2.0f));
-    }
-    ImGui::Dummy(ImVec2(w, h));
+// Real GB-cartridge art for a Transfer Pak slot, picked by the host-reported
+// cart kind (1 red / 2 blue / 3 yellow / 4 green); the gray empty shell for an
+// empty slot or a recognized-but-uncolored cart. Falls back to a blank box if
+// the art didn't load. `box` is the logical fit size.
+void draw_tpak_cart(int cart_kind, bool present, float box) {
+    const int idx = (present && cart_kind >= 1 && cart_kind <= 4) ? cart_kind : 0;
+    image_fit(g_cart[idx], box, box);   // image_fit Dummies when the texture is absent
 }
 
 static const char* rui_basename(const char* path) {
@@ -939,13 +925,13 @@ void draw_tpak_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     const bool inspected = m->tpak_inspected[slot];
     const RecompLauncherCTpak* info = &m->tpak_info[slot];
 
-    // cart glyph + cartridge/trainer facts share a row
-    draw_tpak_cart_glyph(inspected ? info->cart_kind : 0, px(40), px(40), has_cart);
-    ImGui::SameLine(0, px(10));
+    // real GB cartridge art + cartridge/trainer facts share a row
+    draw_tpak_cart(inspected ? info->cart_kind : 0, has_cart, 58);
+    ImGui::SameLine(0, px(12));
     ImGui::BeginGroup();
     if (!has_cart) {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text_muted), "(no cartridge)");
+        ImGui::TextColored(col(th.text_muted), "(empty slot)");
     } else {
         const char* label = (inspected && info->cart_label[0])
                               ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
@@ -961,42 +947,36 @@ void draw_tpak_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         }
     }
     ImGui::EndGroup();
-    ImGui::Dummy(ImVec2(0, px(4)));
+    ImGui::Dummy(ImVec2(0, px(8)));
 
-    // buttons: Insert/Change + Eject on one row; save picker + Enabled below
-    const float bh = px(28);
-    if (ImGui::Button(has_cart ? "Change" : "Insert...", ImVec2(px(86), bh))) {
+    // One action per slot: "Change" opens the GB picker (also how an empty slot
+    // gets its first cart) — full card width, no separate Insert/Eject/Enabled
+    // (an inserted cart IS an enabled Pak; clearing is "Change" to nothing).
+    if (ImGui::Button("Change", ImVec2(ImGui::GetContentRegionAvail().x, px(30)))) {
         static const char* kGbPatterns[] = { "*.gb", "*.gbc" };
         char buf[512];
         if (launcher_pick_file("Select Game Boy cartridge", kGbPatterns, 2,
                                "Game Boy cartridge (.gb .gbc)", buf, sizeof(buf)))
             launcher_model_set_tpak_rom(m, slot, buf);
     }
+
+    // Battery-save row (only with a cart inserted): its own two lines so nothing
+    // crowds — "Save: <file|Default>" then a full-width Browse button.
     if (has_cart) {
-        ImGui::SameLine(0, px(6));
-        if (ImGui::Button("Eject", ImVec2(px(58), bh)))
-            launcher_model_clear_tpak(m, slot);
-    }
-    if (has_cart) {
-        // battery-save row: elided path (or the runtime's default) + Browse
-        const float bw = px(30);
-        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
-        if (avail < px(40)) avail = px(40);
+        ImGui::Dummy(ImVec2(0, px(4)));
         const char* sv = m->s.tpak_save_path[slot][0]
-                           ? rui_basename(m->s.tpak_save_path[slot]) : "(default save)";
-        char elided[128]; elide_left(sv, avail, elided, sizeof(elided));
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text_muted), "%s", elided);
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
-        if (ImGui::Button("...", ImVec2(bw, px(24)))) {
+                           ? rui_basename(m->s.tpak_save_path[slot]) : "Default";
+        char elided[128];
+        elide_left(sv, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Save: ").x,
+                   elided, sizeof(elided));
+        ImGui::TextColored(col(th.text_muted), "Save: %s", elided);
+        if (ImGui::Button("Browse save...", ImVec2(ImGui::GetContentRegionAvail().x, px(26)))) {
             static const char* kSavPatterns[] = { "*.sav", "*.srm" };
             char buf[512];
             if (launcher_pick_file("Select battery save", kSavPatterns, 2,
                                    "Battery save (.sav)", buf, sizeof(buf)))
                 launcher_model_set_tpak_save(m, slot, buf);
         }
-        bool on = launcher_model_tpak_enabled(m, slot);
-        if (ImGui::Checkbox("Enabled", &on)) launcher_model_toggle_tpak(m, slot);
     }
 }
 
@@ -2145,7 +2125,27 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_pad_digital = launcher_texture_load(
                 asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
     }
-    g_brand  = launcher_texture_load(asset("assets/img/brand_mark.tga").c_str());
+    // Header brand mark: the active SystemProfile's own (N64 -> the four-color
+    // logo), falling back to the shared recomp-ui mark for consoles that don't
+    // set one. Keeps the top-left mark matched to the system on screen.
+    {
+        const SystemProfile* bprof = (const SystemProfile*)m->profile;
+        const char* brand_file = (bprof && bprof->brand_image)
+                                   ? bprof->brand_image : "brand_mark.tga";
+        g_brand = launcher_texture_load(
+            asset((std::string("assets/img/") + brand_file).c_str()).c_str());
+    }
+    // Transfer Pak cartridge art (only a tpak game needs it): real GB cart PNGs
+    // keyed by cart_kind, empty shell at index 0 (see g_cart / draw_tpak_cart).
+    if (m->tpak_slots > 0) {
+        static const char* const kCartFiles[5] = {
+            "cart_empty.tga", "cart_red.tga", "cart_blue.tga",
+            "cart_yellow.tga", "cart_green.tga",
+        };
+        for (int i = 0; i < 5; ++i)
+            g_cart[i] = launcher_texture_load(
+                asset((std::string("assets/img/") + kCartFiles[i]).c_str()).c_str());
+    }
     g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
     g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());
     g_verdict_bad   = launcher_texture_load(asset("assets/img/verdict_bad.tga").c_str());
@@ -2224,6 +2224,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_verdict_bad);
     launcher_texture_free(&g_verdict_none);
     launcher_texture_free(&g_memcard);
+    for (int i = 0; i < 5; ++i) launcher_texture_free(&g_cart[i]);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();

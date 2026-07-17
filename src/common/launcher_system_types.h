@@ -106,6 +106,11 @@ typedef struct SystemProfile {
     // "Change ROM" native-dialog filter (per console). All-zero => the
     // built-in SNES default (back-compat); every built-out console sets it.
     RomFilterSpec rom_filter;
+    // Header brand mark (assets/img/<file>). NULL (the trailing zero-fill of
+    // every older positional initializer) => the generic recomp-ui mark
+    // "brand_mark.tga"; a console sets its own (N64: the four-color logo) so
+    // the top-left mark matches the active system, not a shared default.
+    const char* brand_image;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

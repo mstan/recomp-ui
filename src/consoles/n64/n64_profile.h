@@ -59,7 +59,7 @@ static const char* const kN64RomPatterns[] = { "*.z64", "*.n64", "*.v64" };
 static const SystemProfile kSystemProfileN64 = {
     /* id       */ "n64",
     /* platform */ "NINTENDO 64",
-    /* theme    */ NULL,        // default CRT-console theme (it IS the CRT era)
+    /* theme    */ "n64",       // graphite + Nintendo-red, no CRT scanlines (RT64 era)
     /* rom_noun */ "ROM",
     /* controller */ {
         kN64PadButtons, LNG_N64_PAD_BUTTON_COUNT,
@@ -87,6 +87,7 @@ static const SystemProfile kSystemProfileN64 = {
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kN64RomPatterns, LNG_N64_ROM_PATTERN_COUNT,
                               "N64 ROM (.z64 .n64 .v64)" },
+    /* brand_image       */ "brand_n64.tga",   // four-color N64 mark, not the shared dots
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------
@@ -99,7 +100,7 @@ static inline int launcher_console_is_n64(const char* name) {
 // num_players, tpak_slots + tpak_inspect, audio_device_labels, hide_rebind,
 // widescreen_supported) are set by the host AFTER this.
 static inline void launcher_profile_apply_n64(RecompLauncherCGameInfo* gi) {
-    gi->theme    = NULL;               // CRT-console default
+    gi->theme    = "n64";              // graphite + Nintendo-red, no scanlines
     gi->platform = "NINTENDO 64";
     gi->rom_noun = "ROM";
     // The RT64-backed settings surface every N64 runner shares (the SS Anne
