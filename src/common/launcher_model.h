@@ -113,6 +113,21 @@ typedef struct {
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
     const char* sram_path;           // borrowed; NULL when the game has no SRAM
 
+    // ---- NES-style capabilities (borrowed from RecompLauncherCGameInfo) ----
+    bool        has_integer_scale;   // Integer-scale checkbox in Display settings
+    bool        hdpack_supported;    // HD-texture-pack toggle + folder picker
+    // Password/mantra save (e.g. Faxanadu): non-NULL path swaps the SAVES row
+    // for a password-text UI (read + edit-with-confirm of a 1-line file).
+    const char* password_save_path;
+    const char* password_save_label; // e.g. "Password" / "Mantra"; NULL => "Password"
+    char        password_text[128];  // current file contents (reloaded on init/commit)
+    // Light-gun (NES Zapper) game: controller pages add a Zapper block whose
+    // two switches persist to the engine's keybinds.ini [zapper] section via
+    // launcher_binds (surgical writes — the rest of the file is preserved).
+    bool        zapper;
+    bool        zapper_mouse;        // mouse acts as the light gun
+    bool        zapper_crosshair;    // draw a crosshair at the aim point
+
     // ---- PSX memory-card block usage (SAVE_MEMCARD; see launcher_system.h) ----
     // Per-slot bitmask over the 15 PS1 card blocks (bit i = block i occupied).
     // Populated by a SystemProfile's SaveSpec.probe hook (SaveProbeFn) once a
@@ -345,6 +360,19 @@ void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path);
 // ---- MSU-1 (only when msu1_supported) ----
 void launcher_model_toggle_msu1(LauncherModel* m);
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
+
+// ---- NES-style settings (capability-gated like the PSX deep set) ----
+void launcher_model_toggle_integer_scale(LauncherModel* m);   // gated has_integer_scale
+void launcher_model_toggle_hdpack(LauncherModel* m);          // gated hdpack_supported
+void launcher_model_set_hdpack_dir(LauncherModel* m, const char* dir);
+// Password/mantra save: reload m->password_text from password_save_path, and
+// commit new text back to it (single line; file created if absent).
+void launcher_model_password_reload(LauncherModel* m);
+void launcher_model_password_commit(LauncherModel* m, const char* text);
+// Zapper switches (gated m->zapper). Persist immediately through
+// launcher_binds' [zapper] section writer, mirroring how rebinds persist.
+void launcher_model_toggle_zapper_mouse(LauncherModel* m);
+void launcher_model_toggle_zapper_crosshair(LauncherModel* m);
 
 // ---- MSU-1 IPS auto-patching (dashboard GAME-panel "Patch ROM"/"Skip") ----
 // Apply msu1_patch_path onto the currently loaded (vanilla) ROM, writing

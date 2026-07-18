@@ -74,6 +74,7 @@ function(recomp_target_launcher_ui TGT)
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
+        ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
         ${RUI_SRC}/consoles/gb/gb_binds.c          # Game Boy-native keybinds.ini [controls] bridge
         # bundled engine helpers (recomp-ui is self-contained; the host does
@@ -163,6 +164,8 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/psx/img/pad_digital.tga
                 ${RUI_ASSETS}/consoles/psx/img/memcard.tga
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
+                ${RUI_ASSETS}/consoles/nes/img/pad_nes.tga
+                ${RUI_ASSETS}/consoles/nes/img/brand_nes.tga
                 ${RUI_ASSETS}/consoles/genesis/img/pad_genesis.tga
                 ${RUI_ASSETS}/consoles/genesis/img/brand_genesis.tga
                 ${RUI_ASSETS}/consoles/genesis/img/boxart_sonic1.tga

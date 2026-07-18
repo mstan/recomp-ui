@@ -112,6 +112,8 @@ static const SystemProfile kSystemProfileGb = {
     /* screen_kind_count */ LNG_GB_SCREEN_KIND_COUNT,
     /* rom_filter        */ { kGbRomPatterns, LNG_GB_ROM_PATTERN_COUNT,
                               "Game Boy ROM (.gb/.gbc)" },
+    /* renderer_labels   */ NULL,          // GL-only; no renderer toggle shown
+    /* hide_audio_freq   */ 0,             // AUDIO panel shows the (fixed) rate
     /* brand             */ "brand_gb.tga",
 };
 
@@ -136,6 +138,8 @@ static const SystemProfile kSystemProfileGbc = {
     /* screen_kind_count */ LNG_GB_SCREEN_KIND_COUNT,
     /* rom_filter        */ { kGbRomPatterns, LNG_GB_ROM_PATTERN_COUNT,
                               "Game Boy Color ROM (.gbc/.gb)" },
+    /* renderer_labels   */ NULL,          // GL-only; no renderer toggle shown
+    /* hide_audio_freq   */ 0,             // AUDIO panel shows the (fixed) rate
     /* brand             */ "brand_gbc.tga",
 };
 

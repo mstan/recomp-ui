@@ -591,6 +591,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         float reserve = px(198.0f);
         if (disc_verdict) reserve += px(96.0f);           // taller: icon+headline + 3-row checklist
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
+        if (m->password_save_path) reserve += px(96.0f); // password-save row (same footprint)
         if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
@@ -693,7 +694,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // Content lives in draw_save_row() (the Save module's shared row-drawer,
     // also used standalone by panel_save's own card — see below); folding it
     // in here, uncarded, is what preserves today's exact GAME-card layout.
-    if (m->saves_supported) {
+    if (m->saves_supported || m->password_save_path) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushStyleColor(ImGuiCol_Separator, col(th.border));
         ImGui::Separator();
@@ -708,6 +709,49 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 // Import/Clear. SAVE_SRAM and (until the block-grid UI lands) SAVE_MEMCARD
 // both render this same compact row: kind-switched data, one widget.
 void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
+    // Password/mantra save variant (e.g. Faxanadu): the row shows the current
+    // password text instead of a binary save file. Editable behind an Edit ->
+    // type -> Save confirm step, mirroring the RmlUi NES launcher's flow.
+    if (m->password_save_path) {
+        static bool s_pw_editing = false;
+        static char s_pw_buf[128];
+        const char* label = (m->password_save_label && m->password_save_label[0])
+                              ? m->password_save_label : "Password";
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::PopStyleColor();
+        // Value sits right after the label's actual end with comfortable
+        // padding — a RELATIVE gap, not an absolute column, so a wider label
+        // ("Password") never clips under the value regardless of row indent.
+        ImGui::SameLine(0.0f, px(th.spacing_lg));
+        const float bw = px(84);
+        if (!s_pw_editing) {
+            ImGui::AlignTextToFramePadding();
+            if (m->password_text[0]) ImGui::TextUnformatted(m->password_text);
+            else ImGui::TextColored(col(th.text_muted), "(Not set)");
+            ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+            if (ImGui::Button("Edit", ImVec2(bw, px(30)))) {
+                snprintf(s_pw_buf, sizeof(s_pw_buf), "%s", m->password_text);
+                s_pw_editing = true;
+            }
+        } else {
+            float avail = ImGui::GetContentRegionAvail().x - bw * 2 - px(th.spacing_sm) * 2;
+            if (avail < px(80)) avail = px(80);
+            ImGui::SetNextItemWidth(avail);
+            ImGui::InputText("##pwedit", s_pw_buf, sizeof(s_pw_buf));
+            ImGui::SameLine(0, px(th.spacing_sm));
+            if (ImGui::Button("Save", ImVec2(bw, px(30)))) {
+                launcher_model_password_commit(m, s_pw_buf);
+                s_pw_editing = false;
+            }
+            ImGui::SameLine(0, px(th.spacing_sm));
+            if (ImGui::Button("Cancel", ImVec2(bw, px(30))))
+                s_pw_editing = false;
+        }
+        if (!m->saves_supported) return;   // password-only game: no SRAM row below
+        ImGui::Dummy(ImVec2(0, px(4)));
+    }
     const char* sp = m->sram_path ? m->sram_path : "";
     const char* base = sp;
     for (const char* q = sp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
@@ -755,7 +799,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
         char buf[512];
         if (launcher_pick_file("Import SRAM save", kSramPatterns, 2,
-                               "SNES save (.srm .sav)", buf, sizeof(buf)))
+                               "Battery save (.srm .sav)", buf, sizeof(buf)))
             launcher_model_import_sram(m, buf);   // backs up existing to .bak, then copies in
     }
     ImGui::SameLine(0, px(th.spacing_sm));
@@ -1239,6 +1283,9 @@ bool any_deep_display(const LauncherModel* m) {
 // the fixed height (byte-identical to before this console existed).
 bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
+    // NES legacy-surface additions (Integer scaling row, HD texture pack block)
+    // add extra rows the fixed no_scroll band wasn't sized for.
+    if (m->has_integer_scale || m->hdpack_supported) return true;
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     return prof && prof->video.widescreen_cells &&
            m->widescreen_supported && m->s.widescreen != 0;
@@ -1258,13 +1305,19 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
 
     if (!any_deep_display(m)) {
-        // ---- legacy minimal surface (SNES etc.) — aligned label grid ----------
+        // ---- legacy minimal surface (SNES/NES etc.) — aligned label grid -------
         float cw = ImGui::CalcTextSize("Linear filtering").x;   // widest legacy label
         { float t = ImGui::CalcTextSize("Widescreen 16:9").x; if (t > cw) cw = t; }
+        if (m->has_integer_scale) { float t = ImGui::CalcTextSize("Integer scaling").x; if (t > cw) cw = t; }
         cw += px(18.0f);
         row_label("Window scale", th, cw);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
+        if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
+            row_label("Integer scaling", th, cw);
+            bool is = m->s.integer_scale != 0;
+            if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+        }
         row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
@@ -1287,6 +1340,28 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 if (d) launcher_model_ws_cells_delta(m, d);
             }
         }
+        // HD texture packs (NES module, Mesen hires.txt format): one line —
+        //   [x] HD texture pack   …folder tail   [Browse]
+        // Mirrors the MSU-1 row in Audio (same enable + folder pattern).
+        if (m->hdpack_supported) {
+            bool on = m->s.hdpack_enabled != 0;
+            if (ImGui::Checkbox("HD texture pack", &on))
+                launcher_model_toggle_hdpack(m);
+            const float bw = px(78);
+            ImGui::SameLine(0, px(14));
+            float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+            if (avail < px(50)) avail = px(50);
+            const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
+            char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(col(th.text_muted), "%s", elided);
+            ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+            if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+                char buf[512];
+                if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
+                    launcher_model_set_hdpack_dir(m, buf);
+            }
+        }
         return;
     }
 
@@ -1303,6 +1378,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Window scale", th);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
+    }
+
+    // NES module rows can appear on this branch too (has_renderer puts NES
+    // on the deep surface): integer scaling right under the window row,
+    // mirroring the legacy branch's ordering.
+    if (m->has_integer_scale) {
+        row_label("Integer scaling", th);
+        bool is = m->s.integer_scale != 0;
+        if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
     }
 
     if (m->has_renderer) {
@@ -1384,6 +1468,28 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         bool fs = m->s.fullscreen != 0;
         if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
     }
+
+    // HD texture packs (NES module) — same enable + folder row as the legacy
+    // branch renders; kept last, below the console-shape rows.
+    if (m->hdpack_supported) {
+        bool on = m->s.hdpack_enabled != 0;
+        if (ImGui::Checkbox("HD texture pack", &on))
+            launcher_model_toggle_hdpack(m);
+        const float bw = px(78);
+        ImGui::SameLine(0, px(14));
+        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+        if (avail < px(50)) avail = px(50);
+        const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
+        char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+            char buf[512];
+            if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
+                launcher_model_set_hdpack_dir(m, buf);
+        }
+    }
 }
 
 // Video/Display module (docs/ARCHITECTURE.md): base window-scale/fullscreen
@@ -1396,6 +1502,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 // row_h band with no_scroll (legacy minimal surface) — exactly the sizing
 // draw_settings used to pick inline, now co-located with its own content.
 void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
+    // video_card_grows() folds in NES's legacy-surface additions (Integer
+    // scaling row, HD texture pack block) alongside the deep/widescreen surfaces.
     if (video_card_grows(m)) {
         if (begin_panel("disp", 0, false)) draw_display_controls(m, *th);
         end_panel();
@@ -1412,9 +1520,14 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     float cw = ImGui::CalcTextSize("Sample rate").x;
     if (m->has_spu_hq) { float t = ImGui::CalcTextSize("High-quality SPU").x; if (t > cw) cw = t; }
     cw += px(18.0f);
-    row_label("Sample rate", th, cw);
-    if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
-        launcher_model_cycle_freq(m);
+    // Sample rate: hidden for consoles whose runtime has no audio-frequency
+    // setting (SystemProfile.hide_audio_freq — NES has Volume only).
+    const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
+    if (!audio_prof || !audio_prof->hide_audio_freq) {
+        row_label("Sample rate", th, cw);
+        if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
+            launcher_model_cycle_freq(m);
+    }
     row_label("Volume", th, cw);
     int dv = 0; stepper("vol", m->s.volume, "%", &dv);
     if (dv) launcher_model_volume_delta(m, dv);
@@ -1595,7 +1708,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
     const float row_h = px(198.0f);   // legacy fixed band height
 
-    const bool deep_display = video_card_grows(m);
+    const bool deep_display = video_card_grows(m);   // folds in NES + widescreen surfaces
     const bool deep_audio   = m->has_spu_hq || m->num_languages > 0;   /* deadzone moved to controller card */
 
     const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
@@ -1774,6 +1887,27 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button("Reset to Defaults")) launcher_binds_reset_player(m, m->cfg_player + 1);
         if (m->capturing) ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
     } end_panel();
+
+    // Zapper (light gun) block — NES Zapper games only (gi.zapper). The mouse
+    // is the gun on a PC: position aims, left click pulls the trigger. Both
+    // switches persist to keybinds.ini's [zapper] section immediately (same
+    // file the game's runtime reads; the rest of the file is preserved).
+    if (m->zapper) {
+        if (begin_panel("cfg_zapper", 0)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+            ImGui::TextUnformatted("ZAPPER (LIGHT GUN)");
+            ImGui::PopStyleColor(); ImGui::Spacing();
+            ImGui::TextColored(col(th.text_muted),
+                "The mouse is the Zapper: move to aim, left-click to fire.");
+            ImGui::Dummy(ImVec2(0, px(4)));
+            bool mouse = m->zapper_mouse;
+            if (ImGui::Checkbox("Mouse acts as the Zapper", &mouse))
+                launcher_model_toggle_zapper_mouse(m);
+            bool ch = m->zapper_crosshair;
+            if (ImGui::Checkbox("Show crosshair (hides the OS cursor)", &ch))
+                launcher_model_toggle_zapper_crosshair(m);
+        } end_panel();
+    }
 }
 
 void panel_controller_config_draw(LauncherModel* m, const LauncherTheme* th) {
@@ -1893,25 +2027,36 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
 
     // ---- Marquee header: brand · GAME TITLE · subtitle .......... [nav] ----
     ImVec2 hp = ImGui::GetCursorScreenPos();
-    // Vertically center the brand mark against the two-line title block (drop it
-    // down ~9px so it doesn't sit high against the first line).
+    // Vertically center the brand mark against the two-line title block (game
+    // title at 1.55x + platform at 1.0x). Computed from the mark's fitted height
+    // so a short wide mark (e.g. the NES "Nintendo" pill, ~4:1) sits centered
+    // between the two lines rather than hugging the first.
     float hdr_top = ImGui::GetCursorPosY();
-    // Brand slot: the shared default is a 44x33 square mark. A console that
-    // ships its OWN (typically wide) wordmark (SystemProfile.brand, e.g. the
-    // Genesis logo) draws it larger — sized to a target HEIGHT with proportional
-    // width — so the logo reads clearly. This shifts THIS console's title to the
-    // right but leaves every other console's header pixel-for-pixel unchanged
-    // (their brand box stays 44x33 and `own_brand` is false).
+    // Brand slot: the shared default is a 44x33 square mark. A console that ships
+    // its OWN (typically wide) wordmark (SystemProfile.brand — the NES "Nintendo"
+    // pill, the Genesis logo) draws it larger, sized to a target HEIGHT with
+    // proportional width, so the logo reads clearly. Every other console keeps the
+    // 44x33 box (own_brand false), pixel-for-pixel unchanged.
     const SystemProfile* hprof = (const SystemProfile*)m->profile;
     const bool own_brand = hprof && hprof->brand && hprof->brand[0];
-    float brand_w = 44.0f, brand_h = 33.0f, brand_drop = 9.0f;
+    float brand_w = 44.0f, brand_h = 33.0f;
     if (own_brand && g_brand.h > 0) {
         brand_h = 32.0f;
         brand_w = brand_h * (float)g_brand.w / (float)g_brand.h;   // preserve aspect
         if (brand_w > 130.0f) brand_w = 130.0f;                    // sane upper bound
-        brand_drop = 7.0f;
     }
-    ImGui::SetCursorPosY(hdr_top + px(brand_drop));
+    // Vertically center the mark against the two-line title block (game title at
+    // 1.55x + platform at 1.0x), from its fitted height, so a short wide mark
+    // sits centered between the two lines rather than hugging the first.
+    float line_h  = ImGui::GetTextLineHeight();
+    float block_h = line_h * 1.55f + ImGui::GetStyle().ItemSpacing.y + line_h;
+    float fit_h = px(brand_h);
+    if (g_brand.id && g_brand.w > 0 && g_brand.h > 0) {
+        float s = (px(brand_w) / g_brand.w < px(brand_h) / g_brand.h)
+                    ? px(brand_w) / (float)g_brand.w : px(brand_h) / (float)g_brand.h;
+        fit_h = g_brand.h * s;
+    }
+    ImGui::SetCursorPosY(hdr_top + (block_h - fit_h) * 0.5f);
     image_fit(g_brand, brand_w, brand_h); ImGui::SameLine(0, px(12));
     ImGui::SetCursorPosY(hdr_top);
     ImGui::BeginGroup();
@@ -2118,7 +2263,8 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_pad_digital = launcher_texture_load(
                 asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
     }
-    {   // per-console brand mark (SystemProfile.brand) or the shared default
+    {   // per-console brand mark (SystemProfile.brand — NES pill, Genesis logo)
+        // or the shared default swoosh.
         const SystemProfile* bprof = (const SystemProfile*)m->profile;
         const char* brand_img = (bprof && bprof->brand && bprof->brand[0])
                                     ? bprof->brand : "brand_mark.tga";

@@ -116,10 +116,18 @@ typedef struct SystemProfile {
     // "Change ROM" native-dialog filter (per console). All-zero => the
     // built-in SNES default (back-compat); every built-out console sets it.
     RomFilterSpec rom_filter;
+    // Renderer-toggle vocabulary for the has_renderer control: two labels
+    // indexed by Settings.renderer (0/1). NULL => the legacy PSX-era pair
+    // ("Software"/"OpenGL"). NES uses {"Accelerated","Software"} — its
+    // renderer value means SDL-accelerated vs SDL-software output.
+    const char* const* renderer_labels;
+    // 1 => hide the Sample-rate cycle in the AUDIO panel (the nesrecomp
+    // runner has no audio-frequency setting; only Volume). 0 = legacy (show).
+    int hide_audio_freq;
     // Per-console brand mark drawn in the header (top-left, next to the game
     // title). NULL => the shared default "brand_mark.tga"; a console sets this
-    // to ship its own logo (e.g. Genesis "brand_genesis.tga"). Appended last so
-    // existing positional profile rows zero-fill it to the default.
+    // to ship its own logo (NES "brand_nes.tga", Genesis "brand_genesis.tga").
+    // Appended last so existing positional profile rows zero-fill it.
     const char* brand;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 

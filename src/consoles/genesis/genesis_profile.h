@@ -105,6 +105,8 @@ static const SystemProfile kSystemProfileGenesis = {
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kGenesisRomPatterns, LNG_GENESIS_ROM_PATTERN_COUNT,
                               "Sega Genesis ROM (.bin/.md/.gen/.smd)" },
+    /* renderer_labels   */ NULL,    // legacy Software/OpenGL pair
+    /* hide_audio_freq   */ 0,       // Genesis shows the sample-rate cycle
     /* brand             */ "brand_genesis.tga",   // SEGA GENESIS wordmark (top-left header)
 };
 

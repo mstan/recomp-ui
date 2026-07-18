@@ -29,6 +29,7 @@
 #include "consoles/snes/snes_profile.h"
 #include "consoles/psx/psx_profile.h"
 #include "consoles/gba/gba_profile.h"
+#include "consoles/nes/nes_profile.h"
 #include "consoles/genesis/genesis_profile.h"
 #include "consoles/gb/gb_profile.h"
 #include <string.h>
@@ -63,6 +64,7 @@ static inline int launcher_profile_apply(const char* name, RecompLauncherCGameIn
     if (launcher_console_is_psx(name))  { launcher_profile_apply_psx(gi);  return 1; }
     if (launcher_console_is_snes(name)) { launcher_profile_apply_snes(gi); return 1; }
     if (launcher_console_is_gba(name))  { launcher_profile_apply_gba(gi);  return 1; }
+    if (launcher_console_is_nes(name))  { launcher_profile_apply_nes(gi);  return 1; }
     if (launcher_console_is_genesis(name)) { launcher_profile_apply_genesis(gi); return 1; }
     if (launcher_console_is_gbc(name))  { launcher_profile_apply_gbc(gi);  return 1; }
     if (launcher_console_is_gb(name))   { launcher_profile_apply_gb(gi);   return 1; }
@@ -70,9 +72,6 @@ static inline int launcher_profile_apply(const char* name, RecompLauncherCGameIn
     // --- other systems: identity now, capabilities refined as each is built --
     if (lpr_is(name, "n64") || lpr_is(name, "nintendo64")) {
         gi->theme = NULL; gi->platform = "NINTENDO 64"; gi->rom_noun = "ROM"; return 1;
-    }
-    if (lpr_is(name, "nes")) {
-        gi->theme = NULL; gi->platform = "NINTENDO"; gi->rom_noun = "ROM"; return 1;
     }
     if (lpr_is(name, "smsgg") || lpr_is(name, "sms") || lpr_is(name, "gg")) {
         gi->theme = NULL; gi->platform = "MASTER SYSTEM"; gi->rom_noun = "ROM"; return 1;
