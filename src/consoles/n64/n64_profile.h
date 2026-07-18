@@ -87,8 +87,10 @@ static const SystemProfile kSystemProfileN64 = {
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kN64RomPatterns, LNG_N64_ROM_PATTERN_COUNT,
                               "N64 ROM (.z64 .n64 .v64)" },
-    /* brand_image       */ "",                // no corner emblem — the wordmark leads
-    /* wordmark_image     */ "wordmark_n64.tga", // optional; absent => "NINTENDO 64" text
+    /* renderer_labels   */ NULL,              // hosts pass RT64 labels via ABI GameInfo
+    /* hide_audio_freq   */ 0,                 // N64 audio panel keeps the sample-rate cycle
+    /* brand             */ "",                // no corner emblem — the wordmark leads
+    /* wordmark_image    */ "wordmark_n64.tga", // optional; absent => "NINTENDO 64" text
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

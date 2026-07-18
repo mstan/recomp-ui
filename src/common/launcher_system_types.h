@@ -35,6 +35,15 @@ extern "C" {
 // ---- Controller module -------------------------------------------------------
 typedef struct { const char* label; int code; } ButtonDef;
 
+// A named pad MODE a console offers. `mode` is the value stored in
+// RecompLauncherCSettings.pad_mode[player]; `label` is the selector segment
+// text; `button_count` is how many LEADING entries of ControllerSpec.buttons[]
+// the rebind page shows in that mode (a Genesis 3-button pad has no X/Y/Z/Mode
+// rows). A profile that leaves ControllerSpec.modes NULL keeps the legacy
+// PSX-shaped selector (Hybrid/Analog/D-Pad, gated by allow_hybrid) with the
+// full button set in every mode — PSX itself is untouched by this concept.
+typedef struct { int mode; const char* label; int button_count; } PadModeDef;
+
 typedef struct {
     const ButtonDef* buttons; int button_count;   // per-system base set (rebind page)
     const char* image;                             // base pad art (fallback / no pad-mode)
@@ -45,6 +54,9 @@ typedef struct {
     // input.cfg format stores 2 — e.g. Z on both shoulder triggers). 0 (the
     // trailing zero-fill of every older positional initializer) reads as 1.
     int  binds_per_input;
+    // ---- appended additively (older positional initializers zero-fill) ----
+    const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
+    int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------
@@ -63,6 +75,8 @@ typedef struct {
     int linear_filter, widescreen;                  // SNES-ish legacy surface
     int renderer, supersampling, screen_kind, frame_interp, aspect, texture_filter,
         antialiasing, spu_hq, skip_fmv, turbo_loads, bios, deadzone; // PSX-ish deep surface
+    // appended additively (older positional initializers zero-fill):
+    int widescreen_cells;   // Genesis-ish: "extra cells per side" stepper shown while widescreen is on
 } VideoSpec;
 
 // ---- Verify module --------------------------------------------------------------
@@ -106,11 +120,21 @@ typedef struct SystemProfile {
     // "Change ROM" native-dialog filter (per console). All-zero => the
     // built-in SNES default (back-compat); every built-out console sets it.
     RomFilterSpec rom_filter;
-    // Header brand mark (assets/img/<file>). NULL (the trailing zero-fill of
-    // every older positional initializer) => the generic recomp-ui mark
-    // "brand_mark.tga"; a console sets its own (N64: the four-color logo) so
-    // the top-left mark matches the active system, not a shared default.
-    const char* brand_image;
+    // Renderer-toggle vocabulary for the has_renderer control: two labels
+    // indexed by Settings.renderer (0/1). NULL => the legacy PSX-era pair
+    // ("Software"/"OpenGL"). NES uses {"Accelerated","Software"} — its
+    // renderer value means SDL-accelerated vs SDL-software output.
+    const char* const* renderer_labels;
+    // 1 => hide the Sample-rate cycle in the AUDIO panel (the nesrecomp
+    // runner has no audio-frequency setting; only Volume). 0 = legacy (show).
+    int hide_audio_freq;
+    // Per-console brand mark drawn in the header (top-left, next to the game
+    // title). NULL => the shared default "brand_mark.tga"; a console sets this
+    // to ship its own logo (NES "brand_nes.tga", Genesis "brand_genesis.tga").
+    // The N64 profile sets this to an EMPTY STRING "" to draw NO corner emblem
+    // (header title starts flush-left). Appended so existing positional
+    // profile rows zero-fill it.
+    const char* brand;
     // Optional platform WORDMARK image (assets/img/<file>) rendered in the
     // header in place of the plain `platform` TEXT when the file is present.
     // NULL => always text. The file is NOT shipped by recomp-ui (a console's

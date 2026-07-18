@@ -53,6 +53,22 @@ void launcher_binds_refresh(LauncherModel* m);
 // true only for the N64 store when that player's source is a gamepad.
 int launcher_binds_wants_pad_capture(const LauncherModel* m, int player);
 
+// Generic GAMEPAD-bind kind codes for launcher_binds_set_pad_button()'s `kind`
+// argument. Values mirror the engine's GamepadBindKind exactly (and equal the
+// console-native genesis_binds.h RUI_GEN_BIND_* — both anchored to the engine,
+// not to each other). The toolkit-agnostic backends use THESE so they need no
+// console-specific header.
+#define LNG_PADBIND_NONE   0
+#define LNG_PADBIND_BUTTON 1   // `code` = SDL_GameControllerButton
+#define LNG_PADBIND_AXIS   2   // `code` = SDL_GameControllerAxis, `axis_dir` = +1/-1
+
+// A player button's GAMEPAD bind was captured (has_pad_binds consoles only —
+// Genesis). kind/code/axis_dir use the LNG_PADBIND_* encoding above.
+// Persists through the console's native bridge and refreshes the model's
+// pad_binds display string. No-op on consoles without a pad-bind store.
+void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
+                                   int kind, int code, int axis_dir);
+
 // Reset one player's keyboard bindings to defaults and persist.
 // (N64: resets the whole device TABLE the player's source selects.)
 void launcher_binds_reset_player(LauncherModel* m, int player);
@@ -61,6 +77,20 @@ void launcher_binds_reset_player(LauncherModel* m, int player);
 // modifier mask; pass keycode==0 to UNBIND. Persists to config.ini [KeyMap]
 // and refreshes the model's display string.
 void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int kmod);
+
+// NES Zapper switches were toggled (mouse-as-gun / crosshair). Persists to
+// keybinds.ini [zapper] via the NES-native bridge's surgical writer; the
+// rest of the file is preserved. Meaningful only under an NES profile
+// (the model gates the UI on GameInfo.zapper).
+void launcher_binds_set_zapper(int mouse_enabled, int crosshair);
+
+// Surgically set "Key = value" inside [section] of `path`, preserving every
+// other line (comments, blank lines, unrelated sections). Creates the file
+// and/or section when absent. Shared by the config.ini [KeyMap] hotkey
+// writer and console units whose native bind files carry sections the
+// launcher doesn't own (consoles/nes/nes_binds.c).
+void launcher_ini_kv_write(const char* path, const char* section,
+                           const char* key, const char* value);
 
 // The config.ini path hotkeys are written to (NULL => default). Set once at load.
 extern const char* g_launcher_config_path;

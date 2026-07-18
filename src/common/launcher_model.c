@@ -82,6 +82,11 @@ void launcher_model_init(LauncherModel* m,
         m->msu1_patch_path      = game->msu1_patch_path;
         m->saves_supported      = game->sram_path != NULL;
         m->sram_path            = game->sram_path;
+        m->has_integer_scale    = game->has_integer_scale != 0;
+        m->hdpack_supported     = game->hdpack_supported != 0;
+        m->password_save_path   = game->password_save_path;
+        m->password_save_label  = game->password_save_label;
+        m->zapper               = game->zapper != 0;
         /* 0 = unset (caller predates the field) -> assume 2 players. */
         m->player_count         = game->num_players ? clampi(game->num_players, 1, LNG_MAX_PLAYERS) : 2;
         m->expected_crc         = game->expected_crc;
@@ -150,9 +155,19 @@ void launcher_model_init(LauncherModel* m,
 
     // ---- gate pad_mode per player ----
     if (m->pad_mode_supported) {
+        const SystemProfile* pm_prof = (const SystemProfile*)m->profile;
+        const ControllerSpec* pm_spec = pm_prof ? &pm_prof->controller : NULL;
         for (int p = 0; p < LNG_MAX_PLAYERS; ++p) {
             if (!m->pad_mode_selectable) {
                 m->s.pad_mode[p] = m->locked_pad_mode;
+            } else if (pm_spec && pm_spec->modes && pm_spec->mode_count > 0) {
+                // Custom mode list (Genesis 3-Button/6-Button): any listed
+                // mode value is valid; anything else snaps to the first
+                // listed mode. The Hybrid rule below is PSX-only semantics.
+                int ok = 0;
+                for (int i = 0; i < pm_spec->mode_count; ++i)
+                    if (pm_spec->modes[i].mode == m->s.pad_mode[p]) { ok = 1; break; }
+                if (!ok) m->s.pad_mode[p] = pm_spec->modes[0].mode;
             } else if (!m->allow_hybrid && m->s.pad_mode[p] == 0) {
                 m->s.pad_mode[p] = 1;   // snap Hybrid -> Analog
             }
@@ -226,10 +241,23 @@ void launcher_model_init(LauncherModel* m,
             m->s.mouse_sensitivity = clampf(m->s.mouse_sensitivity, 0.01f, 0.50f);
         }
     }
+    // ---- widescreen extra-cells (video.widescreen_cells consoles, e.g.
+    // Genesis): 0 = unset host -> the engine default of 8; else clamp 1..16. ----
+    {
+        const SystemProfile* ws_prof = (const SystemProfile*)m->profile;
+        if (ws_prof && ws_prof->video.widescreen_cells)
+            m->s.widescreen_cells = m->s.widescreen_cells
+                                      ? clampi(m->s.widescreen_cells, 1, 16) : 8;
+    }
 
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
     launcher_model_set_rom(m, initial_rom);
+
+    // Password/mantra save: read the current one-line password file so the
+    // SAVES row can show it. (Zapper switch state is loaded later by
+    // launcher_binds_load(), which owns the keybinds.ini path.)
+    launcher_model_password_reload(m);
 
     // Inspect both memory-card slots up front (real block usage/validity when a
     // host memcard_inspect callback is wired; no-op otherwise).
@@ -252,6 +280,8 @@ void launcher_model_init(LauncherModel* m,
             safe_copy(m->binds[0][b], sizeof(m->binds[0][b]),
                       b < LNG_BTN_COUNT ? kP1Defaults[b] : "(unbound)");
             safe_copy(m->binds[1][b], sizeof(m->binds[1][b]), "(unbound)");
+            safe_copy(m->pad_binds[0][b], sizeof(m->pad_binds[0][b]), "(unbound)");
+            safe_copy(m->pad_binds[1][b], sizeof(m->pad_binds[1][b]), "(unbound)");
         }
     }
     for (int h = 0; h < LNG_HK_COUNT; ++h)
@@ -410,6 +440,20 @@ void launcher_model_toggle_widescreen(LauncherModel* m) {
     m->s.widescreen = !m->s.widescreen;
 }
 
+void launcher_model_ws_cells_delta(LauncherModel* m, int delta) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (!prof || !prof->video.widescreen_cells) return;   // gated per console
+    int v = m->s.widescreen_cells ? m->s.widescreen_cells : 8;
+    m->s.widescreen_cells = clampi(v + delta, 1, 16);
+}
+
+const char* launcher_model_ws_cells_label(const LauncherModel* m) {
+    static char buf[16];
+    int v = m->s.widescreen_cells ? clampi(m->s.widescreen_cells, 1, 16) : 8;
+    snprintf(buf, sizeof(buf), "%d cells", v);
+    return buf;
+}
+
 bool launcher_model_aspect_offered(const LauncherModel* m, int index) {
     if (index == 0) return true;   // 4:3 is always implied/available
     if (index == 1) return (m->aspect_mask & 2) != 0;
@@ -488,6 +532,11 @@ const char* launcher_model_renderer_label(const LauncherModel* m) {
         int i = clampi(m->s.renderer, 0, m->num_renderers - 1);
         return m->renderer_labels[i];
     }
+    // Per-console vocabulary (SystemProfile.renderer_labels): NES says
+    // Accelerated/Software; NULL keeps the legacy PSX-era pair.
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->renderer_labels)
+        return prof->renderer_labels[m->s.renderer ? 1 : 0];
     return m->s.renderer ? "OpenGL" : "Software";
 }
 
@@ -763,6 +812,65 @@ void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir) {
     safe_copy(m->s.msu1_dir, sizeof(m->s.msu1_dir), dir ? dir : "");
 }
 
+// ---- NES-style settings ------------------------------------------------------
+
+void launcher_model_toggle_integer_scale(LauncherModel* m) {
+    if (!m->has_integer_scale) return;   // gated: no-op when unsupported
+    m->s.integer_scale = !m->s.integer_scale;
+}
+
+void launcher_model_toggle_hdpack(LauncherModel* m) {
+    if (!m->hdpack_supported) return;    // gated: no-op when unsupported
+    m->s.hdpack_enabled = !m->s.hdpack_enabled;
+}
+
+void launcher_model_set_hdpack_dir(LauncherModel* m, const char* dir) {
+    safe_copy(m->s.hdpack_dir, sizeof(m->s.hdpack_dir), dir ? dir : "");
+}
+
+// Password/mantra save: the file is one line of text (e.g. Faxanadu's mantra),
+// read/rewritten whole. Mirrors the RmlUi NES launcher's SAVES-panel variant.
+void launcher_model_password_reload(LauncherModel* m) {
+    m->password_text[0] = '\0';
+    if (!m->password_save_path || !m->password_save_path[0]) return;
+    FILE* f = fopen(m->password_save_path, "r");
+    if (!f) return;
+    if (fgets(m->password_text, sizeof(m->password_text), f)) {
+        size_t n = strlen(m->password_text);
+        while (n > 0 && (m->password_text[n-1] == '\n' || m->password_text[n-1] == '\r'))
+            m->password_text[--n] = '\0';
+    } else {
+        m->password_text[0] = '\0';
+    }
+    fclose(f);
+}
+
+void launcher_model_password_commit(LauncherModel* m, const char* text) {
+    if (!m->password_save_path || !m->password_save_path[0]) return;
+    FILE* f = fopen(m->password_save_path, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", text ? text : "");
+    fclose(f);
+    launcher_model_password_reload(m);   // reflect what actually landed on disk
+}
+
+// Zapper switches: flip the model state and persist through launcher_binds'
+// [zapper] section writer immediately (same persist-on-change behavior as the
+// rebind chips). launcher_binds_set_zapper is a no-op-safe plain writer.
+void launcher_binds_set_zapper(int mouse_enabled, int crosshair);   // launcher_binds.c
+
+void launcher_model_toggle_zapper_mouse(LauncherModel* m) {
+    if (!m->zapper) return;
+    m->zapper_mouse = !m->zapper_mouse;
+    launcher_binds_set_zapper(m->zapper_mouse ? 1 : 0, m->zapper_crosshair ? 1 : 0);
+}
+
+void launcher_model_toggle_zapper_crosshair(LauncherModel* m) {
+    if (!m->zapper) return;
+    m->zapper_crosshair = !m->zapper_crosshair;
+    launcher_binds_set_zapper(m->zapper_mouse ? 1 : 0, m->zapper_crosshair ? 1 : 0);
+}
+
 // ---- MSU-1 IPS auto-patching (mirrors the RmlUi launcher's do_patch() /
 // msu1_patch_available predicate in snesrecomp's launcher_gui.cpp) -----------
 
@@ -856,9 +964,33 @@ void launcher_model_skip_msu1_patch(LauncherModel* m) {
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
     if (!m->pad_mode_supported || !m->pad_mode_selectable) return;   // gated/locked
     player = clampi(player, 0, 1);
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const ControllerSpec* spec = prof ? &prof->controller : NULL;
+    if (spec && spec->modes && spec->mode_count > 0) {
+        // Custom mode list (Genesis): accept listed mode values only.
+        for (int i = 0; i < spec->mode_count; ++i)
+            if (spec->modes[i].mode == mode) { m->s.pad_mode[player] = mode; return; }
+        return;
+    }
     mode = clampi(mode, 0, 2);
     if (mode == 0 && !m->allow_hybrid) mode = 1;   // Hybrid hidden -> snap to Analog
     m->s.pad_mode[player] = mode;
+}
+
+int launcher_model_active_button_count(const LauncherModel* m, int player) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int bc = prof ? prof->controller.button_count : LNG_BTN_COUNT;
+    if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
+        player = clampi(player, 0, 1);
+        for (int i = 0; i < prof->controller.mode_count; ++i)
+            if (prof->controller.modes[i].mode == m->s.pad_mode[player]) {
+                bc = prof->controller.modes[i].button_count;
+                break;
+            }
+    }
+    if (bc > LNG_MAX_BUTTONS) bc = LNG_MAX_BUTTONS;
+    if (bc < 0) bc = 0;
+    return bc;
 }
 
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
@@ -939,8 +1071,19 @@ void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot) {
     m->capturing     = true;
     m->capture_btn   = b;
     m->capture_slot  = (slot == 1) ? 1 : 0;
+    m->hk_capturing = false;
+    m->capturing    = true;
+    m->capture_pad  = false;
+    m->capture_btn  = b;
 }
-void launcher_model_cancel_capture(LauncherModel* m) { m->capturing = false; }
+void launcher_model_begin_pad_capture(LauncherModel* m, int b) {
+    launcher_model_begin_capture(m, b);
+    if (m->capturing) m->capture_pad = true;   // begin_capture validated b
+}
+void launcher_model_cancel_capture(LauncherModel* m) {
+    m->capturing   = false;
+    m->capture_pad = false;
+}
 
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h) {
     if (h < 0 || h >= LNG_HK_COUNT) return;

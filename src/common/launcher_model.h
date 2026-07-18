@@ -118,6 +118,21 @@ typedef struct {
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
     const char* sram_path;           // borrowed; NULL when the game has no SRAM
 
+    // ---- NES-style capabilities (borrowed from RecompLauncherCGameInfo) ----
+    bool        has_integer_scale;   // Integer-scale checkbox in Display settings
+    bool        hdpack_supported;    // HD-texture-pack toggle + folder picker
+    // Password/mantra save (e.g. Faxanadu): non-NULL path swaps the SAVES row
+    // for a password-text UI (read + edit-with-confirm of a 1-line file).
+    const char* password_save_path;
+    const char* password_save_label; // e.g. "Password" / "Mantra"; NULL => "Password"
+    char        password_text[128];  // current file contents (reloaded on init/commit)
+    // Light-gun (NES Zapper) game: controller pages add a Zapper block whose
+    // two switches persist to the engine's keybinds.ini [zapper] section via
+    // launcher_binds (surgical writes — the rest of the file is preserved).
+    bool        zapper;
+    bool        zapper_mouse;        // mouse acts as the light gun
+    bool        zapper_crosshair;    // draw a crosshair at the aim point
+
     // ---- PSX memory-card block usage (SAVE_MEMCARD; see launcher_system.h) ----
     // Per-slot bitmask over the 15 PS1 card blocks (bit i = block i occupied).
     // Populated by a SystemProfile's SaveSpec.probe hook (SaveProbeFn) once a
@@ -269,6 +284,11 @@ typedef struct {
     int       capture_slot;      // alternate-bind slot being captured (0 always;
                                  // 1 only for consoles with two bind slots per
                                  // input — N64's input.cfg format)
+    // When capturing, whether the GAMEPAD bind (button/axis) is being captured
+    // instead of the keyboard scancode — only reachable on consoles whose
+    // ControllerSpec sets has_pad_binds (Genesis; the engine stores a gamepad
+    // button/axis bind per logical button alongside the keyboard scancode).
+    bool      capture_pad;
     bool      hk_capturing;      // capturing a system hotkey
     LngHotkey capture_hk;
     // Per-player bind-label display strings, indexed like capture_btn.
@@ -276,6 +296,10 @@ typedef struct {
     // slot 1, filled only by bind bridges with two slots per input (N64).
     char      binds[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
     char      binds_alt[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
+    // Per-player GAMEPAD binding labels (has_pad_binds consoles only; e.g.
+    // "dpup", "a", "leftx+", "(unbound)"). Parallel to binds[], filled by
+    // launcher_binds.c's per-console bridge alongside the keyboard labels.
+    char      pad_binds[LNG_MAX_PLAYERS][LNG_MAX_BUTTONS][32];
     char      hotkeys[LNG_HK_COUNT][32];    // [KeyMap] value strings, e.g. "Ctrl+R"
 } LauncherModel;
 
@@ -308,6 +332,20 @@ void launcher_model_open_config(LauncherModel* m, int player);  // -> Controller
 void launcher_model_cycle_scale(LauncherModel* m);   // 1..6 wrap
 void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
+
+// ---- widescreen extra cells (SystemProfile.video.widescreen_cells consoles,
+// e.g. Genesis: N extra 8-px background cells rendered per side while
+// widescreen is on). Clamped 1..16; no-op when the profile doesn't opt in. ----
+void launcher_model_ws_cells_delta(LauncherModel* m, int delta);
+const char* launcher_model_ws_cells_label(const LauncherModel* m);   // "8 cells"
+
+// ---- active rebind vocabulary size for one player -------------------------
+// The number of leading ControllerSpec.buttons[] entries the rebind page
+// shows for `player` right now: on a profile with a custom pad-mode list
+// (ControllerSpec.modes, e.g. Genesis 3-Button/6-Button) this follows the
+// player's CURRENT mode's button_count; otherwise it is the profile's full
+// button_count. Always <= LNG_MAX_BUTTONS.
+int launcher_model_active_button_count(const LauncherModel* m, int player);
 
 // ---- aspect ratio (PSX-style; only meaningful when aspect_mask != 0) ----
 // Cycle through the OFFERED aspects only (4:3 always offered; 16:9/21:9 per
@@ -388,6 +426,19 @@ const char* launcher_model_audio_device_label(const LauncherModel* m);
 void launcher_model_toggle_msu1(LauncherModel* m);
 void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
 
+// ---- NES-style settings (capability-gated like the PSX deep set) ----
+void launcher_model_toggle_integer_scale(LauncherModel* m);   // gated has_integer_scale
+void launcher_model_toggle_hdpack(LauncherModel* m);          // gated hdpack_supported
+void launcher_model_set_hdpack_dir(LauncherModel* m, const char* dir);
+// Password/mantra save: reload m->password_text from password_save_path, and
+// commit new text back to it (single line; file created if absent).
+void launcher_model_password_reload(LauncherModel* m);
+void launcher_model_password_commit(LauncherModel* m, const char* text);
+// Zapper switches (gated m->zapper). Persist immediately through
+// launcher_binds' [zapper] section writer, mirroring how rebinds persist.
+void launcher_model_toggle_zapper_mouse(LauncherModel* m);
+void launcher_model_toggle_zapper_crosshair(LauncherModel* m);
+
 // ---- MSU-1 IPS auto-patching (dashboard GAME-panel "Patch ROM"/"Skip") ----
 // Apply msu1_patch_path onto the currently loaded (vanilla) ROM, writing
 // "<stem>.msu1.<ext>" beside it, then adopt the patched file as the current
@@ -439,6 +490,10 @@ void launcher_model_begin_capture(LauncherModel* m, int b);
 // launcher_model_begin_capture() is slot 0. Only consoles whose bind bridge
 // stores two slots per input (N64) show slot-1 chips.
 void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot);
+// Begin capturing the GAMEPAD bind (button or axis) for button `b` instead of
+// a keyboard scancode. Only meaningful on has_pad_binds consoles (Genesis) —
+// the UI never offers it elsewhere; a stray call is harmless (Esc cancels).
+void launcher_model_begin_pad_capture(LauncherModel* m, int b);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);

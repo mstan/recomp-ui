@@ -49,6 +49,8 @@
 
 // button->name lookup
 #define SDL_GetGamepadStringForButton(b)  SDL_GameControllerGetStringForButton((SDL_GameControllerButton)(b))
+// axis->name lookup
+#define SDL_GetGamepadStringForAxis(a)    SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)(a))
 typedef SDL_GameControllerButton  LNG_GamepadButton;
 
 // key-modifier masks (SDL3 renamed KMOD_* -> SDL_KMOD_*)

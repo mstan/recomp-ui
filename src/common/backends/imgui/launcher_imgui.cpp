@@ -96,6 +96,10 @@ char        g_pick_buf[512] = {};    // ROM picker result
 // dashboard vs hug its content in the narrow stacked layout). Same pattern as
 // the other per-frame context globals below (g_th, g_pads).
 bool g_game_fill_h = false;
+// Same idea for the SAVE (memory-card) panel: the wide PSX dashboard sets this
+// so the memory-card card fills the right column down to the boxart column's
+// height (bottom-flush), while the narrow/stacked layout leaves it hugging.
+bool g_save_fill_h = false;
 
 // ---- panel registry lookup helper ------------------------------------------
 // Resolve `id` against a SystemProfile's NULL-terminated composition array:
@@ -435,6 +439,27 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta) {
     ImGui::PopID();
 }
 
+// ±1 stepper for the Genesis widescreen "extra cells per side" control. Unlike
+// the ±5 `stepper` above it reads its display string from the model
+// (launcher_model_ws_cells_label => "8 cells") so the clamp/format live in one
+// place, and it steps by a single cell.
+void ws_cells_stepper(const char* id, LauncherModel* m, int* out_delta) {
+    ImGui::PushID(id);
+    const float bh = px(30), fw = px(72);
+    if (ImGui::Button("-", ImVec2(px(32), bh))) *out_delta = -1;
+    ImGui::SameLine(0, px(6));
+    const char* buf = launcher_model_ws_cells_label(m);
+    float cx = ImGui::GetCursorPosX();
+    ImVec2 ts = ImGui::CalcTextSize(buf);
+    ImGui::SetCursorPosX(cx + (fw - ts.x) * 0.5f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(buf);
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPosX(cx + fw + px(6));
+    if (ImGui::Button("+", ImVec2(px(32), bh))) *out_delta = +1;
+    ImGui::PopID();
+}
+
 // "Label ......... [control]" row: label baseline-aligned to the control.
 // col_w > 0 reserves a FIXED label column so the control starts at the same x
 // on every row — the caller passes the widest label's width (+gap) to line all
@@ -603,6 +628,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         float reserve = px(198.0f);
         if (disc_verdict) reserve += px(96.0f);           // taller: icon+headline + 3-row checklist
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
+        if (m->password_save_path) reserve += px(96.0f); // password-save row (same footprint)
         if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
@@ -707,7 +733,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // Content lives in draw_save_row() (the Save module's shared row-drawer,
     // also used standalone by panel_save's own card — see below); folding it
     // in here, uncarded, is what preserves today's exact GAME-card layout.
-    if (m->saves_supported) {
+    if (m->saves_supported || m->password_save_path) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushStyleColor(ImGuiCol_Separator, col(th.border));
         ImGui::Separator();
@@ -722,6 +748,49 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 // Import/Clear. SAVE_SRAM and (until the block-grid UI lands) SAVE_MEMCARD
 // both render this same compact row: kind-switched data, one widget.
 void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
+    // Password/mantra save variant (e.g. Faxanadu): the row shows the current
+    // password text instead of a binary save file. Editable behind an Edit ->
+    // type -> Save confirm step, mirroring the RmlUi NES launcher's flow.
+    if (m->password_save_path) {
+        static bool s_pw_editing = false;
+        static char s_pw_buf[128];
+        const char* label = (m->password_save_label && m->password_save_label[0])
+                              ? m->password_save_label : "Password";
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::PopStyleColor();
+        // Value sits right after the label's actual end with comfortable
+        // padding — a RELATIVE gap, not an absolute column, so a wider label
+        // ("Password") never clips under the value regardless of row indent.
+        ImGui::SameLine(0.0f, px(th.spacing_lg));
+        const float bw = px(84);
+        if (!s_pw_editing) {
+            ImGui::AlignTextToFramePadding();
+            if (m->password_text[0]) ImGui::TextUnformatted(m->password_text);
+            else ImGui::TextColored(col(th.text_muted), "(Not set)");
+            ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+            if (ImGui::Button("Edit", ImVec2(bw, px(30)))) {
+                snprintf(s_pw_buf, sizeof(s_pw_buf), "%s", m->password_text);
+                s_pw_editing = true;
+            }
+        } else {
+            float avail = ImGui::GetContentRegionAvail().x - bw * 2 - px(th.spacing_sm) * 2;
+            if (avail < px(80)) avail = px(80);
+            ImGui::SetNextItemWidth(avail);
+            ImGui::InputText("##pwedit", s_pw_buf, sizeof(s_pw_buf));
+            ImGui::SameLine(0, px(th.spacing_sm));
+            if (ImGui::Button("Save", ImVec2(bw, px(30)))) {
+                launcher_model_password_commit(m, s_pw_buf);
+                s_pw_editing = false;
+            }
+            ImGui::SameLine(0, px(th.spacing_sm));
+            if (ImGui::Button("Cancel", ImVec2(bw, px(30))))
+                s_pw_editing = false;
+        }
+        if (!m->saves_supported) return;   // password-only game: no SRAM row below
+        ImGui::Dummy(ImVec2(0, px(4)));
+    }
     const char* sp = m->sram_path ? m->sram_path : "";
     const char* base = sp;
     for (const char* q = sp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
@@ -736,6 +805,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     if (sp[0]) { FILE* f = fopen(sp, "rb"); if (f) { fseek(f, 0, SEEK_END); sz = ftell(f); fclose(f); } }
     const bool has_save = sz >= 0;
 
+    const float bw = px(84);
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Save");
@@ -743,20 +813,32 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SameLine(px(76));
     ImGui::AlignTextToFramePadding();
     if (has_save) {
-        char lbl[160];
-        if (sz >= 1024) snprintf(lbl, sizeof lbl, "%s  (%.0f KB)", base, sz / 1024.0);
-        else            snprintf(lbl, sizeof lbl, "%s  (%ld B)", base, sz);
-        ImGui::TextUnformatted(lbl);
+        // Just the file name (no size annotation) — right-elided with "…" so a
+        // long name never runs under the Import/Clear buttons to its right.
+        const float buttons_w = bw * 2 + px(th.spacing_sm);
+        const float avail = ImGui::GetContentRegionAvail().x - buttons_w - px(th.spacing_md);
+        char shown[128];
+        snprintf(shown, sizeof shown, "%s", base);
+        if (avail > 0 && ImGui::CalcTextSize(shown).x > avail) {
+            size_t n = strlen(base);
+            while (n > 0) {
+                char tmp[132];
+                snprintf(tmp, sizeof tmp, "%.*s\xE2\x80\xA6", (int)n, base);  // "<head>…"
+                if (ImGui::CalcTextSize(tmp).x <= avail) { snprintf(shown, sizeof shown, "%s", tmp); break; }
+                --n;
+            }
+            if (n == 0) snprintf(shown, sizeof shown, "\xE2\x80\xA6");
+        }
+        ImGui::TextUnformatted(shown);
     } else {
         ImGui::TextColored(col(th.text_muted), "no save yet");
     }
-    const float bw = px(84);
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
     static const char* kSramPatterns[] = { "*.srm", "*.sav" };
     if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
         char buf[512];
         if (launcher_pick_file("Import SRAM save", kSramPatterns, 2,
-                               "SNES save (.srm .sav)", buf, sizeof(buf)))
+                               "Battery save (.srm .sav)", buf, sizeof(buf)))
             launcher_model_import_sram(m, buf);   // backs up existing to .bak, then copies in
     }
     ImGui::SameLine(0, px(th.spacing_sm));
@@ -792,38 +874,9 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
 
     const bool enabled = m->s.memcard_enabled[slot] != 0;
 
-    image_fit(g_memcard, 20, 20);
-    ImGui::SameLine(0, px(8));
-    ImGui::AlignTextToFramePadding();
-    const char* mp = m->s.memcard_path[slot];
-    const char* base = mp;
-    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
-    char label[40];
-    if (base[0]) snprintf(label, sizeof(label), "%s", base);
-    else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
-    ImGui::TextUnformatted(label);
-    ImGui::PopStyleColor();
-
-    // Per-slot Enable/Disable switch, right-aligned on the header row —
-    // mirrors the RmlUi launcher's `.switch`/`toggle_mc1`/`toggle_mc2` (a
-    // disabled slot is an empty SIO port once a host wires that up). The
-    // header stays full-strength; only the body below dims when disabled.
-    {
-        const char* tglabel = "Enabled";
-        const float tgw = ImGui::GetFrameHeight() + px(6.0f) + ImGui::CalcTextSize(tglabel).x;
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - tgw);
-        bool enabled_box = enabled;
-        if (ImGui::Checkbox(tglabel, &enabled_box))
-            launcher_model_toggle_memcard(m, slot);
-    }
-
-    // Dim the rest of the slot body when disabled (mirrors the RmlUi
-    // launcher's `.card-body.disabled { opacity: 0.4; }` — visual only, the
-    // Browse/New controls stay clickable so the slot can be re-configured
-    // while off).
-    const float body_alpha = enabled ? 1.0f : 0.4f;
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+    const float slotw   = ImGui::GetContentRegionAvail().x;
+    const float start_x = ImGui::GetCursorPosX();
+    const float top_y   = ImGui::GetCursorPosY();
 
     // Block usage source, most-authoritative first: a host memcard_inspect
     // callback (REAL card contents) → a card we just formatted blank (0) → a
@@ -839,17 +892,75 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         used = (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
-    // Block count sits right-aligned on its OWN row (the header row's right
-    // side is now the Enabled switch); the 15-block grid is its own
-    // full-width row below, with slightly larger cells.
-    char cap[20]; snprintf(cap, sizeof(cap), "%d / 15 blocks", used_count);
-    const float capw = ImGui::CalcTextSize(cap).x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - capw);
+
+    // --- Header: memory-card image on the LEFT; the Enabled toggle (top-right)
+    // and the card name + block count (under the toggle) on the RIGHT. The
+    // block grid + Browse/New sit BELOW the image, full width. ---
+    // Image is fit by height (memcard.tga is 148x164 portrait). In the
+    // fill-height (wide PSX) layout it grows to fill the card, reserving room
+    // below for the grid + buttons and capping its width to ~half the card so
+    // the right column keeps room for the toggle and name.
+    float img_h;
+    if (g_save_fill_h) {
+        const float avail_h = ImGui::GetContentRegionAvail().y;
+        img_h = avail_h - px(78.0f);                              // reserve grid + buttons
+        const float img_h_by_w = (0.50f * slotw) * (164.0f / 148.0f);  // cap width ~half
+        if (img_h > img_h_by_w) img_h = img_h_by_w;
+        if (img_h < px(92.0f))  img_h = px(92.0f);
+        if (img_h > px(200.0f)) img_h = px(200.0f);
+    } else {
+        img_h = px(108.0f);
+    }
+    float iw = img_h * (148.0f / 164.0f), ih = img_h;
+    if (g_memcard.w > 0 && g_memcard.h > 0) {
+        const float s = img_h / (float)g_memcard.h;
+        iw = g_memcard.w * s;
+        ImGui::Image(tid(g_memcard), ImVec2(iw, ih));
+    } else {
+        ImGui::Dummy(ImVec2(iw, ih));
+    }
+
+    const float rc_x    = start_x + iw + px(14.0f);   // right column x
+    const float frame_h = ImGui::GetFrameHeight();
+    const float line_h  = ImGui::GetTextLineHeight();
+
+    // Enabled toggle at the top of the right column — left-aligned at rc_x so
+    // it lines up vertically with the card name and block count below it.
+    {
+        ImGui::SetCursorPos(ImVec2(rc_x, top_y));
+        bool enabled_box = enabled;
+        if (ImGui::Checkbox("Enabled", &enabled_box))
+            launcher_model_toggle_memcard(m, slot);
+    }
+
+    // Card name, on its own line under the toggle.
+    const char* mp = m->s.memcard_path[slot];
+    const char* base = mp;
+    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    char label[40];
+    if (base[0]) snprintf(label, sizeof(label), "%s", base);
+    else         snprintf(label, sizeof(label), "Memory Card %d", slot + 1);
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+
+    // Block count under the name.
+    char cap[16]; snprintf(cap, sizeof(cap), "%d / 15", used_count);
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f) + line_h + px(6.0f)));
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::TextUnformatted(cap);
     ImGui::PopStyleColor();
 
-    ImGui::Dummy(ImVec2(0, px(6)));
+    // Resume the card body BELOW the image, full width.
+    ImGui::SetCursorPos(ImVec2(start_x, top_y + ih + px(10.0f)));
+
+    // Dim the rest of the slot body when disabled (visual only; the Browse/New
+    // controls stay clickable so the slot can be re-configured while off).
+    const float body_alpha = enabled ? 1.0f : 0.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+
+    // 15-block usage grid, full width under the image.
     {
         const int   kB   = 15;
         const float bgap = px(4.0f);
@@ -868,18 +979,27 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
     }
 
-    ImGui::Dummy(ImVec2(0, px(10)));
+    // Push the Browse/New buttons toward the bottom so a fill-height slot card
+    // (bottom-flush with the boxart column) doesn't strand them mid-card. In
+    // the hugging layout just leave the usual small gap.
     static const char* kCardPatterns[] = { "*.mcd", "*.mcr", "*.mc" };
     const float cw = ImGui::GetContentRegionAvail().x;
     const float bw = (cw - px(th.spacing_sm)) * 0.5f;
-    if (ImGui::Button("Browse", ImVec2(bw, px(32)))) {
+    const float btn_h = px(32.0f);
+    if (g_save_fill_h) {
+        const float slack = ImGui::GetContentRegionAvail().y - btn_h;
+        ImGui::Dummy(ImVec2(0, slack > px(10.0f) ? slack : px(10.0f)));
+    } else {
+        ImGui::Dummy(ImVec2(0, px(10.0f)));
+    }
+    if (ImGui::Button("Browse", ImVec2(bw, btn_h))) {
         char buf[512];
         if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
                                "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
             launcher_model_set_memcard_path(m, slot, buf);
     }
     ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button("New", ImVec2(bw, px(32)))) {
+    if (ImGui::Button("New", ImVec2(bw, btn_h))) {
         char buf[512];
         // "New" picks a DESTINATION (the file need not exist yet — a save
         // dialog, not the open dialog Browse uses), then writes a real,
@@ -918,16 +1038,25 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
         const float gap = px(th->spacing_sm);
         const float avail = ImGui::GetContentRegionAvail().x;
         const float cw = (avail - gap * (slots - 1)) / (float)slots;
+        // When the dashboard asks the SAVE panel to fill (wide PSX layout), the
+        // slot cards take the full remaining column height so their bottoms sit
+        // flush with the boxart card on the left. Only do it when there's real
+        // room; otherwise (narrow/stacked layout) hug the content as before.
+        const float fill_h = ImGui::GetContentRegionAvail().y;
+        const bool do_fill = g_save_fill_h && fill_h > px(180.0f);
+        g_save_fill_h = do_fill;   // draw_memcard_slot reads this for the bottom slack
         for (int slot = 0; slot < slots; ++slot) {
             if (slot) ImGui::SameLine(0, gap);
             char cid[16]; snprintf(cid, sizeof(cid), "mcc%d", slot);
             char pid[16]; snprintf(pid, sizeof(pid), "mcp%d", slot);
-            begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
-                if (begin_panel(pid, cw, false))
+            begin_container(cid, ImVec2(cw, do_fill ? fill_h : 0.0f),
+                            do_fill ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+                if (begin_panel(pid, cw, do_fill, do_fill))
                     draw_memcard_slot(m, *th, slot);
                 end_panel();
             end_container();
         }
+        g_save_fill_h = false;
         return;
     }
     if (!begin_panel("save", 0)) { end_panel(); return; }
@@ -1134,11 +1263,22 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
 // itself hidden when !allow_hybrid, matching the real RmlUi PSX launcher.
 void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     struct Seg { int mode; const char* label; };
-    Seg segs[3];
+    Seg segs[8];
     int n = 0;
-    if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
-    segs[n++] = { 1, "Analog" };
-    segs[n++] = { 2, "D-Pad" };
+    // A console with a custom pad-mode list (ControllerSpec.modes, e.g. Genesis
+    // 3-Button/6-Button) drives the segments from that list; otherwise the
+    // legacy PSX-shaped Hybrid/Analog/D-Pad set (Hybrid gated by allow_hybrid).
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
+        int mc = prof->controller.mode_count;
+        if (mc > (int)(sizeof(segs) / sizeof(segs[0]))) mc = (int)(sizeof(segs) / sizeof(segs[0]));
+        for (int i = 0; i < mc; ++i)
+            segs[n++] = { prof->controller.modes[i].mode, prof->controller.modes[i].label };
+    } else {
+        if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
+        segs[n++] = { 1, "Analog" };
+        segs[n++] = { 2, "D-Pad" };
+    }
 
     const float gap = px(4.0f);
     const float seg_w = (w - gap * (n - 1)) / n;
@@ -1204,11 +1344,14 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     const float cw    = inner;   // controls span the card => flush by construction
 
     // pad art centered in the card: PSX-style games swap analog/digital art
-    // with the mode; consoles without pad modes (SNES) always show the
-    // generic pad.tga.
+    // with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
+    // which has pad modes but a SINGLE pad image) always show the generic
+    // g_pad. The swap only happens when the profile actually ships the pair.
     {
-        const bool digital = m->pad_mode_supported && m->s.pad_mode[p] == 2;
-        const LauncherTexture& art = m->pad_mode_supported
+        const SystemProfile* aprof = (const SystemProfile*)m->profile;
+        const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
+        const bool digital = has_swap_art && m->s.pad_mode[p] == 2;
+        const LauncherTexture& art = has_swap_art
             ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
         // Center on the FITTED width so a near-square pad (N64) sits centered,
         // not left-shifted by the landscape box's spare width.
@@ -1302,32 +1445,66 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         // below them and the WIDE panel silently draws off the bottom edge.
         // SNES's composition never lists "save" here (save_p == nullptr), so
         // it keeps the original fill-to-height columns byte-identical.
-        const bool hug = (save_p != nullptr) || (tpak_p != nullptr);
-        const ImGuiChildFlags col_flags = hug ? ImGuiChildFlags_AutoResizeY : ImGuiChildFlags_None;
-        // Art-led left column sized to the box art; side column takes the rest.
-        if (game_p) {
-            g_game_fill_h = !hug;
-            begin_container("dash_l", ImVec2(px(400), 0), col_flags);
-            game_p->draw(m, &th);
-            end_container();
-        }
-
-        if (game_p && ctrl_p) ImGui::SameLine(0, gap);
-        if (ctrl_p) {
-            begin_container("dash_r", ImVec2(0, 0), col_flags);
-                // The side column stacks the controller card(s) and, directly
-                // beneath, the memory-card card at the SAME width as a controller
-                // card — so the user sees memcards without scrolling below the
-                // GAME card (they sit beside it, not under the whole row).
-                ctrl_p->draw(m, &th);
-                if (save_p) {
-                    // The memory-card panel spans the side column and lays its
-                    // small per-slot cards side by side (each ~a controller-card
-                    // width), so the row is short and sits under the controller.
-                    ImGui::Dummy(ImVec2(0, gap));
-                    save_p->draw(m, &th);
-                }
-            end_container();
+        const bool has_save = (save_p != nullptr);
+        const bool has_tpak = (tpak_p != nullptr);
+        if (has_save) {
+            // Hug-then-fill: the left column hugs the box art; the right column
+            // is made exactly as tall as it, so the controller card hugs at the
+            // top and the memory-card card fills the rest — its bottom sits
+            // flush with the box-art card on the left.
+            float left_h = 0.0f;
+            if (game_p) {
+                g_game_fill_h = false;
+                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
+                game_p->draw(m, &th);
+                end_container();
+                left_h = ImGui::GetItemRectSize().y;
+            }
+            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+            if (ctrl_p) {
+                begin_container("dash_r", ImVec2(0, left_h > 0.0f ? left_h : 0.0f),
+                                ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                    ctrl_p->draw(m, &th);
+                    if (save_p) {
+                        ImGui::Dummy(ImVec2(0, gap));
+                        g_save_fill_h = (left_h > 0.0f);
+                        save_p->draw(m, &th);
+                        g_save_fill_h = false;
+                    }
+                end_container();
+            }
+        } else if (has_tpak) {
+            // N64: no SRAM save panel, but a FULL-WIDTH Transfer Pak row follows
+            // below. Both columns must hug their own content (AutoResizeY) so
+            // there's room left underneath for that row — otherwise the tpak row
+            // draws off the bottom edge.
+            if (game_p) {
+                g_game_fill_h = false;
+                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
+                game_p->draw(m, &th);
+                end_container();
+            }
+            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+            if (ctrl_p) {
+                begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
+                    ctrl_p->draw(m, &th);
+                end_container();
+            }
+        } else {
+            // No WIDE save panel (SNES): original fill-to-height columns,
+            // byte-identical.
+            if (game_p) {
+                g_game_fill_h = true;
+                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_None);
+                game_p->draw(m, &th);
+                end_container();
+            }
+            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
+            if (ctrl_p) {
+                begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
+                    ctrl_p->draw(m, &th);
+                end_container();
+            }
         }
         // Transfer Pak: a genuinely FULL-WIDTH row under both columns — four
         // per-port cards need the whole window, not the side column.
@@ -1370,6 +1547,22 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_fullscreen_toggle;
 }
 
+// Whether the DISPLAY card should grow to fit its content (AutoResizeY) rather
+// than sit at the legacy fixed band height. True for the deep PSX surface, and
+// also for a console that renders the extra widescreen-cells row (Genesis) once
+// widescreen is on — that row is a 4th line the 3-row fixed height would clip.
+// Gated exactly like the row itself so the SNES legacy surface stays pinned to
+// the fixed height (byte-identical to before this console existed).
+bool video_card_grows(const LauncherModel* m) {
+    if (any_deep_display(m)) return true;
+    // NES legacy-surface additions (Integer scaling row, HD texture pack block)
+    // add extra rows the fixed no_scroll band wasn't sized for.
+    if (m->has_integer_scale || m->hdpack_supported) return true;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    return prof && prof->video.widescreen_cells &&
+           m->widescreen_supported && m->s.widescreen != 0;
+}
+
 // Inline amber "EXPERIMENTAL" tag, drawn on the same row right after a control
 // whose feature is not yet production-ready. Currently every SNES 16:9
 // widescreen path is experimental (per-game rendering still maturing), so the
@@ -1384,13 +1577,19 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
 
     if (!any_deep_display(m)) {
-        // ---- legacy minimal surface (SNES etc.) — aligned label grid ----------
+        // ---- legacy minimal surface (SNES/NES etc.) — aligned label grid -------
         float cw = ImGui::CalcTextSize("Linear filtering").x;   // widest legacy label
         { float t = ImGui::CalcTextSize("Widescreen 16:9").x; if (t > cw) cw = t; }
+        if (m->has_integer_scale) { float t = ImGui::CalcTextSize("Integer scaling").x; if (t > cw) cw = t; }
         cw += px(18.0f);
         row_label("Window scale", th, cw);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
+        if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
+            row_label("Integer scaling", th, cw);
+            bool is = m->s.integer_scale != 0;
+            if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+        }
         row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
@@ -1404,6 +1603,36 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
             experimental_tag(th);
+            // Genesis-style "extra cells per side" stepper: only when the
+            // console opts in (video.widescreen_cells) AND widescreen is on.
+            const SystemProfile* wprof = (const SystemProfile*)m->profile;
+            if (wprof && wprof->video.widescreen_cells && m->s.widescreen != 0) {
+                row_label("Extra cells / side", th, cw);
+                int d = 0; ws_cells_stepper("wscells", m, &d);
+                if (d) launcher_model_ws_cells_delta(m, d);
+            }
+        }
+        // HD texture packs (NES module, Mesen hires.txt format): one line —
+        //   [x] HD texture pack   …folder tail   [Browse]
+        // Mirrors the MSU-1 row in Audio (same enable + folder pattern).
+        if (m->hdpack_supported) {
+            bool on = m->s.hdpack_enabled != 0;
+            if (ImGui::Checkbox("HD texture pack", &on))
+                launcher_model_toggle_hdpack(m);
+            const float bw = px(78);
+            ImGui::SameLine(0, px(14));
+            float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+            if (avail < px(50)) avail = px(50);
+            const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
+            char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(col(th.text_muted), "%s", elided);
+            ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+            if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+                char buf[512];
+                if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
+                    launcher_model_set_hdpack_dir(m, buf);
+            }
         }
         return;
     }
@@ -1421,6 +1650,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Window scale", th);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
+    }
+
+    // NES module rows can appear on this branch too (has_renderer puts NES
+    // on the deep surface): integer scaling right under the window row,
+    // mirroring the legacy branch's ordering.
+    if (m->has_integer_scale) {
+        row_label("Integer scaling", th);
+        bool is = m->s.integer_scale != 0;
+        if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
     }
 
     if (m->has_renderer) {
@@ -1500,6 +1738,28 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         bool fs = m->s.fullscreen != 0;
         if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
     }
+
+    // HD texture packs (NES module) — same enable + folder row as the legacy
+    // branch renders; kept last, below the console-shape rows.
+    if (m->hdpack_supported) {
+        bool on = m->s.hdpack_enabled != 0;
+        if (ImGui::Checkbox("HD texture pack", &on))
+            launcher_model_toggle_hdpack(m);
+        const float bw = px(78);
+        ImGui::SameLine(0, px(14));
+        float avail = ImGui::GetContentRegionAvail().x - bw - px(th.spacing_sm);
+        if (avail < px(50)) avail = px(50);
+        const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
+        char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::Button("Browse", ImVec2(bw, px(30)))) {
+            char buf[512];
+            if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
+                launcher_model_set_hdpack_dir(m, buf);
+        }
+    }
 }
 
 // Video/Display module (docs/ARCHITECTURE.md): base window-scale/fullscreen
@@ -1512,7 +1772,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 // row_h band with no_scroll (legacy minimal surface) — exactly the sizing
 // draw_settings used to pick inline, now co-located with its own content.
 void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
-    if (any_deep_display(m)) {
+    // video_card_grows() folds in NES's legacy-surface additions (Integer
+    // scaling row, HD texture pack block) alongside the deep/widescreen surfaces.
+    if (video_card_grows(m)) {
         if (begin_panel("disp", 0, false)) draw_display_controls(m, *th);
         end_panel();
     } else {
@@ -1528,9 +1790,14 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     float cw = ImGui::CalcTextSize("Sample rate").x;
     if (m->has_spu_hq) { float t = ImGui::CalcTextSize("High-quality SPU").x; if (t > cw) cw = t; }
     cw += px(18.0f);
-    row_label("Sample rate", th, cw);
-    if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
-        launcher_model_cycle_freq(m);
+    // Sample rate: hidden for consoles whose runtime has no audio-frequency
+    // setting (SystemProfile.hide_audio_freq — NES has Volume only).
+    const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
+    if (!audio_prof || !audio_prof->hide_audio_freq) {
+        row_label("Sample rate", th, cw);
+        if (ImGui::Button(launcher_model_freq_label(m), ImVec2(px(120), px(30))))
+            launcher_model_cycle_freq(m);
+    }
     row_label("Volume", th, cw);
     int dv = 0; stepper("vol", m->s.volume, "%", &dv);
     if (dv) launcher_model_volume_delta(m, dv);
@@ -1730,7 +1997,7 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
     const float row_h = px(198.0f);   // legacy fixed band height
 
-    const bool deep_display = any_deep_display(m);
+    const bool deep_display = video_card_grows(m);   // superset of any_deep_display: folds in NES + widescreen (N64 covered too)
     const bool deep_audio   = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */
 
     const LauncherPanel* video_p   = find_composed(prof->panels_settings, "video", m);
@@ -1898,28 +2165,48 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // keep their behaviour byte-identical.
         if (bpi >= 2) launcher_binds_refresh(m);
 
+        // A pad-bind console (Genesis) offers a KEY chip AND a GAMEPAD chip per
+        // row — the RmlUi launcher's "Set key" / "Set pad" pair. Otherwise the
+        // grid is keyboard-only, exactly as before.
+        const bool has_pad = spec.has_pad_binds != 0;
+
         // When the player's source is a gamepad the N64 store captures pad
         // fields, not keys — reflect that in the card title and the capture
         // placeholder.
         const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
+
+        // Heading uses accent2 so each console's title tints in ITS logo colour
+        // (N64 blue; single-accent consoles set accent2 == accent).
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
-        else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+        if (has_pad)      ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
+        else if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
+        else              ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
+
+        // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
+        // X/Y/Z/Mode); non-mode systems get their full button_count.
+        const int nbtn = launcher_model_active_button_count(m, p);
 
         // Label column width is sized to the WIDEST label this system's spec
         // actually uses (e.g. PSX's "Triangle") instead of a constant tuned
         // for SNES's shorter names ("Select") — otherwise longer per-system
         // vocab overlaps the bind-chip button next to it.
         float label_col_w = px(70.0f);
-        for (int b = 0; b < spec.button_count; ++b) {
+        for (int b = 0; b < nbtn; ++b) {
             float w = ImGui::CalcTextSize(spec.buttons[b].label).x + px(20.0f);
             if (w > label_col_w) label_col_w = w;
         }
-        // Narrower chips when two sit side by side; the single-bind width and
-        // resulting cell_w stay exactly as before (bpi==1 -> label+170).
-        const float chip_w = bpi >= 2 ? px(120.0f) : px(160.0f);
-        const float cell_w = label_col_w + bpi * (chip_w + px(6.0f)) + px(4.0f);
+        // Two chips per row when either the N64 keeps two binds per input
+        // (bpi>=2) OR a pad-bind console pairs a KEY + GAMEPAD chip (has_pad);
+        // narrower chips then. Single-chip cells keep the wider chip AND the
+        // exact legacy cell width (label + 170) so non-pad/single-bind consoles
+        // (SNES/PSX/GBA) pack columns byte-identically to before this existed.
+        const bool two_chip = (bpi >= 2) || has_pad;
+        const float chip_w   = two_chip ? px(118.0f) : px(160.0f);
+        const float chip_gap = px(6.0f);
+        const float cell_w = two_chip
+            ? (label_col_w + chip_w + chip_gap + chip_w + px(16.0f))
+            : (label_col_w + px(170.0f));
         int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
         if (cols < 1) cols = 1;
         if (cols > 4) cols = 4;
@@ -1930,25 +2217,48 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
             for (int c = 0; c < cols; ++c)
                 ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
-            for (int b = 0; b < spec.button_count; ++b) {
+            for (int b = 0; b < nbtn; ++b) {
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
                 ImGui::SameLine(label_col_w);
-                for (int slot = 0; slot < bpi; ++slot) {
-                    if (slot) ImGui::SameLine();
-                    ImGui::PushID(slot);
-                    const bool cap = m->capturing && m->capture_btn == b
-                                                  && m->capture_slot == slot;
-                    const char* txt = cap
-                        ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
-                        : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
-                    if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                    if (ImGui::Button(txt, ImVec2(chip_w, 0)))
-                        launcher_model_begin_capture_slot(m, b, slot);
-                    if (cap) ImGui::PopStyleColor();
-                    ImGui::PopID();
+                if (bpi >= 2) {
+                    // N64: two chips per input (slot 0 primary, slot 1 alt); the
+                    // shared store captures a key or pad field per pad_cap.
+                    for (int slot = 0; slot < bpi; ++slot) {
+                        if (slot) ImGui::SameLine(0, chip_gap);
+                        ImGui::PushID(slot);
+                        const bool cap = m->capturing && m->capture_btn == b
+                                                      && m->capture_slot == slot;
+                        const char* txt = cap
+                            ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
+                            : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
+                        if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                        if (ImGui::Button(txt, ImVec2(chip_w, 0)))
+                            launcher_model_begin_capture_slot(m, b, slot);
+                        if (cap) ImGui::PopStyleColor();
+                        ImGui::PopID();
+                    }
+                } else {
+                    // KEY chip
+                    const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
+                    if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                    if (ImGui::Button(cap_key ? "[ press a key... ]" : m->binds[p][b], ImVec2(chip_w, 0)))
+                        launcher_model_begin_capture(m, b);
+                    if (cap_key) ImGui::PopStyleColor();
+                    // GAMEPAD chip (pad-bind consoles only: Genesis)
+                    if (has_pad) {
+                        ImGui::SameLine(0, chip_gap);
+                        ImGui::PushID("pad");
+                        const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
+                        const char* pl = m->pad_binds[p][b][0] ? m->pad_binds[p][b] : "(unbound)";
+                        if (cap_pad) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                        if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl, ImVec2(chip_w, 0)))
+                            launcher_model_begin_pad_capture(m, b);
+                        if (cap_pad) ImGui::PopStyleColor();
+                        ImGui::PopID();
+                    }
                 }
                 ImGui::PopID();
             }
@@ -1958,6 +2268,27 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button("Reset to Defaults")) launcher_binds_reset_player(m, m->cfg_player + 1);
         if (m->capturing) ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
     } end_panel();
+
+    // Zapper (light gun) block — NES Zapper games only (gi.zapper). The mouse
+    // is the gun on a PC: position aims, left click pulls the trigger. Both
+    // switches persist to keybinds.ini's [zapper] section immediately (same
+    // file the game's runtime reads; the rest of the file is preserved).
+    if (m->zapper) {
+        if (begin_panel("cfg_zapper", 0)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+            ImGui::TextUnformatted("ZAPPER (LIGHT GUN)");
+            ImGui::PopStyleColor(); ImGui::Spacing();
+            ImGui::TextColored(col(th.text_muted),
+                "The mouse is the Zapper: move to aim, left-click to fire.");
+            ImGui::Dummy(ImVec2(0, px(4)));
+            bool mouse = m->zapper_mouse;
+            if (ImGui::Checkbox("Mouse acts as the Zapper", &mouse))
+                launcher_model_toggle_zapper_mouse(m);
+            bool ch = m->zapper_crosshair;
+            if (ImGui::Checkbox("Show crosshair (hides the OS cursor)", &ch))
+                launcher_model_toggle_zapper_crosshair(m);
+        } end_panel();
+    }
 }
 
 void panel_controller_config_draw(LauncherModel* m, const LauncherTheme* th) {
@@ -2078,15 +2409,39 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
 
     // ---- Marquee header: brand · GAME TITLE · subtitle .......... [nav] ----
     ImVec2 hp = ImGui::GetCursorScreenPos();
-    // Vertically center the brand mark against the two-line title block (drop it
-    // down ~9px so it doesn't sit high against the first line).
+    // Vertically center the brand mark against the two-line title block (game
+    // title at 1.55x + platform at 1.0x). Computed from the mark's fitted height
+    // so a short wide mark (e.g. the NES "Nintendo" pill, ~4:1) sits centered
+    // between the two lines rather than hugging the first.
     float hdr_top = ImGui::GetCursorPosY();
-    // Header brand mark — drawn only when the profile ships one. A profile can
-    // opt out (empty brand_image, e.g. N64 leads with its wordmark instead), in
-    // which case the title block starts flush at the left with no reserved gap.
+    // Header brand mark. Drawn only when the profile ships one: a profile can
+    // opt out (empty brand, e.g. N64 which leads with its wordmark), in which
+    // case g_brand never loads and the title block starts flush-left with no
+    // reserved gap. When present, the shared default is a 44x33 square mark; a
+    // console that ships its OWN (typically wide) wordmark (SystemProfile.brand
+    // — the NES pill, the Genesis logo) draws it larger, sized to a target
+    // HEIGHT with proportional width so the logo reads clearly.
     if (g_brand.id && g_brand.w > 0) {
-        ImGui::SetCursorPosY(hdr_top + px(9));
-        image_fit(g_brand, 44, 33); ImGui::SameLine(0, px(12));
+        const SystemProfile* hprof = (const SystemProfile*)m->profile;
+        const bool own_brand = hprof && hprof->brand && hprof->brand[0];
+        float brand_w = 44.0f, brand_h = 33.0f;
+        if (own_brand && g_brand.h > 0) {
+            brand_h = 32.0f;
+            brand_w = brand_h * (float)g_brand.w / (float)g_brand.h;   // preserve aspect
+            if (brand_w > 130.0f) brand_w = 130.0f;                    // sane upper bound
+        }
+        // Vertically center against the two-line title block (game title at
+        // 1.55x + platform at 1.0x), from the fitted height.
+        float line_h  = ImGui::GetTextLineHeight();
+        float block_h = line_h * 1.55f + ImGui::GetStyle().ItemSpacing.y + line_h;
+        float fit_h = px(brand_h);
+        if (g_brand.h > 0) {
+            float s = (px(brand_w) / g_brand.w < px(brand_h) / g_brand.h)
+                        ? px(brand_w) / (float)g_brand.w : px(brand_h) / (float)g_brand.h;
+            fit_h = g_brand.h * s;
+        }
+        ImGui::SetCursorPosY(hdr_top + (block_h - fit_h) * 0.5f);
+        image_fit(g_brand, brand_w, brand_h); ImGui::SameLine(0, px(12));
         ImGui::SetCursorPosY(hdr_top);
     }
     ImGui::BeginGroup();
@@ -2188,6 +2543,30 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         launcher_model_cancel_capture(m);
         launcher_model_cancel_hk_capture(m);
         return true;
+    }
+
+    // ---- GAMEPAD bind capture (capture_pad set; Genesis only) --------------
+    // GAMEPAD binds (has_pad_binds consoles) persist a button/axis through the
+    // console's native bridge. Swallow everything while listening; a controller
+    // button press or a decisive axis push (past a dead threshold) commits.
+    if (m->capturing && m->capture_pad) {
+        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+            launcher_binds_set_pad_button(m, m->cfg_player + 1, m->capture_btn,
+                                          LNG_PADBIND_BUTTON, (int)LNG_EVGBTN(ev), 0);
+            launcher_model_cancel_capture(m);
+            return true;
+        }
+        if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            int val = (int)LNG_EVGAXISVAL(ev);
+            if (val >= 20000 || val <= -20000) {   // ignore rest/jitter near center
+                launcher_binds_set_pad_button(m, m->cfg_player + 1, m->capture_btn,
+                                              LNG_PADBIND_AXIS, (int)LNG_EVGAXIS(ev),
+                                              val < 0 ? -1 : +1);
+                launcher_model_cancel_capture(m);
+            }
+            return true;
+        }
+        return true;   // swallow all other input while capturing a pad bind
     }
 
     // N64 pad capture: when the player being configured has a gamepad source,
@@ -2335,15 +2714,16 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 asset((std::string("assets/img/") + prof->controller.image_digital).c_str()).c_str());
     }
     // Header brand mark: the active SystemProfile's own (N64 -> the four-color
-    // logo), falling back to the shared recomp-ui mark for consoles that don't
-    // set one. Keeps the top-left mark matched to the system on screen.
+    // logo, NES/Genesis their wordmark), falling back to the shared recomp-ui
+    // mark for consoles that don't set one. Keeps the top-left mark matched to
+    // the system on screen.
     {
         const SystemProfile* bprof = (const SystemProfile*)m->profile;
-        // NULL brand_image => the shared dots; a non-NULL EMPTY string => the
-        // profile opts out of a corner emblem entirely (N64 leads with its
-        // wordmark). Only load when there's an actual filename.
-        const char* brand_file = bprof && bprof->brand_image
-                                   ? bprof->brand_image : "brand_mark.tga";
+        // NULL brand => the shared dots; a non-NULL EMPTY string => the profile
+        // opts out of a corner emblem entirely (N64 leads with its wordmark).
+        // Only load when there's an actual filename.
+        const char* brand_file = bprof && bprof->brand
+                                   ? bprof->brand : "brand_mark.tga";
         if (brand_file && brand_file[0])
             g_brand = launcher_texture_load(
                 asset((std::string("assets/img/") + brand_file).c_str()).c_str());

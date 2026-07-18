@@ -160,8 +160,59 @@ static inline LauncherTheme launcher_theme_n64(void) {
     return t;
 }
 
+// "Nintendo Entertainment System" theme. The cartridge/CRT era: a neutral
+// graphite ground (the front-loader's grey, not a color-biased ink) with ONE
+// bold Nintendo red accent for brand + primary action — the color of the
+// console's stripe and the controller's A/B buttons. CRT scanlines ON (the
+// living-room-TV era). Same layout and design language as the default; only the
+// palette differs (neutral greys instead of the default's violet-blue bias).
+static inline LauncherTheme launcher_theme_nes(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.051f, 0.055f, 0.063f, 1.0f); // #0D0E10 graphite ink
+    t.background2     = lng_rgba(0.086f, 0.094f, 0.106f, 1.0f); // #16181B lifted center
+    t.panel           = lng_rgba(0.098f, 0.106f, 0.118f, 1.0f); // #191B1E card
+    t.panel_hovered   = lng_rgba(0.149f, 0.161f, 0.180f, 1.0f); // #26292E
+    t.control         = lng_rgba(0.125f, 0.137f, 0.153f, 1.0f); // #202327 button
+    t.control_hovered = lng_rgba(0.173f, 0.188f, 0.212f, 1.0f); // #2C3036
+    t.border          = lng_rgba(0.200f, 0.216f, 0.239f, 1.0f); // #33373D hairline
+    t.accent          = lng_rgba(0.898f, 0.196f, 0.153f, 1.0f); // #E53227 NES red
+    t.accent_dim      = lng_rgba(0.659f, 0.118f, 0.090f, 1.0f); // #A81E17 pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (red) — else headings inherit default violet
+    t.text            = lng_rgba(0.925f, 0.925f, 0.933f, 1.0f); // #ECECEE
+    t.text_muted      = lng_rgba(0.541f, 0.557f, 0.588f, 1.0f); // #8A8E96
+    /* good/warn keep their semantic colors; focus stays cyan (reads on graphite). */
+    t.scanlines       = 1;                        // cartridge/CRT era: scanlines ON
+    return t;
+}
+
+// "Sega Genesis" theme. The 16-bit cartridge/CRT-arcade era: a cool blue-black
+// ground and ONE bold Sega azure accent for brand + primary action, distinctly
+// more cyan than the PSX royal blue so the two never read alike. CRT scanlines
+// stay ON (this is the tube/cartridge era, same rationale as the default).
+static inline LauncherTheme launcher_theme_genesis(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.035f, 0.047f, 0.075f, 1.0f); // #090C13 blue-black ink
+    t.background2     = lng_rgba(0.059f, 0.082f, 0.129f, 1.0f); // #0F1521 lifted center
+    t.panel           = lng_rgba(0.067f, 0.094f, 0.149f, 1.0f); // #111826 card
+    t.panel_hovered   = lng_rgba(0.106f, 0.153f, 0.235f, 1.0f); // #1B273C
+    t.control         = lng_rgba(0.082f, 0.114f, 0.176f, 1.0f); // #151D2D button
+    t.control_hovered = lng_rgba(0.122f, 0.173f, 0.263f, 1.0f); // #1F2C43
+    t.border          = lng_rgba(0.149f, 0.204f, 0.298f, 1.0f); // #26344C hairline
+    t.accent          = lng_rgba(0.090f, 0.635f, 0.902f, 1.0f); // #17A2E6 Sega azure
+    t.accent_dim      = lng_rgba(0.055f, 0.451f, 0.702f, 1.0f); // #0E73B3 pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (azure) — else headings inherit default violet
+    t.text            = lng_rgba(0.914f, 0.929f, 0.961f, 1.0f); // #E9EDF5
+    t.text_muted      = lng_rgba(0.498f, 0.545f, 0.643f, 1.0f); // #7F8BA4
+    /* good/warn keep their semantic colors; focus stays cyan (reads on blue). */
+    t.scanlines       = 1;                       // CRT/cartridge era: scanlines ON
+    return t;
+}
+
 // Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
-// Advance, "n64" -> Nintendo 64; anything else -> default CRT).
+// Advance, "n64" -> Nintendo 64, "nes" -> Nintendo Entertainment System,
+// "genesis" -> Sega Genesis; anything else -> default CRT).
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
@@ -172,6 +223,13 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         return launcher_theme_gba();
     if (name && (name[0] == 'n' || name[0] == 'N') && name[1] == '6' && name[2] == '4')
         return launcher_theme_n64();
+    if (name && (name[0] == 'n' || name[0] == 'N') &&
+        (name[1] == 'e' || name[1] == 'E') &&
+        (name[2] == 's' || name[2] == 'S'))
+        return launcher_theme_nes();
+    if (name && (name[0] == 'g' || name[0] == 'G') &&
+        (name[1] == 'e' || name[1] == 'E'))
+        return launcher_theme_genesis();
     return launcher_theme_default();
 }
 

@@ -111,6 +111,16 @@ typedef struct RecompLauncherCSettings {
     // NOTE: 0 is a VALID index (the n64 profile's "A"), so 0 is NOT "unset"
     // here — the host seeds real defaults ({A, Z, none} = {0, 2, -1}).
     int   mouse_bind[3];
+    // ---- NES-style settings (capability-gated; see has_integer_scale /
+    // hdpack_supported below) — appended additively, same ABI convention. ----
+    int  integer_scale;       // bool: snap the game image to integer multiples
+    int  hdpack_enabled;      // bool: load a Mesen-format HD texture pack
+    char hdpack_dir[512];     // folder containing the pack's hires.txt
+    // ---- Genesis-style widescreen width (SystemProfile.video.widescreen_cells
+    // consoles only) — how many extra 8-px background cells EACH SIDE renders
+    // while `widescreen` is on. 0 = unset (host predates this field) -> the
+    // model defaults it to 8, the Genesis engine default. Appended additively.
+    int  widescreen_cells;    // 1..16
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -297,6 +307,22 @@ typedef struct RecompLauncherCGameInfo {
      * 0 (default/memset) => none of that surface exists and every non-mouse
      * consumer (SNES/PSX/GBA/PSR/PMS-J) is byte-for-byte unchanged. */
     int  has_mouse_controls;
+    // ---- NES-style capability flags (appended additively) ----
+    int  has_integer_scale;   // Integer-scale checkbox in Display settings
+    // HD texture packs (Mesen hires.txt format): 1 shows the HD-pack toggle +
+    // folder picker in Display settings (NES defaults this ON per game; a
+    // stock build that must not load packs passes 0 — e.g. unpatched Zelda).
+    int  hdpack_supported;
+    // Password/mantra save (e.g. Faxanadu): when password_save_path is
+    // non-NULL the SAVES row shows the password text (read-only, editable
+    // behind an Edit + confirm step) instead of the binary SRAM file UI.
+    // The file is a single line of text. Independent of sram_path.
+    const char* password_save_path;   // abs path to the 1-line password file
+    const char* password_save_label;  // row label, e.g. "Password" / "Mantra"
+    // Light-gun (NES Zapper) game: the controller config page shows a Zapper
+    // block (mouse-as-gun + crosshair toggles, persisted to the engine's
+    // keybinds.ini [zapper] section) alongside the pad UI.
+    int  zapper;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
