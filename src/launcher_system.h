@@ -30,6 +30,7 @@
 #include "consoles/snes/snes_profile.h"
 #include "consoles/psx/psx_profile.h"
 #include "consoles/gba/gba_profile.h"
+#include "consoles/n64/n64_profile.h"
 #include "consoles/nes/nes_profile.h"
 #include "consoles/genesis/genesis_profile.h"
 #include "consoles/gb/gb_profile.h"
@@ -55,7 +56,6 @@ extern "C" {
         kPanelsDashboardCommon, kPanelsSettingsStub, kPanelsControllerCommon,      \
     }
 
-LNG_STUB_PROFILE(n64,    "NINTENDO 64",        "ROM");
 LNG_STUB_PROFILE(smsgg,  "MASTER SYSTEM",      "ROM");
 LNG_STUB_PROFILE(vb,     "VIRTUAL BOY",        "ROM");
 
@@ -68,11 +68,11 @@ static inline const SystemProfile* launcher_system_by_id(const char* name) {
     if (launcher_console_is_psx(name))  return &kSystemProfilePsx;
     if (launcher_console_is_snes(name)) return &kSystemProfileSnes;
     if (launcher_console_is_gba(name))  return &kSystemProfileGba;
+    if (launcher_console_is_n64(name))  return &kSystemProfileN64;
     if (launcher_console_is_nes(name))  return &kSystemProfileNes;
     if (launcher_console_is_genesis(name)) return &kSystemProfileGenesis;
     if (launcher_console_is_gbc(name))  return &kSystemProfileGbc;
     if (launcher_console_is_gb(name))   return &kSystemProfileGb;
-    if (lps_streq_ci(name, "n64") || lps_streq_ci(name, "nintendo64")) return &kSystemProfile_n64;
     if (lps_streq_ci(name, "smsgg") || lps_streq_ci(name, "sms") || lps_streq_ci(name, "gg"))
         return &kSystemProfile_smsgg;
     if (lps_streq_ci(name, "vb") || lps_streq_ci(name, "virtualboy")) return &kSystemProfile_vb;
@@ -90,7 +90,7 @@ static inline const SystemProfile* launcher_system_infer(const RecompLauncherCGa
     if (gi && gi->platform && gi->platform[0]) {
         if (lps_streq_ci(gi->platform, "PLAYSTATION"))       return &kSystemProfilePsx;
         if (lps_streq_ci(gi->platform, "SUPER NINTENDO"))    return &kSystemProfileSnes;
-        if (lps_streq_ci(gi->platform, "NINTENDO 64"))       return &kSystemProfile_n64;
+        if (lps_streq_ci(gi->platform, "NINTENDO 64"))       return &kSystemProfileN64;
         // Both spellings: launcher_profile_apply_genesis sets "SEGA GENESIS";
         // "GENESIS" was the pre-buildout stub label (kept for host compat).
         if (lps_streq_ci(gi->platform, "SEGA GENESIS"))      return &kSystemProfileGenesis;

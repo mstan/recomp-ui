@@ -157,7 +157,13 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
         else if (strcmp(v, "settings")   == 0) launcher_model_set_view(m, LNG_VIEW_SETTINGS);
         else if (strcmp(v, "controller") == 0) launcher_model_set_view(m, LNG_VIEW_CONTROLLER);
     } else if (strncmp(c, "player:", 7) == 0) {
-        m->cfg_player = atoi(c + 7) ? 1 : 0;
+        // Select which player the Controller view configures. Clamp to the
+        // launcher's real player range (N64 profiles run up to 4) instead of
+        // the old 0/1-only test hook, so scripted screenshots can reach P3/P4.
+        int pl = atoi(c + 7);
+        if (pl < 0) pl = 0;
+        if (pl > LNG_MAX_PLAYERS - 1) pl = LNG_MAX_PLAYERS - 1;
+        m->cfg_player = pl;
     } else if (strncmp(c, "capbtn:", 7) == 0) {
         launcher_model_begin_capture(m, atoi(c + 7));   // rebind a player button (generic spec index)
     } else if (strncmp(c, "caphk:", 6) == 0) {

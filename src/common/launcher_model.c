@@ -57,9 +57,14 @@ static int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+static float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
+static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -83,7 +88,7 @@ void launcher_model_init(LauncherModel* m,
         m->password_save_label  = game->password_save_label;
         m->zapper               = game->zapper != 0;
         /* 0 = unset (caller predates the field) -> assume 2 players. */
-        m->player_count         = game->num_players ? clampi(game->num_players, 1, 2) : 2;
+        m->player_count         = game->num_players ? clampi(game->num_players, 1, LNG_MAX_PLAYERS) : 2;
         m->expected_crc         = game->expected_crc;
         m->has_expected_crc     = game->has_expected_crc;
         m->known_sha256         = game->known_sha256;
@@ -120,6 +125,14 @@ void launcher_model_init(LauncherModel* m,
         m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
         m->num_aspect_labels    = game->num_aspect_labels;
         m->aspect_experimental  = game->aspect_experimental != 0;
+        m->tpak_slots           = clampi(game->tpak_slots, 0, RECOMP_LAUNCHER_MAX_TPAKS);
+        m->tpak_inspect_cb      = game->tpak_inspect;
+        m->audio_device_labels  = game->audio_device_labels;
+        m->num_audio_devices    = game->num_audio_devices;
+        m->renderer_labels      = game->renderer_labels;
+        m->num_renderers        = game->num_renderers;
+        m->hide_rebind          = game->hide_rebind != 0;
+        m->has_mouse_controls   = game->has_mouse_controls != 0;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -144,7 +157,7 @@ void launcher_model_init(LauncherModel* m,
     if (m->pad_mode_supported) {
         const SystemProfile* pm_prof = (const SystemProfile*)m->profile;
         const ControllerSpec* pm_spec = pm_prof ? &pm_prof->controller : NULL;
-        for (int p = 0; p < 2; ++p) {
+        for (int p = 0; p < LNG_MAX_PLAYERS; ++p) {
             if (!m->pad_mode_selectable) {
                 m->s.pad_mode[p] = m->locked_pad_mode;
             } else if (pm_spec && pm_spec->modes && pm_spec->mode_count > 0) {
@@ -160,6 +173,10 @@ void launcher_model_init(LauncherModel* m,
             }
         }
     }
+
+    // ---- Transfer Pak slots: inspect whatever the host's config seeded ----
+    // (re-run per slot on every ROM/save change; see launcher_model_set_tpak_*).
+    for (int t = 0; t < m->tpak_slots; ++t) lm_inspect_tpak(m, t);
 
     // ---- validate/clamp aspect_index against the offered set ----
     if (m->aspect_labels && m->num_aspect_labels > 0) {
@@ -204,6 +221,26 @@ void launcher_model_init(LauncherModel* m,
         m->s.deadzone[1] = m->s.deadzone[0];
     }
 
+    // ---- mouse controls: seed/clamp against their own ranges ----------------
+    // Only touched when has_mouse_controls (every other game leaves the whole
+    // mouse_* block at its memset-zero state, untouched). The host normally
+    // seeds real defaults from its config; a zero sensitivity is the tell of a
+    // fresh/zero-initialized struct (e.g. a demo harness) — seed the full Snap
+    // default set in that case, otherwise just clamp the sensitivity.
+    if (m->has_mouse_controls) {
+        if (m->s.mouse_sensitivity <= 0.0f) {
+            m->s.player_src[0]      = 1;      // Keyboard (+ mouse) by default
+            m->s.mouse_enabled      = 1;
+            m->s.mouse_sensitivity  = 0.06f;
+            m->s.mouse_invert_x     = 0;
+            m->s.mouse_invert_y     = 1;
+            m->s.mouse_bind[0]      = 0;      // Left  -> A  (kN64PadButtons[0])
+            m->s.mouse_bind[1]      = 2;      // Right -> Z  (kN64PadButtons[2])
+            m->s.mouse_bind[2]      = -1;     // Middle-> none
+        } else {
+            m->s.mouse_sensitivity = clampf(m->s.mouse_sensitivity, 0.01f, 0.50f);
+        }
+    }
     // ---- widescreen extra-cells (video.widescreen_cells consoles, e.g.
     // Genesis): 0 = unset host -> the engine default of 8; else clamp 1..16. ----
     {
@@ -385,7 +422,7 @@ void launcher_model_set_view(LauncherModel* m, LngView v) {
 }
 
 void launcher_model_open_config(LauncherModel* m, int player) {
-    m->cfg_player = clampi(player, 0, 1);
+    m->cfg_player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->view = LNG_VIEW_CONTROLLER;
 }
 
@@ -481,10 +518,20 @@ const char* launcher_model_window_size_label(const LauncherModel* m) {
 }
 
 void launcher_model_toggle_renderer(LauncherModel* m) {
+    // Game-supplied renderer vocabulary (RT64 hosts: Auto/Vulkan/D3D12)
+    // cycles its full list; the legacy pair stays a 2-value toggle.
+    if (m->renderer_labels && m->num_renderers > 0) {
+        m->s.renderer = (m->s.renderer + 1) % m->num_renderers;
+        return;
+    }
     m->s.renderer = !m->s.renderer;
 }
 
 const char* launcher_model_renderer_label(const LauncherModel* m) {
+    if (m->renderer_labels && m->num_renderers > 0) {
+        int i = clampi(m->s.renderer, 0, m->num_renderers - 1);
+        return m->renderer_labels[i];
+    }
     // Per-console vocabulary (SystemProfile.renderer_labels): NES says
     // Accelerated/Software; NULL keeps the legacy PSX-era pair.
     const SystemProfile* prof = (const SystemProfile*)m->profile;
@@ -661,6 +708,69 @@ void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path) {
     if (recompui_memcard_format_file(path) != 0) return;  // I/O failure: leave as-is
     launcher_model_set_memcard_path(m, slot, path);
     m->memcard_freshly_formatted[slot] = true;   // known-blank: panel shows 0 / 15
+}
+
+// ---- N64 Transfer Pak slots (mirrors the memcard slot pattern) -----------------
+
+// Refresh one slot's cartridge facts through the host's tpak_inspect callback.
+// Clears to "not inspected" when there's no callback, no cartridge, or the
+// callback declines — the panel then shows the bare file name, neutral tint.
+static void lm_inspect_tpak(LauncherModel* m, int slot) {
+    if (slot < 0 || slot >= RECOMP_LAUNCHER_MAX_TPAKS) return;
+    memset(&m->tpak_info[slot], 0, sizeof(m->tpak_info[slot]));
+    m->tpak_inspected[slot] = false;
+    if (!m->tpak_inspect_cb || !m->s.tpak_rom_path[slot][0]) return;
+    RecompLauncherCTpak out; memset(&out, 0, sizeof(out));
+    if (m->tpak_inspect_cb(m->s.tpak_rom_path[slot],
+                           m->s.tpak_save_path[slot][0] ? m->s.tpak_save_path[slot] : NULL,
+                           &out)) {
+        m->tpak_info[slot] = out;
+        m->tpak_inspected[slot] = true;
+    }
+}
+
+void launcher_model_set_tpak_rom(LauncherModel* m, int slot, const char* path) {
+    if (slot < 0 || slot >= m->tpak_slots) return;
+    safe_copy(m->s.tpak_rom_path[slot], sizeof(m->s.tpak_rom_path[slot]), path ? path : "");
+    if (m->s.tpak_rom_path[slot][0]) m->s.tpak_enabled[slot] = 1;  // inserting = wanting it on
+    lm_inspect_tpak(m, slot);
+}
+
+void launcher_model_clear_tpak(LauncherModel* m, int slot) {
+    if (slot < 0 || slot >= m->tpak_slots) return;
+    m->s.tpak_rom_path[slot][0]  = '\0';
+    m->s.tpak_save_path[slot][0] = '\0';
+    m->s.tpak_enabled[slot] = 0;
+    lm_inspect_tpak(m, slot);
+}
+
+void launcher_model_set_tpak_save(LauncherModel* m, int slot, const char* path) {
+    if (slot < 0 || slot >= m->tpak_slots) return;
+    safe_copy(m->s.tpak_save_path[slot], sizeof(m->s.tpak_save_path[slot]), path ? path : "");
+    lm_inspect_tpak(m, slot);
+}
+
+bool launcher_model_tpak_enabled(const LauncherModel* m, int slot) {
+    if (slot < 0 || slot >= m->tpak_slots) return false;
+    int e = m->s.tpak_enabled[slot];
+    if (e > 0) return true;
+    if (e < 0) return false;
+    return m->s.tpak_rom_path[slot][0] != '\0';   // unset: on iff a cart is inserted
+}
+
+void launcher_model_toggle_tpak(LauncherModel* m, int slot) {
+    if (slot < 0 || slot >= m->tpak_slots) return;
+    m->s.tpak_enabled[slot] = launcher_model_tpak_enabled(m, slot) ? -1 : 1;
+}
+
+// ---- audio output device -------------------------------------------------------
+
+void launcher_model_set_audio_device(LauncherModel* m, const char* name) {
+    safe_copy(m->s.audio_device, sizeof(m->s.audio_device), name ? name : "");
+}
+
+const char* launcher_model_audio_device_label(const LauncherModel* m) {
+    return m->s.audio_device[0] ? m->s.audio_device : "(system default)";
 }
 
 // ---- SRAM save management (mirrors the RmlUi launcher's Import/Clear) --------
@@ -884,18 +994,18 @@ int launcher_model_active_button_count(const LauncherModel* m, int player) {
 }
 
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
-    player = clampi(player, 0, 1);
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = (m->s.player_src[player] + 1) % 3;  // None/Kbd/Pad
 }
 
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
-    player = clampi(player, 0, 1);
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.deadzone[player] = clampi(m->s.deadzone[player] + delta, 0, 100);
 }
 
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name) {
-    player = clampi(player, 0, 1);
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = clampi(kind, 0, 2);
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
@@ -905,6 +1015,31 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
         m->player_pad_id[player] = 0;
         m->player_pad_name[player][0] = '\0';
     }
+}
+
+// ---- mouse controls --------------------------------------------------------
+
+void launcher_model_set_mouse_source(LauncherModel* m, int enabled) {
+    if (!m->has_mouse_controls) return;
+    launcher_model_set_source(m, 0, 1, 0, NULL);   // player 0 -> Keyboard
+    m->s.mouse_enabled = enabled ? 1 : 0;
+}
+
+void launcher_model_set_mouse_sensitivity(LauncherModel* m, float value) {
+    m->s.mouse_sensitivity = clampf(value, 0.01f, 0.50f);
+}
+
+void launcher_model_toggle_mouse_invert_x(LauncherModel* m) {
+    m->s.mouse_invert_x = !m->s.mouse_invert_x;
+}
+
+void launcher_model_toggle_mouse_invert_y(LauncherModel* m) {
+    m->s.mouse_invert_y = !m->s.mouse_invert_y;
+}
+
+void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index) {
+    if (which < 0 || which > 2) return;
+    m->s.mouse_bind[which] = (button_index < 0) ? -1 : button_index;
 }
 
 void launcher_model_request_skip_toggle(LauncherModel* m) {
@@ -925,10 +1060,17 @@ void launcher_model_skip_cancel(LauncherModel* m) {
 }
 
 void launcher_model_begin_capture(LauncherModel* m, int b) {
+    launcher_model_begin_capture_slot(m, b, 0);
+}
+void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     int bc = prof ? prof->controller.button_count : LNG_BTN_COUNT;
     if (bc > LNG_MAX_BUTTONS) bc = LNG_MAX_BUTTONS;
     if (b < 0 || b >= bc) return;
+    m->hk_capturing  = false;
+    m->capturing     = true;
+    m->capture_btn   = b;
+    m->capture_slot  = (slot == 1) ? 1 : 0;
     m->hk_capturing = false;
     m->capturing    = true;
     m->capture_pad  = false;
@@ -965,10 +1107,14 @@ const char* launcher_model_freq_label(const LauncherModel* m) {
 }
 
 const char* launcher_model_player_src_label(const LauncherModel* m, int player) {
-    player = clampi(player, 0, 1);
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     int src = clampi(m->s.player_src[player], 0, 2);
     if (src == 2 && m->player_pad_name[player][0])   // show the actual device name
         return m->player_pad_name[player];
+    // Mouse-capable games split the keyboard source (player 0 only): the label
+    // reflects whether mouse-aim is on. Every non-mouse game keeps kSrcNames.
+    if (src == 1 && m->has_mouse_controls && player == 0)
+        return m->s.mouse_enabled ? "Keyboard + Mouse" : "Keyboard";
     return kSrcNames[src];
 }
 

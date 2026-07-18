@@ -36,6 +36,23 @@ void launcher_binds_load(LauncherModel* m, const char* config_path, const char* 
 // keybinds.ini and refresh the model's display string.
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode);
 
+// N64-native store only: bind an arbitrary FIELD (type/id per
+// consoles/n64/n64_binds.h — key, pad button, signed pad axis, raw joystick
+// button/axis) into alternate slot 0/1 of the device table the player's
+// current input source selects. No-op for every other profile.
+void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
+                              int type, int id);
+
+// Re-read every player's bind display strings from the active store. Cheap;
+// the backend calls it when a Configure page's input source changes (the N64
+// store is per-device-TYPE, so the shown table follows the source).
+void launcher_binds_refresh(LauncherModel* m);
+
+// Whether a capture for `player` (1-based) should listen for GAMEPAD events
+// (pad buttons / axis throws / raw joystick fields) instead of the keyboard —
+// true only for the N64 store when that player's source is a gamepad.
+int launcher_binds_wants_pad_capture(const LauncherModel* m, int player);
+
 // Generic GAMEPAD-bind kind codes for launcher_binds_set_pad_button()'s `kind`
 // argument. Values mirror the engine's GamepadBindKind exactly (and equal the
 // console-native genesis_binds.h RUI_GEN_BIND_* — both anchored to the engine,
@@ -53,6 +70,7 @@ void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
                                    int kind, int code, int axis_dir);
 
 // Reset one player's keyboard bindings to defaults and persist.
+// (N64: resets the whole device TABLE the player's source selects.)
 void launcher_binds_reset_player(LauncherModel* m, int player);
 
 // A system hotkey was rebound. `keycode` is an SDL_Keycode, `kmod` the SDL

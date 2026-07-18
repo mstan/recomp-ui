@@ -50,6 +50,10 @@ typedef struct {
     const char* image_analog, *image_digital;       // optional mode-swap pair (PSX-style)
     int  max_players;                              // 1, 2 or 4
     int  has_pad_mode;                              // analog/digital selector offered
+    // Alternate bind slots per input the console's bind store keeps (N64's
+    // input.cfg format stores 2 — e.g. Z on both shoulder triggers). 0 (the
+    // trailing zero-fill of every older positional initializer) reads as 1.
+    int  binds_per_input;
     // ---- appended additively (older positional initializers zero-fill) ----
     const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
     int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
@@ -127,8 +131,16 @@ typedef struct SystemProfile {
     // Per-console brand mark drawn in the header (top-left, next to the game
     // title). NULL => the shared default "brand_mark.tga"; a console sets this
     // to ship its own logo (NES "brand_nes.tga", Genesis "brand_genesis.tga").
-    // Appended last so existing positional profile rows zero-fill it.
+    // The N64 profile sets this to an EMPTY STRING "" to draw NO corner emblem
+    // (header title starts flush-left). Appended so existing positional
+    // profile rows zero-fill it.
     const char* brand;
+    // Optional platform WORDMARK image (assets/img/<file>) rendered in the
+    // header in place of the plain `platform` TEXT when the file is present.
+    // NULL => always text. The file is NOT shipped by recomp-ui (a console's
+    // wordmark may be a third-party trademark); an absent file falls back to
+    // the text, so this is inert unless a host drops the asset in.
+    const char* wordmark_image;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

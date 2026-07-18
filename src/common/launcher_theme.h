@@ -26,6 +26,10 @@ typedef struct {
     LngColor accent;          // the one bold place: brand + primary CTA
     LngColor accent_dim;      // gradient partner / pressed
     LngColor accent_text;
+    LngColor accent2;         // SECONDARY accent for section headings/eyebrows.
+                              // Defaults to `accent` (one-accent look); a theme
+                              // sets it apart for a dual-accent identity (N64:
+                              // red primary + logo-blue headings).
     LngColor text;
     LngColor text_muted;
     LngColor good;        // verified / connected (phosphor mint)
@@ -63,6 +67,7 @@ static inline LauncherTheme launcher_theme_default(void) {
     t.accent          = lng_rgba(0.604f, 0.361f, 1.000f, 1.0f); // #9A5CFF electric violet
     t.accent_dim      = lng_rgba(0.431f, 0.247f, 0.812f, 1.0f); // #6E3FCF gradient/pressed
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent by default
     t.text            = lng_rgba(0.925f, 0.933f, 0.965f, 1.0f); // #ECEEF6
     t.text_muted      = lng_rgba(0.529f, 0.565f, 0.659f, 1.0f); // #8790A8
     t.good            = lng_rgba(0.275f, 0.890f, 0.608f, 1.0f); // #46E39B phosphor mint
@@ -96,6 +101,7 @@ static inline LauncherTheme launcher_theme_psx(void) {
     t.accent          = lng_rgba(0.180f, 0.490f, 1.000f, 1.0f); // #2E7DFF PlayStation blue
     t.accent_dim      = lng_rgba(0.102f, 0.353f, 0.839f, 1.0f); // #1A5AD6 pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (blue)
     t.text            = lng_rgba(0.910f, 0.925f, 0.961f, 1.0f); // #E8ECF5
     t.text_muted      = lng_rgba(0.494f, 0.541f, 0.639f, 1.0f); // #7E8AA3
     /* good/warn keep their semantic colors; focus stays cyan (reads clearly on blue). */
@@ -119,10 +125,38 @@ static inline LauncherTheme launcher_theme_gba(void) {
     t.accent          = lng_rgba(0.463f, 0.427f, 0.945f, 1.0f); // #766DF1 GBA indigo
     t.accent_dim      = lng_rgba(0.325f, 0.290f, 0.741f, 1.0f); // #534ABD pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (indigo)
     t.text            = lng_rgba(0.922f, 0.918f, 0.957f, 1.0f); // #EBEAF4
     t.text_muted      = lng_rgba(0.525f, 0.510f, 0.647f, 1.0f); // #8682A5
     /* good/warn keep their semantic colors; focus stays cyan (reads on indigo). */
     t.scanlines       = 0;                       // LCD, not CRT: flat
+    return t;
+}
+
+// "Nintendo 64" theme. The 64-bit cartridge era, but a decade past the CRT
+// arcade look of the default: a neutral graphite ground (the charcoal N64
+// console plastic, deliberately NOT the blue/violet of the others), ONE
+// confident Nintendo red for brand + primary action, and NO scanlines (this
+// unit renders through RT64, a modern HLE GPU — a flat, clean panel, not a
+// faux-CRT). State colors (mint / amber / cyan) are unchanged. Same layout and
+// design language as the default; only the palette + scanline flag differ.
+static inline LauncherTheme launcher_theme_n64(void) {
+    LauncherTheme t = launcher_theme_default();   // inherit spacing/type/dims
+    t.background      = lng_rgba(0.075f, 0.078f, 0.086f, 1.0f); // #131417 graphite ink
+    t.background2     = lng_rgba(0.106f, 0.110f, 0.122f, 1.0f); // #1B1C1F lifted center
+    t.panel           = lng_rgba(0.098f, 0.102f, 0.114f, 1.0f); // #191A1D card
+    t.panel_hovered   = lng_rgba(0.145f, 0.153f, 0.169f, 1.0f); // #25272B
+    t.control         = lng_rgba(0.125f, 0.129f, 0.145f, 1.0f); // #202125 button
+    t.control_hovered = lng_rgba(0.176f, 0.184f, 0.204f, 1.0f); // #2D2F34
+    t.border          = lng_rgba(0.204f, 0.212f, 0.235f, 1.0f); // #34363C hairline
+    t.accent          = lng_rgba(0.878f, 0.227f, 0.184f, 1.0f); // #E03A2F logo red (primary/CTA)
+    t.accent_dim      = lng_rgba(0.686f, 0.145f, 0.114f, 1.0f); // #AF251D pressed/gradient
+    t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = lng_rgba(0.204f, 0.451f, 0.878f, 1.0f); // #3473E0 logo blue (headings)
+    t.text            = lng_rgba(0.929f, 0.933f, 0.945f, 1.0f); // #EDEEF1 near-white
+    t.text_muted      = lng_rgba(0.541f, 0.557f, 0.596f, 1.0f); // #8A8E98 neutral grey
+    /* good/warn keep their semantic colors; focus stays cyan (reads on graphite). */
+    t.scanlines       = 0;                       // RT64 HLE GPU, not a CRT: flat
     return t;
 }
 
@@ -144,6 +178,7 @@ static inline LauncherTheme launcher_theme_nes(void) {
     t.accent          = lng_rgba(0.898f, 0.196f, 0.153f, 1.0f); // #E53227 NES red
     t.accent_dim      = lng_rgba(0.659f, 0.118f, 0.090f, 1.0f); // #A81E17 pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (red) — else headings inherit default violet
     t.text            = lng_rgba(0.925f, 0.925f, 0.933f, 1.0f); // #ECECEE
     t.text_muted      = lng_rgba(0.541f, 0.557f, 0.588f, 1.0f); // #8A8E96
     /* good/warn keep their semantic colors; focus stays cyan (reads on graphite). */
@@ -167,6 +202,7 @@ static inline LauncherTheme launcher_theme_genesis(void) {
     t.accent          = lng_rgba(0.090f, 0.635f, 0.902f, 1.0f); // #17A2E6 Sega azure
     t.accent_dim      = lng_rgba(0.055f, 0.451f, 0.702f, 1.0f); // #0E73B3 pressed/gradient
     t.accent_text     = lng_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    t.accent2         = t.accent;                                // single-accent (azure) — else headings inherit default violet
     t.text            = lng_rgba(0.914f, 0.929f, 0.961f, 1.0f); // #E9EDF5
     t.text_muted      = lng_rgba(0.498f, 0.545f, 0.643f, 1.0f); // #7F8BA4
     /* good/warn keep their semantic colors; focus stays cyan (reads on blue). */
@@ -221,10 +257,10 @@ static inline LauncherTheme launcher_theme_gbc(void) {
 }
 
 // Pick a built-in theme by name ("psx" -> PlayStation, "gba" -> Game Boy
-// Advance, "gbc" -> Game Boy Color, "gb" -> Game Boy (DMG), "nes" -> Nintendo
-// Entertainment System, "genesis" -> Sega Genesis; anything else -> default
-// CRT). Note the "gb*" order: match "gba" and "gbc" (3rd char) BEFORE the bare
-// "gb" fallback.
+// Advance, "gbc" -> Game Boy Color, "gb" -> Game Boy (DMG), "n64" -> Nintendo
+// 64, "nes" -> Nintendo Entertainment System, "genesis" -> Sega Genesis;
+// anything else -> default CRT). Note the "gb*" order: match "gba" and "gbc"
+// (3rd char) BEFORE the bare "gb" fallback.
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
@@ -233,6 +269,8 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'b' || name[1] == 'B') &&
         (name[2] == 'a' || name[2] == 'A'))
         return launcher_theme_gba();
+    if (name && (name[0] == 'n' || name[0] == 'N') && name[1] == '6' && name[2] == '4')
+        return launcher_theme_n64();
     if (name && (name[0] == 'n' || name[0] == 'N') &&
         (name[1] == 'e' || name[1] == 'E') &&
         (name[2] == 's' || name[2] == 'S'))

@@ -20,6 +20,28 @@
 #include <stdio.h>
 #include <string.h>
 
+// Harness-only Transfer Pak "cartridge brain". A real N64 host (PSR sniffs the
+// GB header @0x134 + decodes the Gen-1 save; PMS-J uses the kana charmap) fills
+// these facts; here we fabricate them from the ROM file name so the dashboard's
+// Transfer Pak card exercises every populated state without a real cart.
+static int proto_tpak_inspect(const char* rom_path, const char* save_path,
+                              RecompLauncherCTpak* out) {
+    (void)save_path;
+    memset(out, 0, sizeof(*out));
+    if (!rom_path || !rom_path[0]) return 0;   // empty slot => nothing inserted
+    out->valid = 1;
+    int kind = 0; const char* label = "Game Boy Cartridge";
+    if      (strstr(rom_path, "red"))    { kind = 1; label = "Pokemon Red"; }
+    else if (strstr(rom_path, "blue"))   { kind = 2; label = "Pokemon Blue"; }
+    else if (strstr(rom_path, "yellow")) { kind = 3; label = "Pokemon Yellow"; }
+    else if (strstr(rom_path, "green"))  { kind = 4; label = "Pokemon Green"; }
+    out->cart_kind = kind;
+    snprintf(out->cart_label,   sizeof(out->cart_label),   "%s", label);
+    snprintf(out->trainer_name, sizeof(out->trainer_name), "SATOSHI");
+    snprintf(out->trainer_id,   sizeof(out->trainer_id),   "12345");
+    return 1;
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
 
@@ -124,6 +146,36 @@ int main(int argc, char** argv) {
             s.screen_kind  = 0;    // DMG palette (kGbScreenKindNames)
             s.window_scale = 4;
             variant_owns_demo = 1;
+        }
+        if (lpr_is(variant, "n64")) {
+            // Preview an N64 title with the full surface a Stadium-class host
+            // contributes: 4 players (2x2 card grid), an SRAM save row, a host
+            // audio-device picker, a renderer vocabulary, and 4 Transfer Pak
+            // slots wired to the fake cartridge brain above. Two slots come
+            // pre-populated so the tpak card shows its inserted/decoded state.
+            gi.num_players         = 4;
+            gi.sram_path           = "saves/game.sram";
+            static const char* const kN64AudioDevices[2] = {
+                "Speakers (Realtek High Definition Audio)", "Headphones (USB DAC)"
+            };
+            gi.audio_device_labels = kN64AudioDevices;
+            gi.num_audio_devices   = 2;
+            static const char* const kN64Renderers[3] = { "Auto", "Vulkan", "D3D12" };
+            gi.renderer_labels     = kN64Renderers;
+            gi.num_renderers       = 3;
+            gi.tpak_slots          = 4;
+            gi.tpak_inspect        = proto_tpak_inspect;
+            gi.has_mouse_controls  = 1;   // preview the opt-in mouse-controls UI (Snap-style)
+            // Box art is a per-GAME asset the host supplies (a real N64 host
+            // passes its own gi.boxart_path); the shared preview ships none, so
+            // point LNG_BOX at a local .tga to see the GAME card light up.
+            const char* box = getenv("LNG_BOX");
+            if (box && box[0]) gi.boxart_path = box;
+            s.renderer     = 1;   // Vulkan
+            s.supersampling = 1;
+            s.player_src[1] = 1;  // a second active player so the 2x2 grid isn't all-empty
+            snprintf(s.tpak_rom_path[0], sizeof(s.tpak_rom_path[0]), "carts/pokemon_red.gb");
+            snprintf(s.tpak_rom_path[1], sizeof(s.tpak_rom_path[1]), "carts/pokemon_blue.gb");
         }
         if (lpr_is(variant, "genesis") || lpr_is(variant, "megadrive") ||
             lpr_is(variant, "md")) {
