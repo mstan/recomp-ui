@@ -125,6 +125,7 @@ void launcher_model_init(LauncherModel* m,
         m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
         m->num_aspect_labels    = game->num_aspect_labels;
         m->aspect_experimental  = game->aspect_experimental != 0;
+        m->adaptive_view_supported = game->adaptive_view_supported != 0;
         m->tpak_slots           = clampi(game->tpak_slots, 0, RECOMP_LAUNCHER_MAX_TPAKS);
         m->tpak_inspect_cb      = game->tpak_inspect;
         m->audio_device_labels  = game->audio_device_labels;
@@ -142,6 +143,8 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+    m->s.adaptive_view =
+        (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
     // ---- memory-card slots default to enabled (0 == "unset": a host struct
     // that predates this field, or was zero-initialized, reads as both cards
@@ -440,6 +443,11 @@ void launcher_model_toggle_widescreen(LauncherModel* m) {
     m->s.widescreen = !m->s.widescreen;
 }
 
+void launcher_model_toggle_adaptive_view(LauncherModel* m) {
+    if (!m->adaptive_view_supported) return;
+    m->s.adaptive_view = !m->s.adaptive_view;
+}
+
 void launcher_model_ws_cells_delta(LauncherModel* m, int delta) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     if (!prof || !prof->video.widescreen_cells) return;   // gated per console
@@ -462,6 +470,7 @@ bool launcher_model_aspect_offered(const LauncherModel* m, int index) {
 }
 
 void launcher_model_cycle_aspect(LauncherModel* m) {
+    if (m->adaptive_view_supported && m->s.adaptive_view && m->s.fullscreen) return;
     if (m->aspect_labels && m->num_aspect_labels > 0) {
         // Game-supplied vocabulary: plain 0..n-1 cycle.
         m->s.aspect_index =

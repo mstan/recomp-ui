@@ -121,6 +121,11 @@ typedef struct RecompLauncherCSettings {
     // while `widescreen` is on. 0 = unset (host predates this field) -> the
     // model defaults it to 8, the Genesis engine default. Appended additively.
     int  widescreen_cells;    // 1..16
+
+    // ---- live aspect-driven extended view ---------------------------------
+    // In a window, the fixed aspect selects the initial size before live
+    // resizing takes over. Adaptive + fullscreen ignores the fixed aspect.
+    int  adaptive_view;       // bool: logical width follows host drawable aspect
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -323,6 +328,11 @@ typedef struct RecompLauncherCGameInfo {
     // block (mouse-as-gun + crosshair toggles, persisted to the engine's
     // keybinds.ini [zapper] section) alongside the pad UI.
     int  zapper;
+
+    // Live aspect-driven view capability. When present, Display settings show
+    // an Adaptive view toggle. Adaptive + fullscreen leaves the fixed aspect
+    // control visible but disabled because the display chooses the live width.
+    int  adaptive_view_supported;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

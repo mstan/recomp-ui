@@ -1570,6 +1570,7 @@ bool any_deep_display(const LauncherModel* m) {
 // the fixed height (byte-identical to before this console existed).
 bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
+    if (m->adaptive_view_supported) return true;
     // NES legacy-surface additions (Integer scaling row, HD texture pack block)
     // add extra rows the fixed no_scroll band wasn't sized for.
     if (m->has_integer_scale || m->hdpack_supported) return true;
@@ -1608,12 +1609,25 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
+        if (m->adaptive_view_supported) {
+            row_label("Adaptive view", th, cw);
+            bool adaptive = m->s.adaptive_view != 0;
+            if (ImGui::Checkbox("##adaptive", &adaptive))
+                launcher_model_toggle_adaptive_view(m);
+            experimental_tag(th);
+        }
+        const bool adaptive_fullscreen = m->adaptive_view_supported &&
+                                         m->s.adaptive_view != 0 &&
+                                         m->s.fullscreen != 0;
         if (m->aspect_mask || m->num_aspect_labels > 0) {   // PSX-style cycle, or a game-supplied vocabulary
+            if (adaptive_fullscreen) ImGui::BeginDisabled();
             row_label("Aspect ratio", th, cw);
             if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
                 launcher_model_cycle_aspect(m);
             if (m->aspect_experimental) experimental_tag(th);
+            if (adaptive_fullscreen) ImGui::EndDisabled();
         } else if (m->widescreen_supported) {   // legacy module: only for games that support it
+            if (adaptive_fullscreen) ImGui::BeginDisabled();
             row_label("Widescreen 16:9", th, cw);
             bool ws = m->s.widescreen != 0;
             if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
@@ -1626,6 +1640,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 int d = 0; ws_cells_stepper("wscells", m, &d);
                 if (d) launcher_model_ws_cells_delta(m, d);
             }
+            if (adaptive_fullscreen) ImGui::EndDisabled();
         }
         // HD texture packs (NES module, Mesen hires.txt format): one line —
         //   [x] HD texture pack   …folder tail   [Browse]
@@ -1688,16 +1703,37 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_supersampling(m);
     }
 
+    if (m->has_fullscreen_toggle) {
+        row_label("Fullscreen", th);
+        bool fs = m->s.fullscreen != 0;
+        if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
+    }
+
+    if (m->adaptive_view_supported) {
+        row_label("Adaptive view", th);
+        bool adaptive = m->s.adaptive_view != 0;
+        if (ImGui::Checkbox("##adaptive", &adaptive))
+            launcher_model_toggle_adaptive_view(m);
+        experimental_tag(th);
+    }
+
+    const bool adaptive_fullscreen = m->adaptive_view_supported &&
+                                     m->s.adaptive_view != 0 &&
+                                     m->s.fullscreen != 0;
     if (m->aspect_mask || m->num_aspect_labels > 0) {
+        if (adaptive_fullscreen) ImGui::BeginDisabled();
         row_label("Aspect ratio", th);
         if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
             launcher_model_cycle_aspect(m);
         if (m->aspect_experimental) experimental_tag(th);
+        if (adaptive_fullscreen) ImGui::EndDisabled();
     } else if (m->widescreen_supported) {
+        if (adaptive_fullscreen) ImGui::BeginDisabled();
         row_label("Widescreen 16:9", th);
         bool ws = m->s.widescreen != 0;
         if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
         experimental_tag(th);
+        if (adaptive_fullscreen) ImGui::EndDisabled();
     }
 
     if (m->has_texture_filter) {
@@ -1748,12 +1784,6 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Turbo loads", th);
         bool tl = m->s.turbo_loads != 0;
         if (ImGui::Checkbox("##turbo", &tl)) launcher_model_toggle_turbo_loads(m);
-    }
-
-    if (m->has_fullscreen_toggle) {
-        row_label("Fullscreen on launch", th);
-        bool fs = m->s.fullscreen != 0;
-        if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
     }
 
     // HD texture packs (NES module) — same enable + folder row as the legacy
