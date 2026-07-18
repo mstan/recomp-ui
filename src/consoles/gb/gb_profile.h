@@ -52,14 +52,21 @@ static const ButtonDef kGbPadButtons[] = {
 // persist through keybinds.ini, which the runtime reads (gb_binds.c bridge).
 static const char* const kPanelsSettingsGb[] = { "video", "audio", NULL };
 
-// ---- screen-model (LCD palette) vocabulary --------------------------------------
-// Mirrors the gb-recompiled runtime's DMG colorization palette list
-// (platform_sdl.cpp g_palette_names) by index — written back to
-// runtime_prefs.ini `palette`. For CGB carts the game renders its own colors
-// and this acts as the DMG-compatibility palette.
+// ---- screen-model (LCD palette + SGB) vocabulary --------------------------------
+// Indices 0..4 mirror the gb-recompiled runtime's DMG colorization palette list
+// (platform_sdl.cpp g_palette_names) and map to runtime_prefs.ini `video.palette`
+// with SGB colorization off. Indices 5..6 are the Super Game Boy models: the seam
+// maps them to sgb.colors=1 (+ sgb.cart_border), not to a DMG palette. For CGB
+// carts the game renders its own colors and this acts as the DMG-compat palette;
+// SGB models only affect SGB-enhanced carts. Keep in sync with the seam's
+// screen_kind <-> pref mapping (launcher_ui_seam.c) and the button width in
+// launcher_imgui.cpp (longest label = "Super Game Boy (No Border)").
 static const char* const kGbScreenKindNames[] = {
-    "DMG", "Game Boy Pocket", "Game Boy Light", "Black & White", "Amber (Phosphor)"
+    "DMG", "Game Boy Pocket", "Game Boy Light", "Black & White", "Amber (Phosphor)",
+    "Super Game Boy", "Super Game Boy (No Border)"
 };
+#define LNG_GB_SCREEN_KIND_SGB          5   /* Super Game Boy: colors + border */
+#define LNG_GB_SCREEN_KIND_SGB_NOBORDER 6   /* Super Game Boy: colors, no border */
 #define LNG_GB_SCREEN_KIND_COUNT \
     ((int)(sizeof(kGbScreenKindNames) / sizeof(kGbScreenKindNames[0])))
 

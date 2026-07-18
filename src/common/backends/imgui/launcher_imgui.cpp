@@ -1347,7 +1347,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 
     if (m->has_screen_kind) {
         row_label("Screen model", th);
-        if (ImGui::Button(launcher_model_screen_kind_label(m), ImVec2(px(130), px(30))))
+        // Wide enough for the longest label ("Super Game Boy (No Border)");
+        // shorter models (e.g. "DMG") center within the same fixed box.
+        if (ImGui::Button(launcher_model_screen_kind_label(m), ImVec2(px(220), px(30))))
             launcher_model_cycle_screen_kind(m);
     }
 
