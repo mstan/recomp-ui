@@ -168,6 +168,13 @@ typedef struct {
 
     // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
     bool hide_rebind;
+    // ---- mouse controls (GameInfo.has_mouse_controls; Snap) ----------------
+    // Borrowed capability flag: when true the source dropdown offers a
+    // "Keyboard + Mouse" entry and the Controller page shows a MOUSE card.
+    // The editable state itself lives in m->s (mouse_enabled / _sensitivity /
+    // _invert_x / _invert_y / _bind[]), like audio_device. False => none of
+    // the mouse surface composes and behavior is unchanged for every game.
+    bool has_mouse_controls;
     // Game-supplied aspect vocabulary (GameInfo.aspect_labels): when set,
     // the aspect cycle walks these 0..num_aspect_labels-1 instead of the
     // built-in 4:3/16:9/21:9 mask set; aspect_experimental tags the row.
@@ -403,6 +410,20 @@ void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name.
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name);
+
+// ---- mouse controls (has_mouse_controls games only; no-op otherwise) --------
+// Select the player-0 keyboard source with mouse-aim on (enabled != 0) or off
+// (enabled == 0). Sets player_src[0] = Keyboard via launcher_model_set_source
+// and records mouse_enabled. No-op unless has_mouse_controls.
+void launcher_model_set_mouse_source(LauncherModel* m, int enabled);
+// Set the mouse aim sensitivity; clamped to [0.01, 0.50].
+void launcher_model_set_mouse_sensitivity(LauncherModel* m, float value);
+void launcher_model_toggle_mouse_invert_x(LauncherModel* m);
+void launcher_model_toggle_mouse_invert_y(LauncherModel* m);
+// Bind mouse button `which` (0 Left, 1 Right, 2 Middle) to a button index into
+// the active profile's ControllerSpec.buttons[] (0..button_count-1), or -1 for
+// none. Out-of-range `which` is a no-op.
+void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index);
 
 // ---- skip-on-boot (footer switch + confirm modal) ----
 void launcher_model_request_skip_toggle(LauncherModel* m); // opens modal when enabling

@@ -129,6 +129,7 @@ int main(int argc, char** argv) {
             gi.num_renderers       = 3;
             gi.tpak_slots          = 4;
             gi.tpak_inspect        = proto_tpak_inspect;
+            gi.has_mouse_controls  = 1;   // preview the opt-in mouse-controls UI (Snap-style)
             // Box art is a per-GAME asset the host supplies (a real N64 host
             // passes its own gi.boxart_path); the shared preview ships none, so
             // point LNG_BOX at a local .tga to see the GAME card light up.

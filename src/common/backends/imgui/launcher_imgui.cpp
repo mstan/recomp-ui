@@ -1161,6 +1161,37 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
 // floating column inside one big CONTROLLERS box. A 1-player game shows a
 // single card (no wasted width); a 2-player game shows two identical cards side
 // by side. Same module, composed per the game's declared player count.
+// Input-source Selectables shared by the player card (##src) and the Controller
+// config (##csrc) combos. When the game sets has_mouse_controls, player 0's
+// keyboard entry splits into "Keyboard + Mouse" (mouse-aim on) and "Keyboard"
+// (off); otherwise it is the single legacy "Keyboard" entry, byte-for-byte
+// identical to before for every non-mouse game.
+void draw_source_selectables(LauncherModel* m, int p) {
+    if (ImGui::Selectable("None", m->s.player_src[p] == 0))
+        launcher_model_set_source(m, p, 0, 0, nullptr);
+    if (m->has_mouse_controls && p == 0) {
+        const bool kbm = m->s.player_src[p] == 1 && m->s.mouse_enabled;
+        const bool kb  = m->s.player_src[p] == 1 && !m->s.mouse_enabled;
+        if (ImGui::Selectable("Keyboard + Mouse", kbm))
+            launcher_model_set_mouse_source(m, 1);
+        if (ImGui::Selectable("Keyboard", kb))
+            launcher_model_set_mouse_source(m, 0);
+    } else {
+        if (ImGui::Selectable("Keyboard", m->s.player_src[p] == 1))
+            launcher_model_set_source(m, p, 1, 0, nullptr);
+    }
+    for (int i = 0; i < g_pad_count; ++i) {
+        bool sel = m->s.player_src[p] == 2 && m->player_pad_id[p] == g_pads[i].id;
+        if (ImGui::Selectable(g_pads[i].name, sel))
+            launcher_model_set_source(m, p, 2, g_pads[i].id, g_pads[i].name);
+    }
+    if (g_pad_count == 0) {
+        ImGui::BeginDisabled();
+        ImGui::Selectable("(no gamepad connected)");
+        ImGui::EndDisabled();
+    }
+}
+
 void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
     char eb[16];  snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
@@ -1194,20 +1225,7 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 
     ImGui::SetNextItemWidth(cw);
     if (ImGui::BeginCombo("##src", launcher_model_player_src_label(m, p))) {
-        if (ImGui::Selectable("None", m->s.player_src[p] == 0))
-            launcher_model_set_source(m, p, 0, 0, nullptr);
-        if (ImGui::Selectable("Keyboard", m->s.player_src[p] == 1))
-            launcher_model_set_source(m, p, 1, 0, nullptr);
-        for (int i = 0; i < g_pad_count; ++i) {
-            bool sel = m->s.player_src[p] == 2 && m->player_pad_id[p] == g_pads[i].id;
-            if (ImGui::Selectable(g_pads[i].name, sel))
-                launcher_model_set_source(m, p, 2, g_pads[i].id, g_pads[i].name);
-        }
-        if (g_pad_count == 0) {
-            ImGui::BeginDisabled();
-            ImGui::Selectable("(no gamepad connected)");
-            ImGui::EndDisabled();
-        }
+        draw_source_selectables(m, p);
         ImGui::EndCombo();
     }
     ImGui::Dummy(ImVec2(0, px(4)));
@@ -1792,20 +1810,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         row_label("Input source", th);
         ImGui::SetNextItemWidth(px(200));
         if (ImGui::BeginCombo("##csrc", launcher_model_player_src_label(m, p))) {
-            if (ImGui::Selectable("None", m->s.player_src[p] == 0))
-                launcher_model_set_source(m, p, 0, 0, nullptr);
-            if (ImGui::Selectable("Keyboard", m->s.player_src[p] == 1))
-                launcher_model_set_source(m, p, 1, 0, nullptr);
-            for (int i = 0; i < g_pad_count; ++i) {
-                bool sel = m->s.player_src[p] == 2 && m->player_pad_id[p] == g_pads[i].id;
-                if (ImGui::Selectable(g_pads[i].name, sel))
-                    launcher_model_set_source(m, p, 2, g_pads[i].id, g_pads[i].name);
-            }
-            if (g_pad_count == 0) {
-                ImGui::BeginDisabled();
-                ImGui::Selectable("(no gamepad connected)");
-                ImGui::EndDisabled();
-            }
+            draw_source_selectables(m, p);
             ImGui::EndCombo();
         }
         row_label("Deadzone", th);
@@ -1819,6 +1824,56 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     if (m->tpak_slots > p) {
         if (begin_panel("cfg_tpak", 0)) {
             draw_tpak_tile(m, th, p);
+        } end_panel();
+    }
+
+    // MOUSE card (opt-in, has_mouse_controls games only — Snap): shown whenever
+    // this player's source is a keyboard family. Sensitivity + Invert X/Y +
+    // three rebindable mouse buttons, each mapping to an N64 action. Placed
+    // after the source/deadzone card and before the bindings card. Entirely
+    // absent for every non-mouse game (has_mouse_controls == 0).
+    if (m->has_mouse_controls && m->s.player_src[p] == 1) {
+        if (begin_panel("cfg_mouse", 0)) {
+            eyebrow("MOUSE");
+
+            // Sensitivity: a float slider over the model's clamp range. The
+            // model re-clamps on set, so the slider can never commit a value
+            // outside [0.01, 0.50].
+            row_label("Sensitivity", th);
+            ImGui::SetNextItemWidth(px(200));
+            float sens = m->s.mouse_sensitivity;
+            if (ImGui::SliderFloat("##msens", &sens, 0.01f, 0.50f, "%.2f"))
+                launcher_model_set_mouse_sensitivity(m, sens);
+
+            // Invert toggles.
+            bool ix = m->s.mouse_invert_x != 0;
+            if (ImGui::Checkbox("Invert X", &ix)) launcher_model_toggle_mouse_invert_x(m);
+            bool iy = m->s.mouse_invert_y != 0;
+            if (ImGui::Checkbox("Invert Y", &iy)) launcher_model_toggle_mouse_invert_y(m);
+
+            // Three rebindable mouse buttons -> an N64 action (or None). The
+            // vocabulary is the active profile's ControllerSpec.buttons[].
+            const SystemProfile* prof = (const SystemProfile*)m->profile;
+            const ControllerSpec& spec = prof->controller;
+            static const char* kMouseRows[3] = { "Left click", "Right click", "Middle click" };
+            for (int i = 0; i < 3; ++i) {
+                ImGui::PushID(i);
+                row_label(kMouseRows[i], th);
+                const int cur = m->s.mouse_bind[i];
+                const char* cur_label = (cur >= 0 && cur < spec.button_count)
+                                        ? spec.buttons[cur].label : "None";
+                ImGui::SetNextItemWidth(px(200));
+                if (ImGui::BeginCombo("##mbtn", cur_label)) {
+                    if (ImGui::Selectable("None", cur < 0))
+                        launcher_model_set_mouse_bind(m, i, -1);
+                    for (int b = 0; b < spec.button_count; ++b) {
+                        if (ImGui::Selectable(spec.buttons[b].label, cur == b))
+                            launcher_model_set_mouse_bind(m, i, b);
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::PopID();
+            }
         } end_panel();
     }
 

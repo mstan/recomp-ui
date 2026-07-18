@@ -57,6 +57,10 @@ static int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+static float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
@@ -123,6 +127,7 @@ void launcher_model_init(LauncherModel* m,
         m->renderer_labels      = game->renderer_labels;
         m->num_renderers        = game->num_renderers;
         m->hide_rebind          = game->hide_rebind != 0;
+        m->has_mouse_controls   = game->has_mouse_controls != 0;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -199,6 +204,27 @@ void launcher_model_init(LauncherModel* m,
     if (m->has_deadzone_pct) {
         m->s.deadzone[0] = clampi((m->s.deadzone[0] / 5) * 5, 0, 50);
         m->s.deadzone[1] = m->s.deadzone[0];
+    }
+
+    // ---- mouse controls: seed/clamp against their own ranges ----------------
+    // Only touched when has_mouse_controls (every other game leaves the whole
+    // mouse_* block at its memset-zero state, untouched). The host normally
+    // seeds real defaults from its config; a zero sensitivity is the tell of a
+    // fresh/zero-initialized struct (e.g. a demo harness) — seed the full Snap
+    // default set in that case, otherwise just clamp the sensitivity.
+    if (m->has_mouse_controls) {
+        if (m->s.mouse_sensitivity <= 0.0f) {
+            m->s.player_src[0]      = 1;      // Keyboard (+ mouse) by default
+            m->s.mouse_enabled      = 1;
+            m->s.mouse_sensitivity  = 0.06f;
+            m->s.mouse_invert_x     = 0;
+            m->s.mouse_invert_y     = 1;
+            m->s.mouse_bind[0]      = 0;      // Left  -> A  (kN64PadButtons[0])
+            m->s.mouse_bind[1]      = 2;      // Right -> Z  (kN64PadButtons[2])
+            m->s.mouse_bind[2]      = -1;     // Middle-> none
+        } else {
+            m->s.mouse_sensitivity = clampf(m->s.mouse_sensitivity, 0.01f, 0.50f);
+        }
     }
 
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
@@ -859,6 +885,31 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
     }
 }
 
+// ---- mouse controls --------------------------------------------------------
+
+void launcher_model_set_mouse_source(LauncherModel* m, int enabled) {
+    if (!m->has_mouse_controls) return;
+    launcher_model_set_source(m, 0, 1, 0, NULL);   // player 0 -> Keyboard
+    m->s.mouse_enabled = enabled ? 1 : 0;
+}
+
+void launcher_model_set_mouse_sensitivity(LauncherModel* m, float value) {
+    m->s.mouse_sensitivity = clampf(value, 0.01f, 0.50f);
+}
+
+void launcher_model_toggle_mouse_invert_x(LauncherModel* m) {
+    m->s.mouse_invert_x = !m->s.mouse_invert_x;
+}
+
+void launcher_model_toggle_mouse_invert_y(LauncherModel* m) {
+    m->s.mouse_invert_y = !m->s.mouse_invert_y;
+}
+
+void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index) {
+    if (which < 0 || which > 2) return;
+    m->s.mouse_bind[which] = (button_index < 0) ? -1 : button_index;
+}
+
 void launcher_model_request_skip_toggle(LauncherModel* m) {
     if (!m->s.skip_launcher) {
         m->skip_modal_open = true;    // enabling: confirm first
@@ -917,6 +968,10 @@ const char* launcher_model_player_src_label(const LauncherModel* m, int player) 
     int src = clampi(m->s.player_src[player], 0, 2);
     if (src == 2 && m->player_pad_name[player][0])   // show the actual device name
         return m->player_pad_name[player];
+    // Mouse-capable games split the keyboard source (player 0 only): the label
+    // reflects whether mouse-aim is on. Every non-mouse game keeps kSrcNames.
+    if (src == 1 && m->has_mouse_controls && player == 0)
+        return m->s.mouse_enabled ? "Keyboard + Mouse" : "Keyboard";
     return kSrcNames[src];
 }
 

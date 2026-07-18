@@ -92,6 +92,25 @@ typedef struct RecompLauncherCSettings {
     char tpak_rom_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
     char tpak_save_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
     int  tpak_enabled[RECOMP_LAUNCHER_MAX_TPAKS];
+
+    // ---- mouse controls (GameInfo.has_mouse_controls games; Snap) -----------
+    // Opt-in mouse-aim for a keyboard-family source. Only meaningful for
+    // player 0 and only when the game sets has_mouse_controls; every other
+    // consumer leaves these zero (memset default) and is byte-for-byte
+    // unaffected. Appended additively at the end to keep the struct ABI-stable.
+    int   mouse_enabled;      // 1 = "Keyboard + Mouse" source (mouse-aim on),
+                              // 0 = plain "Keyboard" (mouse off). 0 = also the
+                              // unset default; the host seeds the real default.
+    float mouse_sensitivity;  // aim rate per mouse-pixel; default 0.06 (host
+                              // seeds it). Model clamps to [0.01, 0.50].
+                              // 0 = unset -> the model seeds 0.06.
+    int   mouse_invert_x;     // bool: invert horizontal mouse aim
+    int   mouse_invert_y;     // bool: invert vertical mouse aim (Snap default 1)
+    // Left/Right/Middle mouse button -> index into the active profile's
+    // ControllerSpec.buttons[] (0..button_count-1), or -1 = none/unbound.
+    // NOTE: 0 is a VALID index (the n64 profile's "A"), so 0 is NOT "unset"
+    // here — the host seeds real defaults ({A, Z, none} = {0, 2, -1}).
+    int   mouse_bind[3];
 } RecompLauncherCSettings;
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -268,6 +287,16 @@ typedef struct RecompLauncherCGameInfo {
      * bind file at all (PMS-J today) an editor that writes a file nothing
      * reads would be a lying UI. 0 (default/memset) keeps the grid. */
     int  hide_rebind;
+
+    /* ---- mouse controls (opt-in; Pokemon Snap) ---------------------------
+     * 1 = this game supports mouse-aim: the input-source dropdown grows a
+     * "Keyboard + Mouse" entry (the keyboard source with mouse-aim on) beside
+     * the plain "Keyboard" one, and a "MOUSE" card (sensitivity / invert /
+     * three rebindable mouse buttons) appears on the Controller page whenever
+     * a keyboard-family source is selected. Drives Settings.mouse_* above.
+     * 0 (default/memset) => none of that surface exists and every non-mouse
+     * consumer (SNES/PSX/GBA/PSR/PMS-J) is byte-for-byte unchanged. */
+    int  has_mouse_controls;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
