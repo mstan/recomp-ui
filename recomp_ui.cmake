@@ -115,7 +115,7 @@ function(recomp_target_launcher_ui TGT)
 
     # Vendored Dear ImGui (C++) — compiled only when the host does NOT already
     # provide it. Under HOST_IMGUI the host's single copy is reused (below).
-    if(NOT RUI_HOST_IMGUI)
+    if(NOT RECOMP_UI_HOST_IMGUI AND NOT RUI_HOST_IMGUI)
         target_sources(${TGT} PRIVATE
             ${RUI_IMGUI}/imgui.cpp
             ${RUI_IMGUI}/imgui_draw.cpp
