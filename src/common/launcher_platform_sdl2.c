@@ -23,6 +23,12 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     SDL_zerop(p);
 
     SDL_SetMainReady();   // we built with SDL_MAIN_HANDLED (real main() is entry)
+#if defined(_WIN32)
+    // Match the Windows compatibility override users discovered manually:
+    // let the launcher own DPI scaling instead of being bitmap-scaled by the OS.
+    SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+    SDL_SetHint("SDL_WINDOWS_DPI_SCALING", "0");
+#endif
 #ifdef LNG_GLES2
     // The host links ANGLE's libGLESv2/libEGL; SDL must create the context
     // through that same ES library (via EGL), or the directly-linked ANGLE
