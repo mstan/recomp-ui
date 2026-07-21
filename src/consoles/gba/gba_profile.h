@@ -125,7 +125,6 @@ static inline void launcher_profile_apply_gba(RecompLauncherCGameInfo* gi) {
     // LCD screen-model cycle, fullscreen-on-launch, and the BIOS path picker
     // (gbarecomp is LLE-BIOS by default — a real BIOS image is required).
     gi->has_screen_kind       = 1;
-    gi->has_fullscreen_toggle = 1;
     gi->has_bios              = 1;
     // widescreen_supported stays 0: per-game opt-in (e.g. Mega Man Zero's
     // extended view); most titles render the stock 240x160.

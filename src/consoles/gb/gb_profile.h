@@ -161,7 +161,6 @@ static inline void launcher_profile_apply_gb_common(RecompLauncherCGameInfo* gi)
     // gb settings surface: integer window scale + linear filter (base rows),
     // the LCD palette cycle, and fullscreen-on-launch. No BIOS picker.
     gi->has_screen_kind       = 1;
-    gi->has_fullscreen_toggle = 1;
     // widescreen_supported stays 0: per-game opt-in (Megaman Xtreme 2's
     // extended view); stock titles render the native 160x144.
 }

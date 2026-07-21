@@ -1554,12 +1554,13 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
 
 // True when this game exposes ANY of the deeper PSX-style DISPLAY controls.
 // SNES (and any console leaving every has_* flag 0) takes the legacy-only
-// branch below and gets EXACTLY today's 3-row DISPLAY card, unchanged.
+// branch below and gets the fixed-band DISPLAY card. Fullscreen is NOT part
+// of this predicate: it is a universal row drawn on BOTH branches (the ABI's
+// has_fullscreen_toggle no longer gates anything — see recomp_launcher.h).
 bool any_deep_display(const LauncherModel* m) {
     return m->has_window_size || m->has_renderer || m->has_supersampling ||
            m->has_antialiasing || m->has_texture_filter || m->has_screen_kind ||
-           m->has_frame_interp || m->has_skip_fmv || m->has_turbo_loads ||
-           m->has_fullscreen_toggle;
+           m->has_frame_interp || m->has_skip_fmv || m->has_turbo_loads;
 }
 
 // Whether the DISPLAY card should grow to fit its content (AutoResizeY) rather
@@ -1601,6 +1602,12 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Window scale", th, cw);
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
+        // Universal fullscreen row (every console; tri-state cycle restoring
+        // the RmlUi launcher's Off/Borderless/Exclusive vocabulary). Sits
+        // right under Window scale, matching the old Display panel order.
+        row_label("Fullscreen", th, cw);
+        if (ImGui::Button(launcher_model_fullscreen_label(m), ImVec2(px(120), px(30))))
+            launcher_model_cycle_fullscreen(m);
         if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
             row_label("Integer scaling", th, cw);
             bool is = m->s.integer_scale != 0;
@@ -1703,11 +1710,12 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_supersampling(m);
     }
 
-    if (m->has_fullscreen_toggle) {
-        row_label("Fullscreen", th);
-        bool fs = m->s.fullscreen != 0;
-        if (ImGui::Checkbox("##fson", &fs)) launcher_model_toggle_fullscreen(m);
-    }
+    // Universal fullscreen row (every console — no longer gated on the
+    // vestigial has_fullscreen_toggle). Tri-state cycle replaces the old
+    // binary checkbox so Exclusive mode is reachable again.
+    row_label("Fullscreen", th);
+    if (ImGui::Button(launcher_model_fullscreen_label(m), ImVec2(px(120), px(30))))
+        launcher_model_cycle_fullscreen(m);
 
     if (m->adaptive_view_supported) {
         row_label("Adaptive view", th);
@@ -2042,7 +2050,9 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const float gap  = px(th.spacing_md);
     const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
-    const float row_h = px(198.0f);   // legacy fixed band height
+    const float row_h = px(240.0f);   // legacy fixed band height (4 rows: the
+                                      // universal Fullscreen row joined scale/
+                                      // filter/widescreen on the legacy surface)
 
     const bool deep_display = video_card_grows(m);   // superset of any_deep_display: folds in NES + widescreen (N64 covered too)
     const bool deep_audio   = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */

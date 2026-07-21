@@ -70,7 +70,7 @@ static const SystemProfile kSystemProfileNes = {
     // password-save titles (Faxanadu) use password_save_path instead.
     /* save */    { SAVE_SRAM, 1, NULL },
     /* video */   {
-        /*window_scale*/1, /*fullscreen*/0, /*linear_filter*/1, /*widescreen*/1,
+        /*window_scale*/1, /*fullscreen*/1, /*linear_filter*/1, /*widescreen*/1,
         /*renderer*/0, /*supersampling*/0, /*screen_kind*/0, /*frame_interp*/0, /*aspect*/0,
         /*texture_filter*/0, /*antialiasing*/0, /*spu_hq*/0, /*skip_fmv*/0, /*turbo_loads*/0,
         /*bios*/0, /*deadzone*/0,

@@ -234,7 +234,8 @@ typedef struct {
     bool     has_spu_hq;
     bool     has_skip_fmv;
     bool     has_turbo_loads;
-    bool     has_fullscreen_toggle;
+    // (no has_fullscreen_toggle: the Fullscreen row is universal — every
+    // console draws it; the ABI flag of that name is deprecated/ignored.)
     bool     has_bios;
     bool     has_deadzone_pct;
     const char* rom_noun;             // "ROM" default; e.g. "Disc" for PSX
@@ -381,7 +382,9 @@ const char* launcher_model_interp_fps_label(const LauncherModel* m);  // "Displa
 void launcher_model_toggle_spu_hq(LauncherModel* m);
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
-void launcher_model_toggle_fullscreen(LauncherModel* m);       // simple on/off (PSX row)
+void launcher_model_cycle_fullscreen(LauncherModel* m);        // Off -> Borderless -> Exclusive, wraps
+const char* launcher_model_fullscreen_label(const LauncherModel* m);  // "Off"/"Borderless"/"Exclusive"
+void launcher_model_toggle_fullscreen(LauncherModel* m);       // binary on/off; kept for bool-style hosts
 void launcher_model_cycle_language(LauncherModel* m);          // wraps over num_languages
 const char* launcher_model_language_label(const LauncherModel* m);
 void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, wraps; mirrors both players

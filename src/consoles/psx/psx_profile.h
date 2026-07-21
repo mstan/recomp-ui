@@ -117,7 +117,7 @@ static inline void launcher_profile_apply_psx(RecompLauncherCGameInfo* gi) {
     gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 1;
     gi->has_antialiasing = 1; gi->has_texture_filter = 1; gi->has_screen_kind = 1;
     gi->has_frame_interp = 1; gi->has_spu_hq = 1; gi->has_skip_fmv = 1;
-    gi->has_turbo_loads = 1; gi->has_fullscreen_toggle = 1; gi->has_bios = 1;
+    gi->has_turbo_loads = 1; gi->has_bios = 1;
     gi->has_deadzone_pct = 1;
 }
 

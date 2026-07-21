@@ -113,7 +113,8 @@ void launcher_model_init(LauncherModel* m,
         m->has_spu_hq           = game->has_spu_hq != 0;
         m->has_skip_fmv         = game->has_skip_fmv != 0;
         m->has_turbo_loads      = game->has_turbo_loads != 0;
-        m->has_fullscreen_toggle = game->has_fullscreen_toggle != 0;
+        // game->has_fullscreen_toggle is deliberately NOT read: the Fullscreen
+        // row is universal (drawn for every console) — see recomp_launcher.h.
         m->has_bios             = game->has_bios != 0;
         m->has_deadzone_pct     = game->has_deadzone_pct != 0;
         m->rom_noun             = game->rom_noun ? game->rom_noun : "ROM";
@@ -644,10 +645,22 @@ void launcher_model_toggle_turbo_loads(LauncherModel* m) {
     m->s.turbo_loads = !m->s.turbo_loads;
 }
 
+// Fullscreen is a universal display setting: every console's runner applies
+// the committed tri-state (0 off / 1 borderless / 2 exclusive) to its window
+// at boot and persists it in its own config. The cycle walks all three
+// states, restoring the vocabulary of the original SNES RmlUi launcher.
+void launcher_model_cycle_fullscreen(LauncherModel* m) {
+    m->s.fullscreen = (clampi(m->s.fullscreen, 0, 2) + 1) % 3;
+}
+
+const char* launcher_model_fullscreen_label(const LauncherModel* m) {
+    static const char* const kNames[3] = { "Off", "Borderless", "Exclusive" };
+    return kNames[clampi(m->s.fullscreen, 0, 2)];
+}
+
 void launcher_model_toggle_fullscreen(LauncherModel* m) {
-    // Simple on/off PSX row: reuses the existing tri-state `fullscreen` field
-    // (0 off / 1 borderless / 2 exclusive) but only ever toggles between 0/1 —
-    // SNES's own fullscreen path (which offers exclusive mode) is untouched.
+    // Binary on/off (0 <-> 1); superseded in the UI by the tri-state cycle
+    // above but kept for hosts that drive the field as a bool.
     m->s.fullscreen = m->s.fullscreen ? 0 : 1;
 }
 

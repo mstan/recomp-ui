@@ -264,8 +264,8 @@ int main(int argc, char** argv) {
     // settings (0=LAUNCH, 1=QUIT). The standalone harness just reports it.
     if (act == LNG_ACTION_LAUNCH) {
         launcher_model_commit(&model, &s);
-        printf("[proto] LAUNCH  scale=%s filter=%d freq=%d skip=%d rom=%s\n",
-               launcher_model_scale_label(&model), s.linear_filter,
+        printf("[proto] LAUNCH  scale=%s fullscreen=%d filter=%d freq=%d skip=%d rom=%s\n",
+               launcher_model_scale_label(&model), s.fullscreen, s.linear_filter,
                s.audio_freq, s.skip_launcher, launcher_model_rom_path(&model));
     } else {
         printf("[proto] QUIT\n");

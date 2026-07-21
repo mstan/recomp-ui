@@ -231,7 +231,9 @@ typedef struct RecompLauncherCGameInfo {
     int  has_spu_hq;
     int  has_skip_fmv;          // Skip FMVs
     int  has_turbo_loads;
-    int  has_fullscreen_toggle; // simple on/off fullscreen row (PSX). (SNES keeps its own path.)
+    int  has_fullscreen_toggle; // DEPRECATED, ignored: the Fullscreen row is universal
+                                // (every console, tri-state 0 off/1 borderless/2 exclusive).
+                                // Kept only for ABI layout compatibility.
     int  has_bios;              // BIOS path picker
     int  has_deadzone_pct;      // single analog-deadzone % control
     const char* rom_noun;       // "ROM" (default/NULL) | "Disc" | "Cartridge" — the Change-<noun>

@@ -113,7 +113,6 @@ static inline void launcher_profile_apply_n64(RecompLauncherCGameInfo* gi) {
     gi->has_renderer          = 1;
     gi->has_supersampling     = 1;
     gi->has_antialiasing      = 1;
-    gi->has_fullscreen_toggle = 1;
     // num_players deliberately NOT defaulted here: 1-player Snap and 4-player
     // Stadium diverge too much for a console default to be safe — each game
     // must state its player count explicitly (0 would legacy-default to 2).
