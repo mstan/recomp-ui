@@ -37,6 +37,9 @@
   #define LNG_ImplSDL_Shutdown       ImGui_ImplSDL2_Shutdown
 #endif
 #include "imgui_impl_opengl3.h"
+#if defined(_MSC_VER)
+  #include <intrin.h>
+#endif
 
 // ---- Dear ImGui version compatibility ----------------------------------------
 // recomp-ui's vendored ImGui is 1.91.x, but a host can reuse its OWN single
@@ -2738,7 +2741,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // global — read back as NULL). This barrier + the `volatile` on g_th make
     // the store reliably observable. Do not remove without re-verifying on the
     // gb-recompiled (-Os + ANGLE) build.
+#if defined(_MSC_VER)
+    _ReadWriteBarrier();
+#else
     __asm__ __volatile__("" : : "r"(th) : "memory");
+#endif
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
 #ifdef LNG_GLES2
