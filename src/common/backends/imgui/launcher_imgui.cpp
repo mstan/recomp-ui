@@ -2687,9 +2687,31 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     return true;
 }
 
+bool is_absolute_path(const std::string& path) {
+    if (path.empty()) return false;
+    if (path[0] == '/' || path[0] == '\\') return true;
+    if (path.size() >= 3 && path[1] == ':' &&
+        ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        (path[2] == '/' || path[2] == '\\')) return true;
+    return false;
+}
+
+std::string normalized_path(const char* path) {
+    std::string out = path ? path : "";
+    for (char& ch : out)
+        if (ch == '\\') ch = '/';
+    return out;
+}
+
 std::string asset(const char* rel) {
+    std::string path = normalized_path(rel);
+    if (is_absolute_path(path)) return path;
+
     const char* base = SDL_GetBasePath();
-    return std::string(base ? base : "") + rel;
+    std::string out = normalized_path(base ? base : "");
+    if (!out.empty() && !path.empty() && out.back() != '/')
+        out.push_back('/');
+    return out + path;
 }
 
 } // namespace
@@ -2843,12 +2865,12 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         if (smoke_frames > 0 && ++frame > smoke_frames) { m->action = LNG_ACTION_QUIT; break; }
 
         SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
+        if (SDL_WaitEventTimeout(&ev, 16)) do {
             if (ev.type == SDL_EVENT_QUIT) p->should_quit = true;
             if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) p->should_quit = true;
             if (try_capture(m, ev)) continue;
             LNG_ImplSDL_ProcessEvent(&ev);
-        }
+        } while (SDL_PollEvent(&ev));
 
         launcher_platform_refresh_metrics(p);
         if (applied_scale != p->display_scale) {
