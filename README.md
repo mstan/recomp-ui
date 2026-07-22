@@ -102,11 +102,16 @@ password checks, member ordering, and synchronized launch signaling. The UI
 only presents that state and returns a `RecompLauncherCNetplayLaunch` result
 after the host starts the lobby.
 
+Hosts with more than one local network interface may implement the optional
+`local_address_get` callback to enumerate labeled address choices. The launcher
+prefills the first address, preserves the user's selection across refreshes,
+and falls back to the legacy single-address `local_ip` callback when the new
+callback is absent or returns no choices.
+
 The initial waiting-room UI supports two players. Hosts always bind UDP on
-`0.0.0.0`; the Host Lobby **LAN IP** dropdown (via optional `list_lan_ips`)
-picks which non-loopback address is advertised to joiners. Direct clients bind
-an ephemeral local UDP port, so a direct session requires only the host's
-exposed IP address and port.
+`0.0.0.0`; the Host Lobby interface dropdown picks which address is advertised
+to joiners. Direct clients bind an ephemeral local UDP port, so a direct
+session requires only the host's exposed IP address and port.
 
 ---
 

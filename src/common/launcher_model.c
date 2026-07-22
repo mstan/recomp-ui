@@ -162,8 +162,8 @@ void launcher_model_init(LauncherModel* m,
     }
     safe_copy(m->netplay_host_port, sizeof(m->netplay_host_port), "7777");
     safe_copy(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Detecting...");
-    m->netplay_lan_ip_count = 0;
-    m->netplay_lan_ip_index = 0;
+    m->netplay_host_local_ip[0] = '\0';
+    m->netplay_local_address_count = 0;
     safe_copy(m->netplay_direct_ip, sizeof(m->netplay_direct_ip), "127.0.0.1");
     safe_copy(m->netplay_direct_port, sizeof(m->netplay_direct_port), "7777");
     m->netplay_lan_only = true;

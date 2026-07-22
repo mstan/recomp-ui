@@ -30,9 +30,6 @@ extern "C" {
 /* The initial netplay launcher flow is intentionally limited to two players. */
 #define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 2
 
-/* Max IPv4 LAN advertise candidates returned by list_lan_ips. */
-#define RECOMP_LAUNCHER_NETPLAY_MAX_LAN_IPS 16
-
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
 typedef struct RecompLauncherCNetplayLobby {
@@ -61,6 +58,13 @@ typedef struct RecompLauncherCNetplayLaunch {
     uint32_t session_id;
     int      input_delay;
 } RecompLauncherCNetplayLaunch;
+
+typedef struct RecompLauncherCNetplayLocalAddress {
+    /* Numeric address advertised to clients, currently normally IPv4. */
+    char address[64];
+    /* User-facing interface name, for example "Wi-Fi" or "Ethernet". */
+    char label[64];
+} RecompLauncherCNetplayLocalAddress;
 
 typedef struct RecompLauncherCNetplayCallbacks {
     void* ctx;
@@ -97,11 +101,15 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*launch_pending)(void* ctx);
     void (*clear_launch_pending)(void* ctx);
     int  (*fill_launch)(void* ctx, RecompLauncherCNetplayLaunch* out);
-    /* Optional: enumerate non-loopback IPv4 addresses for the LAN IP dropdown.
-     * out_ips[i] receives a NUL-terminated dotted-quad; max_ips caps writes.
-     * Returns 1 when at least one address was written. Appended for ABI
-     * compatibility with older hosts that leave this NULL. */
-    int  (*list_lan_ips)(void* ctx, char out_ips[][64], int max_ips, int* out_count);
+    /*
+     * Optional multi-interface address discovery. Called with indices starting
+     * at zero until it returns 0. The launcher clears out before each call;
+     * address must be non-empty on success and label may be empty. Append-only
+     * for compatibility with positional callback-table initializers; local_ip
+     * remains the fallback.
+     */
+    int  (*local_address_get)(void* ctx, int index,
+                              RecompLauncherCNetplayLocalAddress* out);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
