@@ -25,6 +25,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define LNG_NETPLAY_MAX_LOCAL_ADDRESSES 8
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -290,6 +292,10 @@ typedef struct {
     char      netplay_host_password[64];
     char      netplay_host_port[16];
     char      netplay_host_ip[64];
+    char      netplay_host_local_ip[64];
+    int       netplay_local_address_count;
+    RecompLauncherCNetplayLocalAddress
+              netplay_local_addresses[LNG_NETPLAY_MAX_LOCAL_ADDRESSES];
     char      netplay_host_endpoint[96];
     bool      netplay_lan_only;
     bool      netplay_direct_modal_open;
