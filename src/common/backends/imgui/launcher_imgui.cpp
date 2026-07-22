@@ -1352,7 +1352,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
 
 void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
-    char eb[16];  snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
+    char eb[32];
+    if (p == 0 && m->netplay_supported)
+        snprintf(eb, sizeof(eb), "PLAYER 1 / NETPLAY");
+    else
+        snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
 
     if (!begin_panel(id, w, false)) { end_panel(); return; }
     ImGui::PushID(p);
@@ -2411,12 +2415,73 @@ void np_try_launch(LauncherModel* m) {
 void np_refresh_host_ip(LauncherModel* m) {
     const auto* np = np_cb(m);
     if (!np) return;
-    int ok = 0;
-    if (m->netplay_lan_only && np->local_ip)
-        ok = np->local_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
-    else if (!m->netplay_lan_only && np->external_ip)
-        ok = np->external_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
-    if (!ok) std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Unavailable");
+    m->netplay_local_address_count = 0;
+
+    if (m->netplay_lan_only) {
+        if (np->local_address_get) {
+            for (int index = 0; index < LNG_NETPLAY_MAX_LOCAL_ADDRESSES; ++index) {
+                RecompLauncherCNetplayLocalAddress candidate{};
+                if (!np->local_address_get(np->ctx, index, &candidate)) break;
+                candidate.address[sizeof(candidate.address) - 1] = '\0';
+                candidate.label[sizeof(candidate.label) - 1] = '\0';
+                if (!candidate.address[0]) continue;
+
+                bool duplicate = false;
+                for (int existing = 0; existing < m->netplay_local_address_count; ++existing) {
+                    if (std::strcmp(m->netplay_local_addresses[existing].address,
+                                    candidate.address) == 0) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) {
+                    m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
+                }
+            }
+        }
+
+        // Older hosts expose one preferred address through local_ip only.
+        if (m->netplay_local_address_count == 0 && np->local_ip) {
+            RecompLauncherCNetplayLocalAddress candidate{};
+            if (np->local_ip(np->ctx, candidate.address, sizeof(candidate.address)) &&
+                candidate.address[0]) {
+                candidate.address[sizeof(candidate.address) - 1] = '\0';
+                std::snprintf(candidate.label, sizeof(candidate.label), "Local network");
+                m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
+            }
+        }
+
+        if (m->netplay_local_address_count > 0) {
+            int selected = 0;
+            const char* preferred = m->netplay_host_local_ip[0]
+                ? m->netplay_host_local_ip : m->netplay_host_ip;
+            for (int index = 0; index < m->netplay_local_address_count; ++index) {
+                if (std::strcmp(preferred, m->netplay_local_addresses[index].address) == 0) {
+                    selected = index;
+                    break;
+                }
+            }
+            std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
+                          m->netplay_local_addresses[selected].address);
+            std::snprintf(m->netplay_host_local_ip, sizeof(m->netplay_host_local_ip), "%s",
+                          m->netplay_local_addresses[selected].address);
+            return;
+        }
+    } else if (np->external_ip &&
+               np->external_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip))) {
+        m->netplay_host_ip[sizeof(m->netplay_host_ip) - 1] = '\0';
+        return;
+    }
+
+    std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Unavailable");
+}
+
+void np_format_local_address(const RecompLauncherCNetplayLocalAddress& address,
+                             char* out, size_t out_len) {
+    if (address.label[0])
+        std::snprintf(out, out_len, "%s (%s)", address.label, address.address);
+    else
+        std::snprintf(out, out_len, "%s", address.address);
 }
 
 void draw_netplay_player_modal(LauncherModel* m) {
@@ -2568,8 +2633,39 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
         ImGui::SetNextItemWidth(px(300));
-        ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
-                         ImGuiInputTextFlags_ReadOnly);
+        if (m->netplay_lan_only && m->netplay_local_address_count > 1) {
+            int selected = 0;
+            for (int index = 0; index < m->netplay_local_address_count; ++index) {
+                if (std::strcmp(m->netplay_host_ip,
+                                m->netplay_local_addresses[index].address) == 0) {
+                    selected = index;
+                    break;
+                }
+            }
+            char preview[144];
+            np_format_local_address(m->netplay_local_addresses[selected],
+                                    preview, sizeof(preview));
+            if (ImGui::BeginCombo("##host_ip", preview)) {
+                for (int index = 0; index < m->netplay_local_address_count; ++index) {
+                    char choice[144];
+                    np_format_local_address(m->netplay_local_addresses[index],
+                                            choice, sizeof(choice));
+                    const bool is_selected = index == selected;
+                    if (ImGui::Selectable(choice, is_selected)) {
+                        std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
+                                      m->netplay_local_addresses[index].address);
+                        std::snprintf(m->netplay_host_local_ip,
+                                      sizeof(m->netplay_host_local_ip), "%s",
+                                      m->netplay_local_addresses[index].address);
+                    }
+                    if (is_selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
+                             ImGuiInputTextFlags_ReadOnly);
+        }
         ImGui::PopStyleColor(4);
         ImGui::EndGroup();
         ImGui::SameLine(0, px(10));

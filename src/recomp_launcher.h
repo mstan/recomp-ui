@@ -59,6 +59,13 @@ typedef struct RecompLauncherCNetplayLaunch {
     int      input_delay;
 } RecompLauncherCNetplayLaunch;
 
+typedef struct RecompLauncherCNetplayLocalAddress {
+    /* Numeric address advertised to clients, currently normally IPv4. */
+    char address[64];
+    /* User-facing interface name, for example "Wi-Fi" or "Ethernet". */
+    char label[64];
+} RecompLauncherCNetplayLocalAddress;
+
 typedef struct RecompLauncherCNetplayCallbacks {
     void* ctx;
     /* Configuration and connection state are host-owned and may be persisted. */
@@ -94,6 +101,15 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*launch_pending)(void* ctx);
     void (*clear_launch_pending)(void* ctx);
     int  (*fill_launch)(void* ctx, RecompLauncherCNetplayLaunch* out);
+    /*
+     * Optional multi-interface address discovery. Called with indices starting
+     * at zero until it returns 0. The launcher clears out before each call;
+     * address must be non-empty on success and label may be empty. Append-only
+     * for compatibility with positional callback-table initializers; local_ip
+     * remains the fallback.
+     */
+    int  (*local_address_get)(void* ctx, int index,
+                              RecompLauncherCNetplayLocalAddress* out);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
