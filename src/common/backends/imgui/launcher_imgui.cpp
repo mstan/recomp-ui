@@ -2820,6 +2820,8 @@ static void table_row_vcenter(float row_h, float content_h) {
 void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    /* Keep WS membership live while the room modal is up (join/leave/move). */
+    if (np->pump) np->pump(np->ctx);
     const bool in_room = m->netplay_local_room || (np->in_lobby && np->in_lobby(np->ctx));
     if (!in_room) {
         /* Close if we were kicked / lobby destroyed while the modal was open. */
