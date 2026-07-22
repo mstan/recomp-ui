@@ -39,6 +39,7 @@ typedef enum {
     LNG_VIEW_DASHBOARD = 0,
     LNG_VIEW_SETTINGS,
     LNG_VIEW_CONTROLLER,
+    LNG_VIEW_NETPLAY,
 } LngView;
 
 typedef enum {
@@ -190,6 +191,8 @@ typedef struct {
     // _invert_x / _invert_y / _bind[]), like audio_device. False => none of
     // the mouse surface composes and behavior is unchanged for every game.
     bool has_mouse_controls;
+    bool netplay_supported;
+    const RecompLauncherCNetplayCallbacks* netplay;
     // Game-supplied aspect vocabulary (GameInfo.aspect_labels): when set,
     // the aspect cycle walks these 0..num_aspect_labels-1 instead of the
     // built-in 4:3/16:9/21:9 mask set; aspect_experimental tags the row.
@@ -274,6 +277,26 @@ typedef struct {
     LngAction action;
     int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
+    bool      netplay_name_modal_open;
+    bool      netplay_name_prompted;
+    bool      netplay_host_modal_open;
+    bool      netplay_network_modal_open;
+    bool      netplay_password_modal_open;
+    bool      netplay_local_room;
+    int       netplay_selected_lobby;
+    char      netplay_name_edit[64];
+    char      netplay_lobby_url[256];
+    char      netplay_host_name[96];
+    char      netplay_host_password[64];
+    char      netplay_host_port[16];
+    char      netplay_host_ip[64];
+    char      netplay_host_endpoint[96];
+    bool      netplay_lan_only;
+    bool      netplay_direct_modal_open;
+    char      netplay_direct_ip[64];
+    char      netplay_direct_port[16];
+    char      netplay_password[64];
+    char      netplay_status[160];
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
     // SDL_JoystickID; name is cached for display if the device disconnects.

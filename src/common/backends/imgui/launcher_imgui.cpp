@@ -61,6 +61,7 @@
   #endif
 #endif
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -2366,6 +2367,552 @@ void draw_controller(LauncherModel* m, const LauncherTheme& th) {
     if (p) p->draw(m, &th);
 }
 
+const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m) {
+    return (m && m->netplay_supported) ? m->netplay : nullptr;
+}
+
+bool np_connected(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    return np && np->connected && np->connected(np->ctx);
+}
+
+bool np_valid_port(const char* text) {
+    if (!text || !text[0]) return false;
+    unsigned value = 0;
+    for (const char* p = text; *p; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        value = value * 10u + (unsigned)(*p - '0');
+        if (value > 65535u) return false;
+    }
+    return value != 0;
+}
+
+void np_connect_and_list(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    if (np->set_player_name && m->s.netplay_player_name[0])
+        np->set_player_name(np->ctx, m->s.netplay_player_name);
+    if (np->connect && (!np->connected || !np->connected(np->ctx)))
+        (void)np->connect(np->ctx);
+    if (np->request_list)
+        np->request_list(np->ctx);
+}
+
+void np_try_launch(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (!np || !np->fill_launch) return;
+    RecompLauncherCNetplayLaunch launch{};
+    if (!np->fill_launch(np->ctx, &launch) || !launch.enabled) return;
+    m->s.netplay_launch = launch;
+    if (np->clear_launch_pending) np->clear_launch_pending(np->ctx);
+    m->action = LNG_ACTION_LAUNCH;
+}
+
+void np_refresh_host_ip(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    int ok = 0;
+    if (m->netplay_lan_only && np->local_ip)
+        ok = np->local_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
+    else if (!m->netplay_lan_only && np->external_ip)
+        ok = np->external_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
+    if (!ok) std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Unavailable");
+}
+
+void draw_netplay_player_modal(LauncherModel* m) {
+    if (m->netplay_name_modal_open) ImGui::OpenPopup("Player Name");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Player Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::SetNextItemWidth(px(320));
+        bool save = ImGui::InputText("##player_name", m->netplay_name_edit,
+                                     sizeof(m->netplay_name_edit),
+                                     ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            const bool required_name = m->s.netplay_player_name[0] == '\0';
+            std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s",
+                          m->s.netplay_player_name);
+            m->netplay_name_modal_open = false;
+            if (required_name) {
+                m->netplay_name_prompted = false;
+                launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool valid_name = m->netplay_name_edit[0] != '\0';
+        ImGui::BeginDisabled(!valid_name);
+        if ((ImGui::Button("Save", ImVec2(px(120), 0)) || save) && valid_name) {
+            char previous_default[96];
+            std::snprintf(previous_default, sizeof(previous_default), "%s's Lobby",
+                          m->s.netplay_player_name);
+            const bool update_lobby_name = !m->netplay_host_name[0] ||
+                std::strcmp(m->netplay_host_name, previous_default) == 0;
+            std::snprintf(m->s.netplay_player_name, sizeof(m->s.netplay_player_name), "%s",
+                          m->netplay_name_edit);
+            if (update_lobby_name)
+                std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
+                              "%s's Lobby", m->s.netplay_player_name);
+            const auto* np = np_cb(m);
+            if (np && np->set_player_name) np->set_player_name(np->ctx, m->s.netplay_player_name);
+            m->netplay_name_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+}
+
+void draw_netplay_direct_modal(LauncherModel* m) {
+    if (m->netplay_direct_modal_open) ImGui::OpenPopup("Join Direct");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Join Direct", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Connect directly to a host by IP address and UDP port.");
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(px(280));
+        ImGui::InputText("Host IP", m->netplay_direct_ip, sizeof(m->netplay_direct_ip));
+        ImGui::SetNextItemWidth(px(160));
+        ImGui::InputText("Port", m->netplay_direct_port, sizeof(m->netplay_direct_port),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            m->netplay_direct_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool can_join = m->netplay_direct_ip[0] && np_valid_port(m->netplay_direct_port);
+        ImGui::BeginDisabled(!can_join);
+        if (ImGui::Button("Join Direct", ImVec2(px(140), 0))) {
+            m->s.netplay_launch.enabled = 1;
+            m->s.netplay_launch.local_slot = 1;
+            m->s.netplay_launch.input_player = 0;
+            m->s.netplay_launch.session_id = 1;
+            m->s.netplay_launch.input_delay = 2;
+            std::snprintf(m->s.netplay_launch.bind_hostport,
+                          sizeof(m->s.netplay_launch.bind_hostport), "0.0.0.0:0");
+            std::snprintf(m->s.netplay_launch.peer_hostport,
+                          sizeof(m->s.netplay_launch.peer_hostport), "%s:%s",
+                          m->netplay_direct_ip[0] ? m->netplay_direct_ip : "127.0.0.1",
+                          m->netplay_direct_port[0] ? m->netplay_direct_port : "7777");
+            m->netplay_direct_modal_open = false;
+            ImGui::CloseCurrentPopup();
+            m->action = LNG_ACTION_LAUNCH;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+}
+
+void draw_netplay_network_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->netplay_network_modal_open) ImGui::OpenPopup("Network Settings");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Network Settings", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(col(th.text_muted), "Lobby server URL");
+        ImGui::SetNextItemWidth(px(440));
+        bool save = ImGui::InputText("##lobby_server_url", m->netplay_lobby_url,
+                                     sizeof(m->netplay_lobby_url),
+                                     ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            const auto* np = np_cb(m);
+            const char* current = np && np->default_url ? np->default_url(np->ctx) : "";
+            std::snprintf(m->netplay_lobby_url, sizeof(m->netplay_lobby_url), "%s",
+                          current ? current : "");
+            m->netplay_network_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool valid_url = m->netplay_lobby_url[0] != '\0';
+        ImGui::BeginDisabled(!valid_url);
+        if ((ImGui::Button("Save", ImVec2(px(120), 0)) || save) && valid_url) {
+            const auto* np = np_cb(m);
+            if (np && np->set_lobby_url)
+                np->set_lobby_url(np->ctx, m->netplay_lobby_url);
+            np_connect_and_list(m);
+            m->netplay_network_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+}
+
+void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->netplay_host_modal_open) ImGui::OpenPopup("Host Lobby");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Host Lobby", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("LAN is for players on the same network. Internet play requires forwarding this UDP port to this PC.");
+        ImGui::Spacing();
+        ImGui::TextColored(col(th.text_muted), "Lobby name");
+        ImGui::SetNextItemWidth(px(430));
+        ImGui::InputText("##host_lobby_name", m->netplay_host_name,
+                         sizeof(m->netplay_host_name));
+        ImGui::Spacing();
+        bool lan = m->netplay_lan_only;
+        if (ImGui::Checkbox("LAN only", &lan)) {
+            m->netplay_lan_only = lan;
+            np_refresh_host_ip(m);
+        }
+        const float connection_y = ImGui::GetCursorPosY();
+        ImGui::BeginGroup();
+        ImGui::TextColored(col(th.text_muted), "IP address");
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col(th.background));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::SetNextItemWidth(px(300));
+        ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
+                         ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopStyleColor(4);
+        ImGui::EndGroup();
+        ImGui::SameLine(0, px(10));
+        ImGui::SetCursorPosY(connection_y);
+        ImGui::BeginGroup();
+        ImGui::TextColored(col(th.text_muted), "Port");
+        ImGui::SetNextItemWidth(px(120));
+        ImGui::InputText("##host_port", m->netplay_host_port, sizeof(m->netplay_host_port),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::EndGroup();
+        ImGui::Spacing();
+        ImGui::TextColored(col(th.text_muted), "Password (optional)");
+        ImGui::SetNextItemWidth(px(430));
+        ImGui::InputText("##host_password", m->netplay_host_password,
+                         sizeof(m->netplay_host_password), ImGuiInputTextFlags_Password);
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            m->netplay_host_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        const bool can_create = np_valid_port(m->netplay_host_port) &&
+            m->netplay_host_ip[0] && std::strcmp(m->netplay_host_ip, "Unavailable") != 0;
+        ImGui::BeginDisabled(!can_create);
+        if (ImGui::Button("Create Lobby", ImVec2(px(150), 0))) {
+            const auto* np = np_cb(m);
+            if (np && np->create) {
+                np_connect_and_list(m);
+                char endpoint[96];
+                std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
+                              m->netplay_host_ip[0] ? m->netplay_host_ip : "0.0.0.0",
+                              m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                const char* lobby = m->netplay_host_name[0]
+                    ? m->netplay_host_name : "Netplay Lobby";
+                int rc = np->create(np->ctx, lobby, endpoint,
+                                    m->netplay_host_password, &m->s);
+                std::snprintf(m->netplay_host_endpoint, sizeof(m->netplay_host_endpoint),
+                              "%s", endpoint);
+                m->netplay_local_room = (rc != 0 || !np_connected(m));
+                m->netplay_host_modal_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+}
+
+void draw_netplay_password_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->netplay_password_modal_open) ImGui::OpenPopup("Join Lobby");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Join Lobby", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::SetNextItemWidth(px(320));
+        ImGui::InputText("Password", m->netplay_password, sizeof(m->netplay_password),
+                         ImGuiInputTextFlags_Password);
+        if (m->netplay_status[0])
+            ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+        ImGui::Spacing();
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            m->netplay_password_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Join", ImVec2(px(120), 0))) {
+            const auto* np = np_cb(m);
+            RecompLauncherCNetplayLobby row{};
+            if (np && np->list_get && np->join &&
+                np->list_get(np->ctx, m->netplay_selected_lobby, &row)) {
+                int rc = np->join(np->ctx, row.lobby_id, m->netplay_password);
+                if (rc == 0) {
+                    if (strncmp(row.lobby_id, "lan:", 4) == 0) {
+                        m->netplay_local_room = true;
+                        std::snprintf(m->netplay_host_endpoint,
+                                      sizeof(m->netplay_host_endpoint), "%s",
+                                      row.lobby_id + 4);
+                    }
+                    m->netplay_password_modal_open = false;
+                    m->netplay_status[0] = '\0';
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                                  "Incorrect password.");
+                }
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    const bool in_room = m->netplay_local_room || (np->in_lobby && np->in_lobby(np->ctx));
+    if (!in_room) return;
+
+    ImGui::OpenPopup("LOBBY");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(540), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("LOBBY", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+
+    char room_ip[64] = "Lobby server";
+    char room_port[16] = "Managed";
+    if (m->netplay_host_endpoint[0]) {
+        std::snprintf(room_ip, sizeof(room_ip), "%s", m->netplay_host_endpoint);
+        char* colon = strrchr(room_ip, ':');
+        if (colon) {
+            std::snprintf(room_port, sizeof(room_port), "%s", colon + 1);
+            *colon = '\0';
+        }
+    }
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col(th.background));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    const float connection_y = ImGui::GetCursorPosY();
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("IP address");
+    ImGui::SetNextItemWidth(px(300));
+    ImGui::InputText("##lobby_ip", room_ip, sizeof(room_ip), ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+    ImGui::SameLine(0, px(10));
+    ImGui::SetCursorPosY(connection_y);
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("Port");
+    ImGui::SetNextItemWidth(px(120));
+    ImGui::InputText("##lobby_port", room_port, sizeof(room_port), ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+    ImGui::PopStyleColor(4);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    RecompLauncherCNetplayMember slots[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS]{};
+    bool occupied[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS] = {};
+    const bool is_host = np->is_host && np->is_host(np->ctx);
+    const int count = np->member_count ? np->member_count(np->ctx) : 0;
+    for (int i = 0; i < count; ++i) {
+        RecompLauncherCNetplayMember mem{};
+        if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
+        if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
+        slots[mem.slot] = mem;
+        occupied[mem.slot] = mem.display_name[0] != '\0';
+    }
+    if (ImGui::BeginTable("lobby_players", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
+        ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(90));
+        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(110));
+        ImGui::TableHeadersRow();
+        for (int slot = 0; slot < RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS; ++slot) {
+            const float member_row_h = px(42);
+            ImGui::PushID(slot);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, member_row_h);
+            ImGui::TableSetColumnIndex(0);
+            ImVec2 row_pos = ImGui::GetCursorScreenPos();
+            ImGui::Selectable("##member_row_drop", false,
+                              ImGuiSelectableFlags_SpanAllColumns |
+                              ImGuiSelectableFlags_AllowOverlap,
+                              ImVec2(0, member_row_h));
+            if (is_host && np->move_member && ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload("NETPLAY_MEMBER_SLOT")) {
+                    const int from_slot = *(const int*)payload->Data;
+                    if (from_slot != slot)
+                        (void)np->move_member(np->ctx, from_slot, slot);
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::SetCursorScreenPos(row_pos);
+            ImGui::InvisibleButton("##member_drag_handle", ImVec2(px(28), member_row_h));
+            ImVec2 grip_min = ImGui::GetItemRectMin();
+            ImVec2 grip_max = ImGui::GetItemRectMax();
+            const float grip_cx = (grip_min.x + grip_max.x) * 0.5f;
+            const float grip_cy = (grip_min.y + grip_max.y) * 0.5f;
+            ImU32 grip_col = imcol(is_host && occupied[slot] ? th.text_muted : th.border);
+            ImDrawList* grip_dl = ImGui::GetWindowDrawList();
+            for (int line = -1; line <= 1; ++line) {
+                const float y = grip_cy + px(4) * line;
+                grip_dl->AddLine(ImVec2(grip_cx - px(7), y),
+                                 ImVec2(grip_cx + px(7), y), grip_col, px(1.5f));
+            }
+            if (is_host && np->move_member && occupied[slot]) {
+                if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    ImGui::SetDragDropPayload("NETPLAY_MEMBER_SLOT", &slot, sizeof(slot));
+                    ImGui::BeginGroup();
+                    ImGui::Text("Player %d", slot + 1);
+                    ImGui::SameLine(0, px(28));
+                    ImGui::TextUnformatted(slots[slot].display_name);
+                    ImGui::SameLine(0, px(28));
+                    ImGui::TextColored(col(th.good), "%s",
+                                       slots[slot].is_host ? "Host" : "Connected");
+                    ImGui::EndGroup();
+                    ImGui::EndDragDropSource();
+                }
+            }
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("Player %d", slot + 1);
+            ImGui::TableSetColumnIndex(2);
+            if (!occupied[slot]) ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextUnformatted(occupied[slot] ? slots[slot].display_name : "Open slot");
+            if (!occupied[slot]) ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(3);
+            if (occupied[slot] && slots[slot].is_host)
+                ImGui::TextColored(col(th.good), "Host");
+            else if (occupied[slot])
+                ImGui::TextColored(col(th.good), "Connected");
+            else
+                ImGui::TextColored(col(th.text_muted), "Waiting");
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    if (!is_host) {
+        ImGui::TextColored(col(th.text_muted), "Waiting for the host to start.");
+    } else {
+        ImGui::BeginDisabled(!occupied[1]);
+        if (ImGui::Button("Start Lobby", ImVec2(px(150), px(36)))) {
+            if (np->request_start)
+                (void)np->request_start(np->ctx, &m->s);
+        }
+        ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Leave Lobby", ImVec2(px(130), px(36)))) {
+        m->netplay_local_room = false;
+        if (np->leave) (void)np->leave(np->ctx);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void np_join_selected(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    if (m->netplay_selected_lobby < 0) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Select a lobby from the server list.");
+        return;
+    }
+    RecompLauncherCNetplayLobby row{};
+    if (!np->list_get || !np->list_get(np->ctx, m->netplay_selected_lobby, &row)) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Selected lobby is no longer available.");
+        return;
+    }
+    if (row.has_password) {
+        m->netplay_password[0] = '\0';
+        m->netplay_password_modal_open = true;
+    } else if (np->join) {
+        if (np->join(np->ctx, row.lobby_id, "") == 0 &&
+            strncmp(row.lobby_id, "lan:", 4) == 0) {
+            m->netplay_local_room = true;
+            std::snprintf(m->netplay_host_endpoint, sizeof(m->netplay_host_endpoint),
+                          "%s", row.lobby_id + 4);
+        }
+    }
+}
+
+void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    if (!m->s.netplay_player_name[0] && !m->netplay_name_modal_open && !m->netplay_name_prompted) {
+        m->netplay_name_prompted = true;
+        m->netplay_name_modal_open = true;
+    }
+    if (np->pump) np->pump(np->ctx);
+    if (np->launch_pending && np->launch_pending(np->ctx))
+        np_try_launch(m);
+
+    begin_container("netplay_lobbies", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImGui::TextColored(col(th.accent2), "LOBBIES");
+    const char* url = np->default_url ? np->default_url(np->ctx) : "";
+    ImGui::TextColored(col(th.text_muted), "%s - %s",
+                       np_connected(m) ? "Connected" : "Disconnected",
+                       url && url[0] ? url : "lobby server");
+    if (m->netplay_status[0])
+        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+    ImGui::Separator();
+    int rows = np->list_count ? np->list_count(np->ctx) : 0;
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(px(8), px(9)));
+    if (ImGui::BeginTable("netplay_lobby_table", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Lobby", ImGuiTableColumnFlags_WidthStretch, 0.54f);
+        ImGui::TableSetupColumn("Game", ImGuiTableColumnFlags_WidthStretch, 0.24f);
+        ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthStretch, 0.12f);
+        ImGui::TableSetupColumn("Join", ImGuiTableColumnFlags_WidthFixed, px(100));
+        ImGui::TableHeadersRow();
+        if (rows <= 0) {
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, px(48));
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("No lobbies yet - host one.");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted("");
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted("");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted("");
+        }
+        for (int i = 0; i < rows; ++i) {
+            RecompLauncherCNetplayLobby row{};
+            if (!np->list_get || !np->list_get(np->ctx, i, &row)) continue;
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            bool selected = (m->netplay_selected_lobby == i);
+            char lobby_label[96];
+            std::snprintf(lobby_label, sizeof(lobby_label), "%s%s",
+                          row.name[0] ? row.name : "Lobby",
+                          row.has_password ? "  [locked]" : "");
+            if (ImGui::Selectable(lobby_label, selected,
+                                  ImGuiSelectableFlags_SpanAllColumns |
+                                  ImGuiSelectableFlags_AllowOverlap |
+                                  ImGuiSelectableFlags_AllowDoubleClick)) {
+                m->netplay_selected_lobby = i;
+                m->netplay_status[0] = '\0';
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    np_join_selected(m);
+            }
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(col(th.text_muted), "%s", row.game_name);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%d / %d", row.player_count, row.max_slots);
+            ImGui::TableSetColumnIndex(3);
+            if (ImGui::Button("Join", ImVec2(-FLT_MIN, px(30)))) {
+                m->netplay_selected_lobby = i;
+                m->netplay_status[0] = '\0';
+                np_join_selected(m);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+    end_container();
+}
+
 // ---- panel registry: id -> {view, slot, available, draw} --------------------
 // The single implementation table for every panel this backend draws. A
 // SystemProfile's panels_dashboard/panels_settings/panels_controller arrays
@@ -2413,6 +2960,39 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         if (ImGui::Checkbox("Skip launcher on boot", &skip))
             launcher_model_request_skip_toggle(m);
     }
+    if (m->view == LNG_VIEW_NETPLAY) {
+        const float action_w = px(190.0f);
+        const float settings_w = px(170.0f);
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y));
+        if (ImGui::Button("Host Lobby", ImVec2(action_w, play_h))) {
+            if (!m->s.netplay_player_name[0]) {
+                m->netplay_name_modal_open = true;
+                return;
+            }
+            np_connect_and_list(m);
+            m->netplay_lan_only = true;
+            np_refresh_host_ip(m);
+            if (!m->netplay_host_name[0]) {
+                std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
+                              "%s's Lobby", m->s.netplay_player_name);
+            }
+            m->netplay_host_password[0] = '\0';
+            m->netplay_host_modal_open = true;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + action_w + px(10), cta_y));
+        if (ImGui::Button("Network Settings", ImVec2(settings_w, play_h))) {
+            const auto* np = np_cb(m);
+            const char* current = np && np->default_url ? np->default_url(np->ctx) : "";
+            std::snprintf(m->netplay_lobby_url, sizeof(m->netplay_lobby_url), "%s",
+                          current ? current : "");
+            m->netplay_network_modal_open = true;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + fullw - action_w, cta_y));
+        if (ImGui::Button("Join Direct", ImVec2(action_w, play_h))) {
+            m->netplay_direct_modal_open = true;
+        }
+        return;
+    }
     // Back/Cancel (Circle/O on a DualSense, B on Xbox, Backspace on keyboard) AND
     // Start re-home the focus ring to PLAY. Directional nav through the card child
     // windows is easy to wander out of with no way back; these are the forcing
@@ -2425,7 +3005,16 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) ||
         ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
         ImGui::SetKeyboardFocusHere();
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + fullw - play_w, cta_y));
+    float play_x = origin.x + fullw - play_w;
+    if (m->view == LNG_VIEW_DASHBOARD && m->netplay_supported) {
+        const float net_w = px(170.0f);
+        ImGui::SetCursorScreenPos(ImVec2(play_x - net_w - px(12.0f), cta_y));
+        if (ImGui::Button("NETPLAY", ImVec2(net_w, play_h))) {
+            np_connect_and_list(m);
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+        }
+    }
+    ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
     if (neon_cta("##play", "PLAY", ImVec2(play_w, play_h)))
         m->action = LNG_ACTION_LAUNCH;
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
@@ -2519,11 +3108,22 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
             ImGui::PopStyleColor();
         }
     ImGui::EndGroup();
-    {   // right-aligned nav button
+    {   // right-aligned netplay name + nav buttons
         const char* label = (m->view == LNG_VIEW_DASHBOARD) ? "Settings" : "< Back";
         const float w = px(110.0f);
-        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + px(6.0f));
+        const float name_w = px(170.0f);
+        float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        float nav_y = hdr_top + px(6.0f);
+        if (m->view == LNG_VIEW_NETPLAY && m->netplay_supported) {
+            ImGui::SetCursorPos(ImVec2(right - w - name_w - px(10.0f), nav_y));
+            const char* player_label = m->s.netplay_player_name[0] ? m->s.netplay_player_name : "Set player name";
+            if (ImGui::Button(player_label, ImVec2(name_w, px(34)))) {
+                std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s",
+                              m->s.netplay_player_name);
+                m->netplay_name_modal_open = true;
+            }
+        }
+        ImGui::SetCursorPos(ImVec2(right - w, nav_y));
         if (ImGui::Button(label, ImVec2(w, px(34)))) {
             launcher_model_set_view(m, m->view == LNG_VIEW_DASHBOARD
                                         ? LNG_VIEW_SETTINGS : LNG_VIEW_DASHBOARD);
@@ -2553,11 +3153,18 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         case LNG_VIEW_DASHBOARD:  draw_dashboard(m, th, logical_w); break;
         case LNG_VIEW_SETTINGS:   draw_settings(m, th);             break;
         case LNG_VIEW_CONTROLLER: draw_controller(m, th);           break;
+        case LNG_VIEW_NETPLAY:    draw_netplay(m, th);              break;
     }
     end_container();
 
     draw_footer(m, th, footer_h);
     draw_skip_modal(m);
+    draw_netplay_player_modal(m);
+    draw_netplay_network_modal(m, th);
+    draw_netplay_host_modal(m, th);
+    draw_netplay_password_modal(m, th);
+    draw_netplay_direct_modal(m);
+    draw_netplay_room_modal(m, th);
     // Transfer Pak config modal (N64): opened by any tile, dashboard or
     // Controller page. Drawn at root so it isn't clipped by a card child.
     if (m->tpak_slots > 0) draw_tpak_modal(m, th);
