@@ -134,9 +134,25 @@ const LauncherPanel* find_composed(const char* const* ids, const char* id, Launc
     return nullptr;
 }
 
+// Merge an optional TTF over the active font when the file exists.
+static void merge_font_if_present(const char* path, float size,
+                                  const ImWchar* ranges) {
+    if (!path || !path[0] || !ranges) return;
+    if (FILE* f = fopen(path, "rb")) {
+        fclose(f);
+        ImFontConfig cfg;
+        cfg.OversampleH = 2;
+        cfg.OversampleV = 2;
+        cfg.MergeMode = true;
+        cfg.PixelSnapH = true;
+        ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &cfg, ranges);
+    }
+}
+
 // ---- DPI: rebuild fonts + re-derive style from an unscaled baseline ----------
 void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
-                 const char* jp_font_path) {
+                 const char* jp_font_path, const char* symbols_font_path,
+                 const char* emoji_font_path) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig cfg; cfg.OversampleH = 2; cfg.OversampleV = 2;
@@ -166,6 +182,28 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
                                          io.Fonts->GetGlyphRangesJapanese());
         }
     }
+    // Symbol / emoji fallbacks (kick 🥾, lock 🔒, etc.). Outline fonts only —
+    // CBDT color emoji (Noto Color Emoji) is not supported by stb_truetype.
+    static const ImWchar kSymbolRanges[] = {
+        0x2000, 0x206F,   // General Punctuation
+        0x2190, 0x21FF,   // Arrows
+        0x2300, 0x23FF,   // Misc Technical
+        0x2460, 0x24FF,   // Enclosed Alphanumerics
+        0x25A0, 0x25FF,   // Geometric Shapes
+        0x2600, 0x26FF,   // Misc Symbols
+        0x2700, 0x27BF,   // Dingbats
+        0x2B00, 0x2BFF,   // Misc Symbols and Arrows
+        0,
+    };
+    static const ImWchar kEmojiRanges[] = {
+        0x1F300, 0x1F5FF, // Misc Symbols and Pictographs (incl. 🔒)
+        0x1F600, 0x1F64F, // Emoticons
+        0x1F680, 0x1F6FF, // Transport and Map
+        0x1F900, 0x1F9FF, // Supplemental Symbols and Pictographs (incl. 🥾)
+        0,
+    };
+    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
+    merge_font_if_present(emoji_font_path, body, kEmojiRanges);
     io.Fonts->Build();
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     ImGui_ImplOpenGL3_CreateFontsTexture();
@@ -2772,16 +2810,31 @@ void draw_netplay_password_modal(LauncherModel* m, const LauncherTheme& th) {
     }
 }
 
+/* Vertically center the next widget inside a fixed-height table row. */
+static void table_row_vcenter(float row_h, float content_h) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float y = p.y + (row_h - content_h) * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(p.x, y));
+}
+
 void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
     const bool in_room = m->netplay_local_room || (np->in_lobby && np->in_lobby(np->ctx));
-    if (!in_room) return;
+    if (!in_room) {
+        /* Close if we were kicked / lobby destroyed while the modal was open. */
+        if (ImGui::BeginPopupModal("LOBBY", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            m->netplay_local_room = false;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        return;
+    }
 
     ImGui::OpenPopup("LOBBY");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(px(540), 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(px(580), 0), ImGuiCond_Appearing);
     if (!ImGui::BeginPopupModal("LOBBY", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 
     /* LAN/direct rooms show the advertised endpoint; online rooms show the
@@ -2798,6 +2851,7 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 *colon = '\0';
             }
         }
+        ImGui::BeginDisabled(true);
         if (ImGui::BeginTable("##lobby_lan_conn", 2, ImGuiTableFlags_SizingFixedFit)) {
             ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(300));
             ImGui::TableSetupColumn("port", ImGuiTableColumnFlags_WidthFixed, px(120));
@@ -2817,6 +2871,7 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                              ImGuiInputTextFlags_ReadOnly);
             ImGui::EndTable();
         }
+        ImGui::EndDisabled();
     } else {
         char lobby_server[256];
         const char* url = np->default_url ? np->default_url(np->ctx) : "";
@@ -2845,14 +2900,16 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         slots[mem.slot] = mem;
         occupied[mem.slot] = mem.display_name[0] != '\0';
     }
-    if (ImGui::BeginTable("lobby_players", 4,
+    if (ImGui::BeginTable("lobby_players", 5,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
         ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(90));
         ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(110));
+        ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
         ImGui::TableHeadersRow();
+        const float text_h = ImGui::GetTextLineHeight();
         for (int slot = 0; slot < RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS; ++slot) {
             const float member_row_h = px(42);
             ImGui::PushID(slot);
@@ -2901,18 +2958,60 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 }
             }
             ImGui::TableSetColumnIndex(1);
+            table_row_vcenter(member_row_h, text_h);
             ImGui::Text("Player %d", slot + 1);
             ImGui::TableSetColumnIndex(2);
+            table_row_vcenter(member_row_h, text_h);
             if (!occupied[slot]) ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
             ImGui::TextUnformatted(occupied[slot] ? slots[slot].display_name : "Open slot");
             if (!occupied[slot]) ImGui::PopStyleColor();
             ImGui::TableSetColumnIndex(3);
+            table_row_vcenter(member_row_h, text_h);
             if (occupied[slot] && slots[slot].is_host)
                 ImGui::TextColored(col(th.good), "Host");
             else if (occupied[slot])
                 ImGui::TextColored(col(th.good), "Connected");
             else
                 ImGui::TextColored(col(th.text_muted), "Waiting");
+            ImGui::TableSetColumnIndex(4);
+            {
+                const float kick_btn = px(34);
+                const bool can_kick = is_host && occupied[slot] &&
+                                      !slots[slot].is_host && np->kick_member;
+                ImVec2 cell = ImGui::GetCursorScreenPos();
+                const float avail_x = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorScreenPos(ImVec2(
+                    cell.x + (avail_x - kick_btn) * 0.5f,
+                    cell.y + (member_row_h - kick_btn) * 0.5f));
+                ImGui::BeginDisabled(!can_kick);
+                /* Empty label + manual glyph draw: emoji fonts have uneven
+                 * metrics so ButtonTextAlign alone leaves the boot off-center. */
+                const bool pressed = ImGui::Button("##kick", ImVec2(kick_btn, kick_btn));
+                {
+                    const char* boot = u8"\U0001F97E";
+                    const ImVec2 rmin = ImGui::GetItemRectMin();
+                    const ImVec2 rmax = ImGui::GetItemRectMax();
+                    const ImVec2 ts = ImGui::CalcTextSize(boot);
+                    const ImVec2 tp((rmin.x + rmax.x - ts.x) * 0.5f,
+                                    (rmin.y + rmax.y - ts.y) * 0.5f);
+                    const ImU32 boot_col = ImGui::GetColorU32(
+                        can_kick ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+                    ImGui::GetWindowDrawList()->AddText(tp, boot_col, boot);
+                }
+                if (pressed && can_kick)
+                    (void)np->kick_member(np->ctx, slot);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    if (can_kick)
+                        ImGui::SetTooltip("Kick player");
+                    else if (!is_host)
+                        ImGui::SetTooltip("Only the host can kick");
+                    else if (occupied[slot] && slots[slot].is_host)
+                        ImGui::SetTooltip("Cannot kick the host");
+                    else
+                        ImGui::SetTooltip("Open slot");
+                }
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -3030,10 +3129,20 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TableSetColumnIndex(2);
             ImGui::Text("%d / %d", row.player_count, row.max_slots);
             ImGui::TableSetColumnIndex(3);
-            if (ImGui::Button("Join", ImVec2(-FLT_MIN, px(30)))) {
-                m->netplay_selected_lobby = i;
-                m->netplay_status[0] = '\0';
-                np_join_selected(m);
+            {
+                const float btn_w = px(72);
+                const float btn_h = px(30);
+                const float avail = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                    (avail - btn_w) * 0.5f);
+                ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign,
+                                   ImVec2(0.5f, 0.5f));
+                if (ImGui::Button("Join", ImVec2(btn_w, btn_h))) {
+                    m->netplay_selected_lobby = i;
+                    m->netplay_status[0] = '\0';
+                    np_join_selected(m);
+                }
+                ImGui::PopStyleVar();
             }
             ImGui::PopID();
         }
@@ -3591,6 +3700,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // Games that don't ship it stay Latin-only (fopen in apply_scale fails
     // silently), so this path is inert for every other console.
     std::string jp_font_path = asset("assets/fonts/NotoSansJP-Subset.ttf");
+    std::string symbols_font_path =
+        asset("assets/fonts/NotoSansSymbols2-Regular.ttf");
+    std::string emoji_font_path =
+        asset("assets/fonts/OpenMoji-black-glyf.ttf");
     float applied_scale = 0.0f;
     launcher_debug_init();
 
@@ -3618,7 +3731,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         launcher_platform_refresh_metrics(p);
         if (applied_scale != p->display_scale) {
-            apply_scale(*th, p->display_scale, font_path.c_str(), jp_font_path.c_str());
+            apply_scale(*th, p->display_scale, font_path.c_str(),
+                        jp_font_path.c_str(), symbols_font_path.c_str(),
+                        emoji_font_path.c_str());
             applied_scale = p->display_scale;
         }
 
