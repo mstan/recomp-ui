@@ -2623,15 +2623,19 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             if (m->netplay_local_address_count == 0)
                 np_refresh_host_ip(m);
         }
-        const float connection_y = ImGui::GetCursorPosY();
+        /* Shared label row + field row so IP combo and Port input share the
+         * same baseline (SameLine+SetCursorPosY was drifting the Port column). */
+        const float ip_w = px(300);
+        const float port_w = px(120);
+        const float gap = px(10);
+        const float col0_x = ImGui::GetCursorPosX();
+        const float col1_x = col0_x + ip_w + gap;
         ImGui::BeginDisabled(!m->netplay_lan_only);
-        ImGui::BeginGroup();
         ImGui::TextColored(col(th.text_muted), "IP address");
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::SetNextItemWidth(px(300));
+        ImGui::SameLine(0, 0);
+        ImGui::SetCursorPosX(col1_x);
+        ImGui::TextColored(col(th.text_muted), "Port");
+        ImGui::SetNextItemWidth(ip_w);
         if (m->netplay_local_address_count > 1) {
             int selected = 0;
             for (int index = 0; index < m->netplay_local_address_count; ++index) {
@@ -2665,16 +2669,11 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
                              ImGuiInputTextFlags_ReadOnly);
         }
-        ImGui::PopStyleColor(4);
-        ImGui::EndGroup();
-        ImGui::SameLine(0, px(10));
-        ImGui::SetCursorPosY(connection_y);
-        ImGui::BeginGroup();
-        ImGui::TextColored(col(th.text_muted), "Port");
-        ImGui::SetNextItemWidth(px(120));
+        ImGui::SameLine(0, 0);
+        ImGui::SetCursorPosX(col1_x);
+        ImGui::SetNextItemWidth(port_w);
         ImGui::InputText("##host_port", m->netplay_host_port, sizeof(m->netplay_host_port),
                          ImGuiInputTextFlags_CharsDecimal);
-        ImGui::EndGroup();
         ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::TextColored(col(th.text_muted), "Password (optional)");
