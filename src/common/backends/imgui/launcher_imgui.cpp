@@ -2613,8 +2613,6 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Host Lobby", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("LAN is for players on the same network. Internet play requires forwarding this UDP port to this PC.");
-        ImGui::Spacing();
         ImGui::TextColored(col(th.text_muted), "Lobby name");
         ImGui::SetNextItemWidth(px(430));
         ImGui::InputText("##host_lobby_name", m->netplay_host_name,
