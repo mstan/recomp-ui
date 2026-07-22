@@ -1352,7 +1352,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
 
 void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
-    char eb[16];  snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
+    char eb[32];
+    if (p == 0 && m->netplay_supported)
+        snprintf(eb, sizeof(eb), "PLAYER 1 / NETPLAY");
+    else
+        snprintf(eb, sizeof(eb), "PLAYER %d", p + 1);
 
     if (!begin_panel(id, w, false)) { end_panel(); return; }
     ImGui::PushID(p);
