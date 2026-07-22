@@ -190,6 +190,7 @@ function(recomp_target_launcher_ui TGT)
                 ${RUI_ASSETS}/consoles/psx/img/pad_analog.tga
                 ${RUI_ASSETS}/consoles/psx/img/pad_digital.tga
                 ${RUI_ASSETS}/consoles/psx/img/memcard.tga
+                ${RUI_ASSETS}/consoles/psx/img/brand_psx.tga
                 ${RUI_ASSETS}/consoles/gba/img/pad_gba.tga
                 ${RUI_ASSETS}/consoles/n64/img/pad_n64.tga
                 ${RUI_ASSETS}/consoles/n64/img/brand_n64.tga
