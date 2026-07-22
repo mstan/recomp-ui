@@ -30,6 +30,9 @@ extern "C" {
 /* The initial netplay launcher flow is intentionally limited to two players. */
 #define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 2
 
+/* Max IPv4 LAN advertise candidates returned by list_lan_ips. */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_LAN_IPS 16
+
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
 typedef struct RecompLauncherCNetplayLobby {
@@ -94,6 +97,11 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*launch_pending)(void* ctx);
     void (*clear_launch_pending)(void* ctx);
     int  (*fill_launch)(void* ctx, RecompLauncherCNetplayLaunch* out);
+    /* Optional: enumerate non-loopback IPv4 addresses for the LAN IP dropdown.
+     * out_ips[i] receives a NUL-terminated dotted-quad; max_ips caps writes.
+     * Returns 1 when at least one address was written. Appended for ABI
+     * compatibility with older hosts that leave this NULL. */
+    int  (*list_lan_ips)(void* ctx, char out_ips[][64], int max_ips, int* out_count);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).

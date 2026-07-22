@@ -2411,10 +2411,48 @@ void np_try_launch(LauncherModel* m) {
 void np_refresh_host_ip(LauncherModel* m) {
     const auto* np = np_cb(m);
     if (!np) return;
+    if (m->netplay_lan_only) {
+        m->netplay_lan_ip_count = 0;
+        m->netplay_lan_ip_index = 0;
+        char preferred[64] = {};
+        if (np->local_ip)
+            (void)np->local_ip(np->ctx, preferred, sizeof(preferred));
+        int count = 0;
+        if (np->list_lan_ips) {
+            (void)np->list_lan_ips(np->ctx, m->netplay_lan_ips,
+                                   RECOMP_LAUNCHER_NETPLAY_MAX_LAN_IPS, &count);
+            if (count < 0) count = 0;
+            if (count > RECOMP_LAUNCHER_NETPLAY_MAX_LAN_IPS)
+                count = RECOMP_LAUNCHER_NETPLAY_MAX_LAN_IPS;
+        }
+        if (count == 0 && preferred[0] &&
+            std::strcmp(preferred, "Unavailable") != 0) {
+            std::snprintf(m->netplay_lan_ips[0], sizeof(m->netplay_lan_ips[0]),
+                          "%s", preferred);
+            count = 1;
+        }
+        m->netplay_lan_ip_count = count;
+        int sel = 0;
+        if (preferred[0]) {
+            for (int i = 0; i < count; ++i) {
+                if (std::strcmp(m->netplay_lan_ips[i], preferred) == 0) {
+                    sel = i;
+                    break;
+                }
+            }
+        }
+        m->netplay_lan_ip_index = sel;
+        if (count > 0) {
+            std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
+                          m->netplay_lan_ips[sel]);
+        } else {
+            std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip),
+                          "Unavailable");
+        }
+        return;
+    }
     int ok = 0;
-    if (m->netplay_lan_only && np->local_ip)
-        ok = np->local_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
-    else if (!m->netplay_lan_only && np->external_ip)
+    if (np->external_ip)
         ok = np->external_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip));
     if (!ok) std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Unavailable");
 }
@@ -2562,15 +2600,37 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         const float connection_y = ImGui::GetCursorPosY();
         ImGui::BeginGroup();
-        ImGui::TextColored(col(th.text_muted), "IP address");
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
-        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::SetNextItemWidth(px(300));
-        ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
-                         ImGuiInputTextFlags_ReadOnly);
-        ImGui::PopStyleColor(4);
+        if (m->netplay_lan_only) {
+            ImGui::TextColored(col(th.text_muted), "LAN IP");
+            ImGui::SetNextItemWidth(px(300));
+            const char* preview = (m->netplay_lan_ip_count > 0 &&
+                                   m->netplay_lan_ip_index >= 0 &&
+                                   m->netplay_lan_ip_index < m->netplay_lan_ip_count)
+                ? m->netplay_lan_ips[m->netplay_lan_ip_index]
+                : (m->netplay_host_ip[0] ? m->netplay_host_ip : "Unavailable");
+            if (ImGui::BeginCombo("##host_lan_ip", preview)) {
+                for (int i = 0; i < m->netplay_lan_ip_count; ++i) {
+                    const bool selected = (i == m->netplay_lan_ip_index);
+                    if (ImGui::Selectable(m->netplay_lan_ips[i], selected)) {
+                        m->netplay_lan_ip_index = i;
+                        std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip),
+                                      "%s", m->netplay_lan_ips[i]);
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            ImGui::TextColored(col(th.text_muted), "Public IP");
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col(th.background));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::SetNextItemWidth(px(300));
+            ImGui::InputText("##host_ip", m->netplay_host_ip, sizeof(m->netplay_host_ip),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopStyleColor(4);
+        }
         ImGui::EndGroup();
         ImGui::SameLine(0, px(10));
         ImGui::SetCursorPosY(connection_y);
@@ -2598,9 +2658,11 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             const auto* np = np_cb(m);
             if (np && np->create) {
                 np_connect_and_list(m);
+                /* Advertise the selected LAN/public IP to peers. The UDP socket
+                 * always binds 0.0.0.0 at launch (all interfaces). */
                 char endpoint[96];
                 std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
-                              m->netplay_host_ip[0] ? m->netplay_host_ip : "0.0.0.0",
+                              m->netplay_host_ip[0] ? m->netplay_host_ip : "127.0.0.1",
                               m->netplay_host_port[0] ? m->netplay_host_port : "7777");
                 const char* lobby = m->netplay_host_name[0]
                     ? m->netplay_host_name : "Netplay Lobby";

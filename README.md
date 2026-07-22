@@ -102,9 +102,11 @@ password checks, member ordering, and synchronized launch signaling. The UI
 only presents that state and returns a `RecompLauncherCNetplayLaunch` result
 after the host starts the lobby.
 
-The initial waiting-room UI supports two players. Direct clients bind to an
-ephemeral local UDP port, so a direct session requires only the host's exposed
-IP address and port.
+The initial waiting-room UI supports two players. Hosts always bind UDP on
+`0.0.0.0`; the Host Lobby **LAN IP** dropdown (via optional `list_lan_ips`)
+picks which non-loopback address is advertised to joiners. Direct clients bind
+an ephemeral local UDP port, so a direct session requires only the host's
+exposed IP address and port.
 
 ---
 
