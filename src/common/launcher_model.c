@@ -166,7 +166,7 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_local_address_count = 0;
     safe_copy(m->netplay_direct_ip, sizeof(m->netplay_direct_ip), "127.0.0.1");
     safe_copy(m->netplay_direct_port, sizeof(m->netplay_direct_port), "7777");
-    m->netplay_lan_only = true;
+    m->netplay_lan_only = false;
     m->netplay_selected_lobby = -1;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;

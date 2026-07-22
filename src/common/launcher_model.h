@@ -297,7 +297,7 @@ typedef struct {
     RecompLauncherCNetplayLocalAddress
               netplay_local_addresses[LNG_NETPLAY_MAX_LOCAL_ADDRESSES];
     char      netplay_host_endpoint[96];
-    bool      netplay_lan_only;
+    bool      netplay_lan_only;   /* "LAN/Direct IP"; false = online / ICE path */
     bool      netplay_direct_modal_open;
     char      netplay_direct_ip[64];
     char      netplay_direct_port[16];

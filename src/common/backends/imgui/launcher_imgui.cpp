@@ -2417,59 +2417,56 @@ void np_refresh_host_ip(LauncherModel* m) {
     if (!np) return;
     m->netplay_local_address_count = 0;
 
-    if (m->netplay_lan_only) {
-        if (np->local_address_get) {
-            for (int index = 0; index < LNG_NETPLAY_MAX_LOCAL_ADDRESSES; ++index) {
-                RecompLauncherCNetplayLocalAddress candidate{};
-                if (!np->local_address_get(np->ctx, index, &candidate)) break;
-                candidate.address[sizeof(candidate.address) - 1] = '\0';
-                candidate.label[sizeof(candidate.label) - 1] = '\0';
-                if (!candidate.address[0]) continue;
-
-                bool duplicate = false;
-                for (int existing = 0; existing < m->netplay_local_address_count; ++existing) {
-                    if (std::strcmp(m->netplay_local_addresses[existing].address,
-                                    candidate.address) == 0) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate) {
-                    m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
-                }
-            }
-        }
-
-        // Older hosts expose one preferred address through local_ip only.
-        if (m->netplay_local_address_count == 0 && np->local_ip) {
+    /* Always enumerate local interfaces so the Host Lobby dropdown keeps its
+     * selection visible (greyed) when LAN/Direct IP is unchecked. Online create
+     * advertises 0.0.0.0 for server rewrite / ICE — not this pick. */
+    if (np->local_address_get) {
+        for (int index = 0; index < LNG_NETPLAY_MAX_LOCAL_ADDRESSES; ++index) {
             RecompLauncherCNetplayLocalAddress candidate{};
-            if (np->local_ip(np->ctx, candidate.address, sizeof(candidate.address)) &&
-                candidate.address[0]) {
-                candidate.address[sizeof(candidate.address) - 1] = '\0';
-                std::snprintf(candidate.label, sizeof(candidate.label), "Local network");
-                m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
-            }
-        }
+            if (!np->local_address_get(np->ctx, index, &candidate)) break;
+            candidate.address[sizeof(candidate.address) - 1] = '\0';
+            candidate.label[sizeof(candidate.label) - 1] = '\0';
+            if (!candidate.address[0]) continue;
 
-        if (m->netplay_local_address_count > 0) {
-            int selected = 0;
-            const char* preferred = m->netplay_host_local_ip[0]
-                ? m->netplay_host_local_ip : m->netplay_host_ip;
-            for (int index = 0; index < m->netplay_local_address_count; ++index) {
-                if (std::strcmp(preferred, m->netplay_local_addresses[index].address) == 0) {
-                    selected = index;
+            bool duplicate = false;
+            for (int existing = 0; existing < m->netplay_local_address_count; ++existing) {
+                if (std::strcmp(m->netplay_local_addresses[existing].address,
+                                candidate.address) == 0) {
+                    duplicate = true;
                     break;
                 }
             }
-            std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
-                          m->netplay_local_addresses[selected].address);
-            std::snprintf(m->netplay_host_local_ip, sizeof(m->netplay_host_local_ip), "%s",
-                          m->netplay_local_addresses[selected].address);
-            return;
+            if (!duplicate) {
+                m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
+            }
         }
-    } else if (np->external_ip &&
-               np->external_ip(np->ctx, m->netplay_host_ip, sizeof(m->netplay_host_ip))) {
-        m->netplay_host_ip[sizeof(m->netplay_host_ip) - 1] = '\0';
+    }
+
+    // Older hosts expose one preferred address through local_ip only.
+    if (m->netplay_local_address_count == 0 && np->local_ip) {
+        RecompLauncherCNetplayLocalAddress candidate{};
+        if (np->local_ip(np->ctx, candidate.address, sizeof(candidate.address)) &&
+            candidate.address[0]) {
+            candidate.address[sizeof(candidate.address) - 1] = '\0';
+            std::snprintf(candidate.label, sizeof(candidate.label), "Local network");
+            m->netplay_local_addresses[m->netplay_local_address_count++] = candidate;
+        }
+    }
+
+    if (m->netplay_local_address_count > 0) {
+        int selected = 0;
+        const char* preferred = m->netplay_host_local_ip[0]
+            ? m->netplay_host_local_ip : m->netplay_host_ip;
+        for (int index = 0; index < m->netplay_local_address_count; ++index) {
+            if (std::strcmp(preferred, m->netplay_local_addresses[index].address) == 0) {
+                selected = index;
+                break;
+            }
+        }
+        std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
+                      m->netplay_local_addresses[selected].address);
+        std::snprintf(m->netplay_host_local_ip, sizeof(m->netplay_host_local_ip), "%s",
+                      m->netplay_local_addresses[selected].address);
         return;
     }
 
@@ -2619,11 +2616,15 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                          sizeof(m->netplay_host_name));
         ImGui::Spacing();
         bool lan = m->netplay_lan_only;
-        if (ImGui::Checkbox("LAN only", &lan)) {
+        if (ImGui::Checkbox("LAN/Direct IP", &lan)) {
             m->netplay_lan_only = lan;
-            np_refresh_host_ip(m);
+            /* Keep the enumerated interfaces + selection; only the enabled
+             * state changes. Refresh if we somehow have no list yet. */
+            if (m->netplay_local_address_count == 0)
+                np_refresh_host_ip(m);
         }
         const float connection_y = ImGui::GetCursorPosY();
+        ImGui::BeginDisabled(!m->netplay_lan_only);
         ImGui::BeginGroup();
         ImGui::TextColored(col(th.text_muted), "IP address");
         ImGui::PushStyleColor(ImGuiCol_FrameBg, col(th.background));
@@ -2631,7 +2632,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col(th.background));
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
         ImGui::SetNextItemWidth(px(300));
-        if (m->netplay_lan_only && m->netplay_local_address_count > 1) {
+        if (m->netplay_local_address_count > 1) {
             int selected = 0;
             for (int index = 0; index < m->netplay_local_address_count; ++index) {
                 if (std::strcmp(m->netplay_host_ip,
@@ -2674,6 +2675,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::InputText("##host_port", m->netplay_host_port, sizeof(m->netplay_host_port),
                          ImGuiInputTextFlags_CharsDecimal);
         ImGui::EndGroup();
+        ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::TextColored(col(th.text_muted), "Password (optional)");
         ImGui::SetNextItemWidth(px(430));
@@ -2685,19 +2687,30 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        const bool can_create = np_valid_port(m->netplay_host_port) &&
-            m->netplay_host_ip[0] && std::strcmp(m->netplay_host_ip, "Unavailable") != 0;
+        /* Online (unchecked): IP/port are unused for peer connect — allow create
+         * without a resolvable LAN address. LAN/Direct IP: require a pick + port. */
+        const bool can_create = m->netplay_lan_only
+            ? (np_valid_port(m->netplay_host_port) &&
+               m->netplay_host_ip[0] &&
+               std::strcmp(m->netplay_host_ip, "Unavailable") != 0)
+            : true;
         ImGui::BeginDisabled(!can_create);
         if (ImGui::Button("Create Lobby", ImVec2(px(150), 0))) {
             const auto* np = np_cb(m);
             if (np && np->create) {
                 np_connect_and_list(m);
-                /* Advertise the selected LAN/public IP to peers. The UDP socket
-                 * always binds 0.0.0.0 at launch (all interfaces). */
+                /* LAN/Direct IP: advertise the selected interface:port. Online:
+                 * bind-all so the lobby server can rewrite / ICE can gather.
+                 * The UDP socket always binds 0.0.0.0 at launch. */
                 char endpoint[96];
-                std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
-                              m->netplay_host_ip[0] ? m->netplay_host_ip : "127.0.0.1",
-                              m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                if (m->netplay_lan_only) {
+                    std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
+                                  m->netplay_host_ip[0] ? m->netplay_host_ip : "127.0.0.1",
+                                  m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                } else {
+                    std::snprintf(endpoint, sizeof(endpoint), "0.0.0.0:%s",
+                                  m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                }
                 const char* lobby = m->netplay_host_name[0]
                     ? m->netplay_host_name : "Netplay Lobby";
                 int rc = np->create(np->ctx, lobby, endpoint,
@@ -3066,7 +3079,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 return;
             }
             np_connect_and_list(m);
-            m->netplay_lan_only = true;
+            m->netplay_lan_only = false;
             np_refresh_host_ip(m);
             if (!m->netplay_host_name[0]) {
                 std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
