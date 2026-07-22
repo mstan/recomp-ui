@@ -87,13 +87,24 @@ int rc = recomp_launcher_run_window("My Game — Launcher", &io, &gi,
 #endif
 ```
 
-Keep whatever launcher you had (RmlUi / in-tree) as the default and gate the
-recomp-ui path behind `-DRECOMP_LAUNCHER` (or your own option) during migration.
-
 The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-C
 settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
 for console-specific verification the launcher re-runs on change — e.g. PSX disc
 identification (`disc_verify`) and memory-card inspection (`memcard_inspect`).
+
+### Optional netplay surface
+
+Netplay is enabled by the game developer, not by an end-user setting. Set
+`RecompLauncherCGameInfo.netplay_supported` and provide a
+`RecompLauncherCNetplayCallbacks` table to expose the Netplay button. The host
+owns player-name and lobby-server persistence, LAN/remote lobby discovery,
+password checks, member ordering, and synchronized launch signaling. The UI
+only presents that state and returns a `RecompLauncherCNetplayLaunch` result
+after the host starts the lobby.
+
+The initial waiting-room UI supports two players. Direct clients bind to an
+ephemeral local UDP port, so a direct session requires only the host's exposed
+IP address and port.
 
 ---
 

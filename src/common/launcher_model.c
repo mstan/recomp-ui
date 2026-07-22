@@ -41,7 +41,7 @@ static const char* kHotkeyNames[LNG_HK_COUNT] = {
     "Window bigger", "Window smaller", "Volume up", "Volume down",
     "FPS readout", "Toggle renderer"
 };
-static const char* kViewNames[3] = { "Dashboard", "Settings", "Controller" };
+static const char* kViewNames[4] = { "Dashboard", "Settings", "Controller", "Netplay" };
 static const char* kSrcNames[3]  = { "None", "Keyboard", "Gamepad" };
 
 static void safe_copy(char* dst, size_t cap, const char* src) {
@@ -135,6 +135,8 @@ void launcher_model_init(LauncherModel* m,
         m->num_renderers        = game->num_renderers;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
+        m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
+        m->netplay              = game->netplay;
     } else {
         m->game_name    = "Unknown Game";
         m->region       = "";
@@ -144,6 +146,26 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+    memset(&m->s.netplay_launch, 0, sizeof(m->s.netplay_launch));
+    if (!m->s.netplay_player_name[0] && m->netplay && m->netplay->player_name) {
+        safe_copy(m->s.netplay_player_name, sizeof(m->s.netplay_player_name),
+                  m->netplay->player_name(m->netplay->ctx));
+    }
+    safe_copy(m->netplay_name_edit, sizeof(m->netplay_name_edit), m->s.netplay_player_name);
+    if (m->netplay && m->netplay->default_url) {
+        safe_copy(m->netplay_lobby_url, sizeof(m->netplay_lobby_url),
+                  m->netplay->default_url(m->netplay->ctx));
+    }
+    if (m->s.netplay_player_name[0]) {
+        snprintf(m->netplay_host_name, sizeof(m->netplay_host_name), "%s's Lobby",
+                 m->s.netplay_player_name);
+    }
+    safe_copy(m->netplay_host_port, sizeof(m->netplay_host_port), "7777");
+    safe_copy(m->netplay_host_ip, sizeof(m->netplay_host_ip), "Detecting...");
+    safe_copy(m->netplay_direct_ip, sizeof(m->netplay_direct_ip), "127.0.0.1");
+    safe_copy(m->netplay_direct_port, sizeof(m->netplay_direct_port), "7777");
+    m->netplay_lan_only = true;
+    m->netplay_selected_lobby = -1;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
@@ -422,6 +444,7 @@ bool launcher_model_rom_verified(const LauncherModel* m) {
 }
 
 void launcher_model_set_view(LauncherModel* m, LngView v) {
+    if (v < 0 || v > LNG_VIEW_NETPLAY) return;
     m->view = v;
 }
 
@@ -1151,6 +1174,6 @@ const char* launcher_hotkey_name(LngHotkey h) {
 }
 
 const char* launcher_view_name(LngView v) {
-    if (v < 0 || v > LNG_VIEW_CONTROLLER) return "?";
+    if (v < 0 || v > LNG_VIEW_NETPLAY) return "?";
     return kViewNames[v];
 }

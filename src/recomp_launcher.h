@@ -27,8 +27,77 @@ extern "C" {
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
 
+/* The initial netplay launcher flow is intentionally limited to two players. */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 2
+
+typedef struct RecompLauncherCSettings RecompLauncherCSettings;
+
+typedef struct RecompLauncherCNetplayLobby {
+    char lobby_id[40];
+    char name[64];
+    char game_name[64];
+    char game_version[32];
+    int  player_count;
+    int  max_slots;
+    int  has_password;
+} RecompLauncherCNetplayLobby;
+
+typedef struct RecompLauncherCNetplayMember {
+    int  slot;
+    char display_name[64];
+    int  ready;
+    int  is_host;
+} RecompLauncherCNetplayMember;
+
+typedef struct RecompLauncherCNetplayLaunch {
+    int      enabled;
+    int      local_slot;
+    int      input_player;
+    char     bind_hostport[64];
+    char     peer_hostport[64];
+    uint32_t session_id;
+    int      input_delay;
+} RecompLauncherCNetplayLaunch;
+
+typedef struct RecompLauncherCNetplayCallbacks {
+    void* ctx;
+    /* Configuration and connection state are host-owned and may be persisted. */
+    const char* (*default_url)(void* ctx);
+    void (*set_lobby_url)(void* ctx, const char* url);
+    int  (*connect)(void* ctx);
+    int  (*connected)(void* ctx);
+    void (*pump)(void* ctx);
+    void (*set_player_name)(void* ctx, const char* name);
+    const char* (*player_name)(void* ctx);
+    /* list_* exposes the host's combined remote and LAN discovery results. */
+    void (*request_list)(void* ctx);
+    int  (*list_count)(void* ctx);
+    int  (*list_get)(void* ctx, int index, RecompLauncherCNetplayLobby* out);
+    /* Address discovery used by the Host Lobby modal. */
+    int  (*local_ip)(void* ctx, char* out, size_t out_len);
+    int  (*external_ip)(void* ctx, char* out, size_t out_len);
+    /* Lobby operations return 0 when the request was accepted. */
+    int  (*create)(void* ctx, const char* lobby_name, const char* host_endpoint,
+                   const char* password, const RecompLauncherCSettings* settings);
+    int  (*join)(void* ctx, const char* lobby_id, const char* password);
+    int  (*leave)(void* ctx);
+    int  (*in_lobby)(void* ctx);
+    int  (*is_host)(void* ctx);
+    int  (*member_count)(void* ctx);
+    int  (*member_get)(void* ctx, int index, RecompLauncherCNetplayMember* out);
+    int  (*move_member)(void* ctx, int from_slot, int to_slot);
+    int  (*local_ready)(void* ctx);
+    int  (*all_ready)(void* ctx);
+    int  (*set_ready)(void* ctx, int ready);
+    int  (*request_start)(void* ctx, const RecompLauncherCSettings* settings);
+    /* All peers launch only after the host's start request becomes pending. */
+    int  (*launch_pending)(void* ctx);
+    void (*clear_launch_pending)(void* ctx);
+    int  (*fill_launch)(void* ctx, RecompLauncherCNetplayLaunch* out);
+} RecompLauncherCNetplayCallbacks;
+
 // Plain-C mirror of the launcher's internal settings (bools as int).
-typedef struct RecompLauncherCSettings {
+struct RecompLauncherCSettings {
     int  output_method;     // 0 SDL, 1 SDL-software, 2 OpenGL
     int  window_scale;      // 1..N
     int  fullscreen;        // 0 off, 1 borderless, 2 exclusive
@@ -126,7 +195,13 @@ typedef struct RecompLauncherCSettings {
     // In a window, the fixed aspect selects the initial size before live
     // resizing takes over. Adaptive + fullscreen ignores the fixed aspect.
     int  adaptive_view;       // bool: logical width follows host drawable aspect
-} RecompLauncherCSettings;
+
+    // ---- netplay launch result (capability-gated by GameInfo.netplay_supported)
+    // player_name is persistent host-owned identity; netplay_launch is a
+    // transient output and is cleared by the launcher when it initializes.
+    char netplay_player_name[64];
+    RecompLauncherCNetplayLaunch netplay_launch;
+};
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
 // Plain-C structs so a host can implement the callbacks with zero launcher
@@ -335,6 +410,12 @@ typedef struct RecompLauncherCGameInfo {
     // an Adaptive view toggle. Adaptive + fullscreen leaves the fixed aspect
     // control visible but disabled because the display chooses the live width.
     int  adaptive_view_supported;
+
+    // Netplay is a title/developer capability, not a user setting. When set,
+    // the dashboard exposes lobby host/join controls through host-owned
+    // callbacks.
+    int netplay_supported;
+    const RecompLauncherCNetplayCallbacks* netplay;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
