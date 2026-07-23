@@ -122,6 +122,10 @@ typedef struct RecompLauncherCNetplayCallbacks {
                               RecompLauncherCNetplayLocalAddress* out);
     /* Host-only: remove the player in `slot` (not the host). Optional. */
     int  (*kick_member)(void* ctx, int slot);
+    /* Optional: latest lobby error code (need_players, missing_endpoints, …).
+     * Cleared by the host after the UI reads it, or when a later op succeeds. */
+    const char* (*last_error)(void* ctx);
+    void (*clear_last_error)(void* ctx);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).

@@ -2920,11 +2920,35 @@ static void table_row_vcenter(float row_h, float content_h) {
     ImGui::SetCursorScreenPos(ImVec2(p.x, y));
 }
 
+static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayCallbacks* np) {
+    if (!m || !np || !np->last_error) return;
+    const char* err = np->last_error(np->ctx);
+    if (!err || !err[0]) return;
+    if (std::strcmp(err, "need_players") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Need two players before starting.");
+    else if (std::strcmp(err, "missing_endpoints") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Guest connection info missing — have them rejoin.");
+    else if (std::strcmp(err, "not_host") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Only the host can start the match.");
+    else if (std::strcmp(err, "not_all_ready") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Lobby server is outdated (ready gate). Retry Play, or "
+                      "redeploy recomp-net-server main.");
+    else
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Lobby error: %s", err);
+    if (np->clear_last_error) np->clear_last_error(np->ctx);
+}
+
 void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
     /* Keep membership live while the room modal is up (join/leave/move/kick). */
     if (np->pump) np->pump(np->ctx);
+    np_ingest_last_error(m, np);
     if (np->launch_pending && np->launch_pending(np->ctx))
         np_try_launch(m);
     /* Prefer backend seat; sticky local_room alone kept kicked LAN joiners open. */
@@ -2997,17 +3021,23 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+    if (m->netplay_status[0]) {
+        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+        ImGui::Spacing();
+    }
 
     RecompLauncherCNetplayMember slots[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS]{};
     bool occupied[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS] = {};
     const bool is_host = np->is_host && np->is_host(np->ctx);
     const int count = np->member_count ? np->member_count(np->ctx) : 0;
+    int seated_players = 0;
     for (int i = 0; i < count; ++i) {
         RecompLauncherCNetplayMember mem{};
         if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
         if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
         slots[mem.slot] = mem;
         occupied[mem.slot] = mem.display_name[0] != '\0';
+        if (occupied[mem.slot]) ++seated_players;
     }
     if (ImGui::BeginTable("lobby_players", 5,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
@@ -3183,7 +3213,10 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col(play_hov));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(play_act));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            ImGui::BeginDisabled(!occupied[1]);
+            /* Require two seated players (not merely slot-1 occupied — host can
+             * sit in P2 alone after a seat swap). */
+            const bool can_start = seated_players >= 2;
+            ImGui::BeginDisabled(!can_start);
             if (ImGui::Button(u8"\u25B6 Play", ImVec2(play_w, btn_h))) {
                 if (np->set_ready)
                     (void)np->set_ready(np->ctx, 1);
@@ -3195,6 +3228,15 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                                   "server rejected start).");
                 } else {
                     m->netplay_status[0] = '\0';
+                    /* LAN arms launch_pending inside request_start so host can
+                     * leave this frame. Online must wait for the server's
+                     * op:launch (drawn frames keep calling launch_pending) so
+                     * every peer boots together — do not fill from lobby seat. */
+                    if (np->launch_pending && np->launch_pending(np->ctx))
+                        np_try_launch(m);
+                    else
+                        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                                      "Starting match…");
                 }
             }
             ImGui::EndDisabled();
@@ -3256,6 +3298,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     if (!m->netplay_list_fresh)
         np_refresh_lobby_list(m);
     if (np->pump) np->pump(np->ctx);
+    np_ingest_last_error(m, np);
     if (np->launch_pending && np->launch_pending(np->ctx))
         np_try_launch(m);
 
