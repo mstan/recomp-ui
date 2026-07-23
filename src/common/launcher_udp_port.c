@@ -83,6 +83,16 @@ int launcher_udp_find_free_port(int preferred, int span) {
     return -1;
 }
 
+int launcher_udp_prepare_guest_bind(char *out, size_t cap) {
+    const int port = launcher_udp_find_free_port(/*preferred=*/7778, 32);
+    int n;
+
+    if (!out || cap < 16U || port < 0)
+        return -1;
+    n = snprintf(out, cap, "0.0.0.0:%d", port);
+    return (n > 0 && (size_t)n < cap) ? 0 : -1;
+}
+
 int launcher_endpoint_port(const char *endpoint) {
     const char *colon;
     int port;

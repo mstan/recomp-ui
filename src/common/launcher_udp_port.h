@@ -7,18 +7,22 @@
 extern "C" {
 #endif
 
-/* Universal host-lobby UDP port policy used by recomp-ui before create():
- *   LAN/Direct IP — exact UI port required; fail when busy
- *   Online        — ignore UI port; prefer 7777, then 7777+1 .. +span-1
+/* Universal UDP port policy used by recomp-ui before create()/join():
+ *   Host create LAN/Direct IP — exact UI port required; fail when busy
+ *   Host create online        — ignore UI port; prefer 7777, then +1..+span-1
+ *   Guest join (any path)     — prefer 7778, then +1..+span-1 → "0.0.0.0:<port>"
  *
  * Self-contained (no recomp-net link). Exclusive bind probes omit SO_REUSEADDR
- * so a second host on the same port is detected. */
+ * so a second bind on the same port is detected. */
 
 /* 1 = free on INADDR_ANY, 0 = busy / invalid. */
 int launcher_udp_port_available(int port);
 
 /* Returns a free port, or -1. span <= 0 selects 32 (MotK contract). */
 int launcher_udp_find_free_port(int preferred, int span);
+
+/* Fill guest_bind with "0.0.0.0:<free>" (prefer 7778, span 32). Returns 0. */
+int launcher_udp_prepare_guest_bind(char *out, size_t cap);
 
 /* Parse "host:port"; returns 7777 when missing/invalid. */
 int launcher_endpoint_port(const char *endpoint);

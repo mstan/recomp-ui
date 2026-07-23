@@ -166,9 +166,11 @@ The initial waiting-room UI supports two players. Hosts always bind UDP on
 dropdown and port so hosts can advertise a chosen LAN address to joiners; when
 unchecked those controls stay visible but disabled (selection preserved) —
 create ignores the greyed port field, prefers UDP `7777`, and auto-picks a
-nearby free port (`7777`..`7808`) for lobby-server rewrite / ICE. Direct
-clients bind an ephemeral local UDP port, so a direct session requires only
-the host's exposed IP address and port.
+nearby free port (`7777`..`7808`) for lobby-server rewrite / ICE. Before
+`join()`, the UI fills `guest_bind` the same way (prefer `7778`..`7809`) so
+online guests advertise a real UDP port — hosts must pass that buffer through
+to the lobby client rather than rewriting to `:0`. Direct / LAN join still
+receives a prepared bind; games may ignore it for file-registry LAN rooms.
 
 ---
 

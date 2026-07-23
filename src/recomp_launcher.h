@@ -96,7 +96,13 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*create)(void* ctx, const char* lobby_name, char* host_endpoint,
                    const char* password, const RecompLauncherCSettings* settings,
                    int lan_only);
-    int  (*join)(void* ctx, const char* lobby_id, const char* password);
+    /* join: guest_bind is in/out (capacity >= 64). recomp-ui applies the
+     * universal guest UDP bind policy before calling — prefer 7778, then
+     * 7778+1 .. +31, written as "0.0.0.0:<port>". Hosts should advertise that
+     * bind on the lobby join (never rewrite to :0). Engines may still normalize
+     * NULL/empty/host:0 as a defensive fallback. */
+    int  (*join)(void* ctx, const char* lobby_id, const char* password,
+                 char* guest_bind);
     int  (*leave)(void* ctx);
     int  (*in_lobby)(void* ctx);
     int  (*is_host)(void* ctx);
