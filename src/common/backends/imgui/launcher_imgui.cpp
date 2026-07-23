@@ -2903,6 +2903,24 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Lobby server is outdated (ready gate). Retry Play, or "
                       "redeploy recomp-net-server main.");
+    else if (std::strcmp(err, "connect_timeout_ice") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Online connection timed out. Allow the game through "
+                      "your firewall, then rejoin and retry.");
+    else if (std::strcmp(err, "connect_timeout_lan") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "LAN connection timed out. Check the address, firewall, "
+                      "and that both players are still in the lobby.");
+    else if (std::strcmp(err, "peer_disconnected") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "The other player stopped responding. Rejoin to retry.");
+    else if (std::strcmp(err, "transport_unavailable") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Online transport could not start. This build must "
+                      "include ICE/NAT traversal.");
+    else if (std::strcmp(err, "netplay_start_failed") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Netplay could not start. Check the log and retry.");
     else
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Lobby error: %s", err);
