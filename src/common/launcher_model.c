@@ -493,6 +493,77 @@ void launcher_model_toggle_adaptive_view(LauncherModel* m) {
     m->s.adaptive_view = !m->s.adaptive_view;
 }
 
+static int aspect_choice_count(const LauncherModel* m) {
+    if (m->aspect_labels && m->num_aspect_labels > 0)
+        return m->num_aspect_labels;
+    if (!m->aspect_mask) return 0;
+    int count = 0;
+    for (int i = 0; i < 3; ++i)
+        if (launcher_model_aspect_offered(m, i)) ++count;
+    return count;
+}
+
+static int first_offered_aspect(const LauncherModel* m) {
+    if (m->aspect_labels && m->num_aspect_labels > 0) return 0;
+    for (int i = 0; i < 3; ++i)
+        if (launcher_model_aspect_offered(m, i)) return i;
+    return 0;
+}
+
+static int next_offered_aspect(const LauncherModel* m, int current) {
+    if (m->aspect_labels && m->num_aspect_labels > 0) {
+        int next = current + 1;
+        return next < m->num_aspect_labels ? next : -1;
+    }
+    for (int i = current + 1; i < 3; ++i)
+        if (launcher_model_aspect_offered(m, i)) return i;
+    return -1;
+}
+
+void launcher_model_cycle_view_mode(LauncherModel* m) {
+    if (!m) return;
+    const int fixed_count = aspect_choice_count(m);
+
+    if (m->s.adaptive_view && m->adaptive_view_supported) {
+        m->s.adaptive_view = 0;
+        if (fixed_count) m->s.aspect_index = first_offered_aspect(m);
+        else m->s.widescreen = 0;
+        return;
+    }
+
+    if (fixed_count) {
+        int next = next_offered_aspect(m, m->s.aspect_index);
+        if (next >= 0) {
+            m->s.aspect_index = next;
+            return;
+        }
+        if (m->adaptive_view_supported) {
+            m->s.adaptive_view = 1;
+            return;
+        }
+        m->s.aspect_index = first_offered_aspect(m);
+        return;
+    }
+
+    if (m->widescreen_supported && !m->s.widescreen) {
+        m->s.widescreen = 1;
+        return;
+    }
+    if (m->adaptive_view_supported) {
+        m->s.widescreen = 0;
+        m->s.adaptive_view = 1;
+        return;
+    }
+    m->s.widescreen = 0;
+}
+
+const char* launcher_model_view_mode_label(const LauncherModel* m) {
+    if (!m) return "Native";
+    if (m->adaptive_view_supported && m->s.adaptive_view) return "Adaptive";
+    if (aspect_choice_count(m)) return launcher_model_aspect_label(m);
+    return m->s.widescreen ? "16:9 fixed" : "Native";
+}
+
 void launcher_model_ws_cells_delta(LauncherModel* m, int delta) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     if (!prof || !prof->video.widescreen_cells) return;   // gated per console

@@ -365,6 +365,11 @@ void launcher_model_cycle_scale(LauncherModel* m);   // 1..6 wrap
 void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
 void launcher_model_toggle_adaptive_view(LauncherModel* m);  // gated; fixed aspect is retained
+/* Unified Native / fixed widescreen / Adaptive control. Compatibility fields
+ * (`widescreen`, `aspect_index`, `adaptive_view`) remain the host ABI, but UI
+ * presents them as one mode instead of unrelated toggles. */
+void launcher_model_cycle_view_mode(LauncherModel* m);
+const char* launcher_model_view_mode_label(const LauncherModel* m);
 
 // ---- widescreen extra cells (SystemProfile.video.widescreen_cells consoles,
 // e.g. Genesis: N extra 8-px background cells rendered per side while

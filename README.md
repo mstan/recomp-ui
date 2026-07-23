@@ -1,9 +1,9 @@
 # recomp-ui
 
-A shared, **console-agnostic pre-boot launcher** for static-recompilation game
-ports. One Dear ImGui launcher core serves every recomp ecosystem — SNES, PSX,
-N64, Genesis, NES, and beyond — so each game gets a polished settings/ROM/
-controller front-end with **zero UI code of its own**.
+A shared, **console-agnostic launcher and in-game settings UI** for static-
+recompilation game ports. One Dear ImGui launcher core serves every recomp
+ecosystem — SNES, PSX, N64, Genesis, NES, and beyond — while a small runtime
+overlay API lets the same hosts expose live settings after boot.
 
 It is the reusable extraction of the SNES-recomp "launcher_ng" launcher,
 generalized behind a small C ABI. Consume it as a git submodule, hand it your
@@ -91,6 +91,59 @@ The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-
 settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
 for console-specific verification the launcher re-runs on change — e.g. PSX disc
 identification (`disc_verify`) and memory-card inspection (`memcard_inspect`).
+
+### In-game settings overlay
+
+[`src/recomp_runtime_ui.h`](src/recomp_runtime_ui.h) is the separate runtime
+contract. A game supplies sectioned item descriptors plus callbacks to read,
+apply, persist, and enable its own settings. `recomp-ui` owns hierarchical
+navigation, selection state, help/status text, and drawing.
+
+The runtime model is renderer-independent. For a modern/GPU host, call
+`recomp_runtime_ui_render_imgui()` inside the host's active Dear ImGui frame;
+it uses the same responsive layout and console theme tokens as the launcher,
+without exposing ImGui types through the C ABI. This is the preferred path for
+RT64/N64 and other high-resolution renderers.
+
+`recomp_runtime_ui_render_argb8888()` is a compatibility presentation for
+games that expose a writable CPU framebuffer. It is intentionally compact and
+works well for low-resolution framebuffer consoles, but it is not the visual
+baseline for every platform. Both presentations drive the exact same menu
+state, descriptors, callbacks, and navigation.
+
+The host continues to own the game loop: while
+`recomp_runtime_ui_is_open()` is true it should consume menu input before
+emulated input and decide whether to pause simulation/audio. See
+[`docs/RUNTIME_UI.md`](docs/RUNTIME_UI.md) for the integration boundary and
+rollout matrix.
+
+```c
+static const RecompRuntimeUiItem rows[] = {
+    { "fullscreen", "Display", "Fullscreen", "Choose the window mode.",
+      RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, modes, 3, NULL },
+    { "reset", "System", "Reset game", "Reset the emulated machine.",
+      RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL },
+};
+
+RecompRuntimeUiConfig menu = {0};
+menu.title = "My Game";
+menu.subtitle = "SETTINGS";
+menu.items = rows;
+menu.item_count = sizeof(rows) / sizeof(rows[0]);
+menu.callbacks = callbacks;
+menu.theme = "n64"; /* same id used by launcher_profile_apply() */
+RecompRuntimeUi *ui = recomp_runtime_ui_create(&menu);
+```
+
+New integrations should zero-initialize `RecompRuntimeUiConfig`, then assign
+its fields. Set `theme` to the same system id passed to
+`launcher_profile_apply()` (`"snes"`, `"n64"`, `"gba"`, `"genesis"`, ...),
+so pre-boot and in-game UI cannot drift visually.
+
+The API deliberately does not prescribe settings. Backend swaps that require a
+restart can be omitted or exposed as actions; safe live values can be applied
+immediately in `set_value`. This keeps game-specific state and policy in the
+game while making the menu implementation reusable.
 
 ### Optional netplay surface
 
