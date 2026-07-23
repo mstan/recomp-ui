@@ -21,8 +21,8 @@ one-off patches in each game’s `main.c` when it can live in:
 | Layer | Owns |
 |-------|------|
 | **recomp-ui** (this repo) | Waiting-room UI, create/join UDP port prep (`guest_bind`), resume-room flags, presentation UX |
-| **snesrecomp** | `snes_host_lobby_*` (MotK+LAN callback table), `snes_host_app_*` rematch/admit helpers, `snes_netplay_*`, `snes_host_ensure_sdl` / `session_reset` |
-| **Game repo** | Thin: `snes_host_lobby_init` + identity/caps, pad sampling, window/`RtlRunFrame`, **per-title** `RtlGameInfo.session_reset` |
+| **snesrecomp** | `snes_host_lobby_*` (MotK+LAN callback table), `snes_host_app_*` rematch/admit helpers, `snes_host_lobby_set_runtime_error`, `snes_netplay_*`, `snes_host_ensure_sdl` / `session_reset` |
+| **Game repo** | Thin: `snes_host_lobby_init` + identity/caps, pad sampling, window/`RtlRunFrame`, **per-title** `RtlGameInfo.session_reset` (see snesrecomp `docs/RECOMP_NET.md` checklist) |
 
 Per-title quirks that still belong in the engine (shared runner path) should
 use snesrecomp’s existing extension points (`RtlGameInfo` hooks, title /
