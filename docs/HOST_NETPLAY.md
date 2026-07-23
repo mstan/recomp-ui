@@ -2,14 +2,32 @@
 
 Status: **active** · 2026-07-23
 
-recomp-ui owns presentation and the universal UDP port policy. The **game**
-owns lobby transport, soft-return, and rematch reboot. This page lists
-contracts that bite every snesrecomp (and sibling) title wiring MotK-style
-netplay through `RecompLauncherCNetplayCallbacks`.
+recomp-ui owns presentation and the universal UDP port policy. snesrecomp
+owns lobby transport helpers, soft-return, and rematch reboot primitives.
+Game trees stay **thin** — wire callbacks and register per-title hooks.
 
 For the engine-side checklist see snesrecomp
 [`docs/RECOMP_NET.md`](https://github.com/mstan/snesrecomp/blob/main/docs/RECOMP_NET.md)
 → "Soft-return rematch checklist".
+
+---
+
+## Where to put fixes
+
+**Prefer snesrecomp or recomp-ui** for anything that optimizes networking or
+the launcher ↔ netplay interaction. Do **not** land shared behavior as
+one-off patches in each game’s `main.c` when it can live in:
+
+| Layer | Owns |
+|-------|------|
+| **recomp-ui** (this repo) | Waiting-room UI, create/join UDP port prep (`guest_bind`), resume-room flags, presentation UX |
+| **snesrecomp** | `snes_lobby_*`, `snes_netplay_*`, `snes_host_ensure_sdl` / `snes_host_session_reset` / `snes_netplay_soft_exit_to_lobby` |
+| **Game repo** | Callback wiring, pad sampling, `RtlRunFrame` gate, **per-title** sticky clears via `RtlGameInfo.session_reset` (and savestate extras) |
+
+Per-title quirks that still belong in the engine (shared runner path) should
+use snesrecomp’s existing extension points (`RtlGameInfo` hooks, title /
+match_caps gates) — not a private fork of the helpers inside one game tree.
+See snesrecomp `docs/RECOMP_NET.md` → "Layering policy".
 
 ---
 
@@ -58,22 +76,15 @@ Failed to open audio device
 
 (or a silent hang if the host treats audio open as fatal).
 
-### Host fix
+### Host fix (snesrecomp helper)
 
-On the rematch `session_reboot` path (after `recomp_launcher_run_window`
-returns with a new `netplay_launch`), re-init before creating the game window
-or opening audio:
+On the rematch `session_reboot` path:
 
 ```c
-if (!SDL_WasInit(SDL_INIT_VIDEO) || !SDL_WasInit(SDL_INIT_AUDIO) ||
-    !SDL_WasInit(SDL_INIT_GAMECONTROLLER)) {
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0)
-    return 1;
-}
+if (snes_host_ensure_sdl() != 0)
+  return 1;
+snes_host_session_reset(); /* RtlGameInfo.session_reset — title sticky clears */
 ```
-
-First boot usually already called `SDL_Init` once; the `WasInit` guard avoids
-stacking unnecessary init refcounts.
 
 Do **not** remove `SDL_Quit()` from the platform close without a coordinated
 host change — games rely on a clean shutdown between launcher and gameplay.
@@ -95,7 +106,8 @@ showing the waiting room again (`snes_lobby_clear_launch_pending`,
 
 ## Peer disconnect UX
 
-recomp-ui does not own the in-game disconnect dialog. Hosts should treat
-mid-match peer loss like a local quit: soft-return to the lobby **without** a
-blocking `SDL_ShowSimpleMessageBox`. Reserve modals for connect-timeout /
-firewall guidance before the session starts.
+recomp-ui does not own the in-game disconnect dialog. Hosts should call
+`snes_netplay_soft_exit_to_lobby(...)` (or the same path as local quit):
+soft-return to the lobby **without** a blocking `SDL_ShowSimpleMessageBox`.
+Reserve modals for connect-timeout / firewall guidance before the session
+starts.

@@ -179,11 +179,12 @@ to the lobby client rather than rewriting to `:0`. Direct / LAN join still
 receives a prepared bind; games may ignore it for file-registry LAN rooms.
 
 **Soft-return rematch:** closing the launcher after a match calls `SDL_Quit()`
-(see `launcher_platform_close`). Hosts that `goto` a mid-`main` rematch label
-must re-`SDL_Init` video/audio/gamecontroller before opening the game window —
-otherwise rematch fails with `Audio subsystem is not initialized`. Full host
-checklist: [`docs/HOST_NETPLAY.md`](docs/HOST_NETPLAY.md). Engine-side notes:
-snesrecomp `docs/RECOMP_NET.md` → "Soft-return rematch checklist".
+(see `launcher_platform_close`). Hosts should call snesrecomp
+`snes_host_ensure_sdl()` + `snes_host_session_reset()` at rematch reboot —
+not a one-off `SDL_Init` copy in each game. Full host checklist:
+[`docs/HOST_NETPLAY.md`](docs/HOST_NETPLAY.md). **Policy:** put shared
+netplay/UI interaction fixes in recomp-ui or snesrecomp so all titles
+benefit; keep game trees thin (`HOST_NETPLAY.md` → “Where to put fixes”).
 
 ---
 
