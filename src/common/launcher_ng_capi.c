@@ -19,6 +19,26 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Some WMs/title bars mishandle UTF-8 punctuation and show mojibake (e.g. "â"
+ * for an em dash). Fold common dashes to ASCII before SDL_CreateWindow. */
+static void title_ascii_dashes(char* dst, size_t dst_cap, const char* src) {
+    if (!src) src = "Launcher";
+    size_t o = 0;
+    for (size_t i = 0; src[i] && o + 1 < dst_cap; ) {
+        const unsigned char a = (unsigned char)src[i];
+        const unsigned char b = (unsigned char)src[i + 1];
+        const unsigned char c = (unsigned char)src[i + 2];
+        /* U+2013 en dash / U+2014 em dash */
+        if (a == 0xE2u && b == 0x80u && (c == 0x93u || c == 0x94u)) {
+            dst[o++] = '-';
+            i += 3;
+            continue;
+        }
+        dst[o++] = src[i++];
+    }
+    dst[o] = '\0';
+}
+
 int recomp_launcher_run_window(const char* window_title,
                              RecompLauncherCSettings* io,
                              const RecompLauncherCGameInfo* game,
@@ -27,9 +47,11 @@ int recomp_launcher_run_window(const char* window_title,
                              char* out_rom_path, size_t out_rom_path_len) {
     (void)assets_dir;   // launcher_ng resolves assets next to the exe (SDL base path)
 
+    char title[256];
+    title_ascii_dashes(title, sizeof(title), window_title);
+
     LauncherPlatform plat;
-    if (!launcher_platform_open(&plat, window_title ? window_title : "Launcher",
-                                1100, 840)) {
+    if (!launcher_platform_open(&plat, title, 1100, 840)) {
         // Window/GL init failed — tell the caller to boot as if the launcher was
         // skipped, exactly like the old launcher's UNAVAILABLE path.
         return 2;

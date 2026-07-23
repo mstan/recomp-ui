@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     LauncherTheme theme = launcher_theme_by_name(gi.theme);
 
     char title[128];
-    snprintf(title, sizeof(title), "Recomp UI — Launcher [%s]", launcher_backend_name());
+    snprintf(title, sizeof(title), "Recomp UI - Launcher [%s]", launcher_backend_name());
 
     LauncherPlatform plat;
     if (!launcher_platform_open(&plat, title, 1100, 840)) {

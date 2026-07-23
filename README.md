@@ -81,7 +81,7 @@ gi.expected_crc = 0x1B4B2E9C; gi.has_expected_crc = 1;
 /* ...per-game overrides... */
 
 char out_rom[512];
-int rc = recomp_launcher_run_window("My Game — Launcher", &io, &gi,
+int rc = recomp_launcher_run_window("My Game - Launcher", &io, &gi,
                                     ".", initial_rom, out_rom, sizeof(out_rom));
 // rc: 0 = LAUNCH (boot out_rom with the edited io), 1 = QUIT, 2 = UNAVAILABLE
 #endif
