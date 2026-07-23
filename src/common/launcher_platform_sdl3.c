@@ -71,5 +71,8 @@ void launcher_platform_close(LauncherPlatform* p) {
     if (!p) return;
     if (p->gl)     { SDL_GL_DestroyContext(p->gl); p->gl = NULL; }
     if (p->window) { SDL_DestroyWindow(p->window); p->window = NULL; }
+    /* Full SDL_Quit: intentional. Soft-return rematch hosts MUST re-SDL_Init
+     * (video+audio+gamecontroller) before recreating the game window — see
+     * docs/HOST_NETPLAY.md. Do not remove without a coordinated host change. */
     SDL_Quit();
 }

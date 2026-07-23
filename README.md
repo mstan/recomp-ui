@@ -178,6 +178,13 @@ online guests advertise a real UDP port — hosts must pass that buffer through
 to the lobby client rather than rewriting to `:0`. Direct / LAN join still
 receives a prepared bind; games may ignore it for file-registry LAN rooms.
 
+**Soft-return rematch:** closing the launcher after a match calls `SDL_Quit()`
+(see `launcher_platform_close`). Hosts that `goto` a mid-`main` rematch label
+must re-`SDL_Init` video/audio/gamecontroller before opening the game window —
+otherwise rematch fails with `Audio subsystem is not initialized`. Full host
+checklist: [`docs/HOST_NETPLAY.md`](docs/HOST_NETPLAY.md). Engine-side notes:
+snesrecomp `docs/RECOMP_NET.md` → "Soft-return rematch checklist".
+
 ---
 
 ## Feature surface (per console, capability-gated)
