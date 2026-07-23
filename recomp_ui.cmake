@@ -43,6 +43,83 @@ set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 # generation), so it lives here — safe/idempotent if CXX is already enabled.
 enable_language(CXX)
 
+# Resolve a MinGW runtime DLL for packaging next to a Windows .exe.
+# Tries `gcc -print-file-name`, then common MSYS2 / Linux cross sysroot bins.
+function(recomp_ui_find_mingw_dll name out_var)
+    set(_found "")
+    if(CMAKE_C_COMPILER)
+        execute_process(
+            COMMAND ${CMAKE_C_COMPILER} -print-file-name=${name}
+            OUTPUT_VARIABLE _printed
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(_printed AND NOT _printed STREQUAL "${name}" AND EXISTS "${_printed}")
+            set(_found "${_printed}")
+        endif()
+    endif()
+    if(NOT _found)
+        set(_hints "")
+        if(DEFINED ENV{MINGW_PREFIX})
+            list(APPEND _hints "$ENV{MINGW_PREFIX}/bin")
+        endif()
+        if(CMAKE_C_COMPILER)
+            get_filename_component(_cc_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+            list(APPEND _hints "${_cc_dir}")
+        endif()
+        list(APPEND _hints
+            "C:/msys64/mingw64/bin"
+            "/usr/x86_64-w64-mingw32/bin"
+            "/usr/i686-w64-mingw32/bin")
+        foreach(_d IN LISTS _hints)
+            if(EXISTS "${_d}/${name}")
+                set(_found "${_d}/${name}")
+                break()
+            endif()
+        endforeach()
+    endif()
+    set(${out_var} "${_found}" PARENT_SCOPE)
+endfunction()
+
+# Copy SDL2 + MinGW CRT DLLs beside the target so a zip of the build dir runs
+# on a clean Windows machine (no MSYS2 PATH). Includes libssp-0.dll for
+# -fstack-protector builds from Linux mingw-w64 and MSYS2.
+function(recomp_target_stage_mingw_runtime TGT)
+    if(NOT MINGW)
+        return()
+    endif()
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_libgcc "libgcc_s_seh-1.dll")
+    else()
+        set(_libgcc "libgcc_s_dw2-1.dll")
+    endif()
+    set(_dll_names
+        SDL2.dll
+        ${_libgcc}
+        libstdc++-6.dll
+        libwinpthread-1.dll
+        libssp-0.dll)
+    set(_copy_cmds "")
+    foreach(_name IN LISTS _dll_names)
+        recomp_ui_find_mingw_dll("${_name}" _path)
+        if(NOT _path)
+            message(WARNING
+                "recomp-ui: MinGW runtime DLL '${_name}' not found — "
+                "Windows builds will need it next to the .exe. "
+                "Set MINGW_PREFIX or install mingw-w64 / MSYS2 mingw64.")
+            continue()
+        endif()
+        message(STATUS "recomp-ui: staging MinGW runtime ${_name} from ${_path}")
+        list(APPEND _copy_cmds
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_path}" "$<TARGET_FILE_DIR:${TGT}>/")
+    endforeach()
+    if(_copy_cmds)
+        add_custom_command(TARGET ${TGT} POST_BUILD
+            ${_copy_cmds}
+            VERBATIM)
+    endif()
+endfunction()
+
 function(recomp_target_launcher_ui TGT)
     # BOXART_NAME: destination basename for BOXART under assets/img/ (default
     # "boxart.tga"). Needed when several targets stage into ONE exe dir (Sonic
@@ -232,6 +309,9 @@ function(recomp_target_launcher_ui TGT)
                     ${RUI_BRAND} $<TARGET_FILE_DIR:${TGT}>/assets/img/brand_mark.tga
             VERBATIM)
     endif()
+
+    # MinGW (native MSYS2 or Linux x86_64-w64-mingw32): ship CRT + SDL2 DLLs.
+    recomp_target_stage_mingw_runtime(${TGT})
 endfunction()
 
 # recomp_target_runtime_ui_sdlrenderer2(<host_target>)
