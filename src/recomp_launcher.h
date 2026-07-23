@@ -16,19 +16,19 @@
 extern "C" {
 #endif
 
-// Most controller ports any console in the ecosystem exposes (N64: 4).
+// Most controller ports any console in the ecosystem exposes (PSX multitap: 5).
 // Consoles with fewer players never touch the upper slots — hosts that
 // predate the widening only ever wrote [0]/[1], and their memset(0) leaves
 // the new slots in the same "none" state they had implicitly before. Every
 // consumer compiles this header from source (submodule pin), so the layout
 // change is absorbed by the consumer's normal rebuild on a pin bump.
-#define RECOMP_LAUNCHER_MAX_PLAYERS 4
+#define RECOMP_LAUNCHER_MAX_PLAYERS 5
 
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
 
-/* The initial netplay launcher flow is intentionally limited to two players. */
-#define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 2
+/* Netplay lobby membership ceiling (matches MAX_PLAYERS / PSX multitap). */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 5
 
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
@@ -57,6 +57,7 @@ typedef struct RecompLauncherCNetplayLaunch {
     char     peer_hostport[64];
     uint32_t session_id;
     int      input_delay;
+    int      max_slots; /* session pad count (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) */
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -278,10 +279,10 @@ typedef struct RecompLauncherCGameInfo {
     const char* const* known_sha1_hex;
     size_t         num_known_sha1;
     int            widescreen_supported;   /* hide Widescreen settings when 0 */
-    /* How many players the GAME supports (1 or 2). The launcher hides the
-     * Player 2 row entirely when this is 1 — e.g. Mega Man X is 1-player, so a
-     * P2 row is dead UI. 0 means "unset" and is treated as 2 for backward
-     * compatibility with callers that predate this field. */
+    /* How many players the GAME supports (1..RECOMP_LAUNCHER_MAX_PLAYERS).
+     * The launcher hides Player N+ rows when this is N — e.g. Mega Man X is
+     * 1-player, so a P2 row is dead UI. 0 means "unset" and is treated as 2
+     * for backward compatibility with callers that predate this field. */
     int            num_players;
     int            msu1_supported;
     const char*    msu1_note;          /* shown under MSU-1 settings (which patch) */
