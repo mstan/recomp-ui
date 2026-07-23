@@ -83,8 +83,11 @@ typedef struct RecompLauncherCNetplayCallbacks {
     /* Address discovery used by the Host Lobby modal. */
     int  (*local_ip)(void* ctx, char* out, size_t out_len);
     int  (*external_ip)(void* ctx, char* out, size_t out_len);
-    /* Lobby operations return 0 when the request was accepted. */
-    int  (*create)(void* ctx, const char* lobby_name, const char* host_endpoint,
+    /* Lobby operations return 0 when the request was accepted.
+     * create: host_endpoint is in/out (capacity >= 64). Online hosts may
+     * rewrite the UDP port when the requested one is busy. Returns -4 when
+     * no usable port is available (LAN: requested port busy). */
+    int  (*create)(void* ctx, const char* lobby_name, char* host_endpoint,
                    const char* password, const RecompLauncherCSettings* settings);
     int  (*join)(void* ctx, const char* lobby_id, const char* password);
     int  (*leave)(void* ctx);
@@ -110,6 +113,8 @@ typedef struct RecompLauncherCNetplayCallbacks {
      */
     int  (*local_address_get)(void* ctx, int index,
                               RecompLauncherCNetplayLocalAddress* out);
+    /* Host-only: remove the player in `slot` (not the host). Optional. */
+    int  (*kick_member)(void* ctx, int slot);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
@@ -432,6 +437,11 @@ typedef struct RecompLauncherCGameInfo {
     // callbacks.
     int netplay_supported;
     const RecompLauncherCNetplayCallbacks* netplay;
+    /* Soft-return from a netplay match: open Netplay + LOBBY room if still
+     * seated (WS or LAN). Optional resume_netplay_endpoint is "ip:port" for
+     * LAN room header (NULL/empty => online Lobby Server URL). */
+    int resume_netplay_room;
+    const char* resume_netplay_endpoint;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

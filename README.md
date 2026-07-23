@@ -108,7 +108,11 @@ prefills the first address, preserves the user's selection across refreshes,
 and falls back to the legacy single-address `local_ip` callback when the new
 callback is absent or returns no choices.
 
-The initial waiting-room UI supports two players. Direct clients bind to an
+The initial waiting-room UI supports two players. Hosts always bind UDP on
+`0.0.0.0`. **LAN/Direct IP** (unchecked by default) enables the interface
+dropdown and port so hosts can advertise a chosen LAN address to joiners; when
+unchecked those controls stay visible but disabled (selection preserved) and
+create uses `0.0.0.0` for lobby-server rewrite / ICE. Direct clients bind an
 ephemeral local UDP port, so a direct session requires only the host's exposed
 IP address and port.
 
