@@ -39,8 +39,12 @@ int (*join)(void* ctx, const char* lobby_id, const char* password,
 ```
 
 Before every `join()` call, the ImGui backend fills `guest_bind` via
-`launcher_udp_prepare_guest_bind()` (prefer UDP **7778**, then +1..+31 →
-`0.0.0.0:<port>`). Hosts must advertise that bind on the lobby join.
+`launcher_udp_prepare_guest_bind()` (prefer UDP **7778**, then +1..+31 on a
+**concrete local IPv4** when available, else `0.0.0.0:<port>`). Online host
+create uses `launcher_udp_prepare_host_bind()` the same way (prefer **7777**).
+Advertising a real LAN IP stops MotK `rewrite_endpoint` from substituting a
+wrong WebSocket TCP peer (e.g. router `.1`). Hosts must pass `guest_bind`
+through on lobby join.
 
 | Path | Host behavior |
 |------|----------------|

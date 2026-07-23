@@ -2761,25 +2761,18 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                 if (!m->netplay_lan_only)
                     np_connect_and_list(m);
                 /* LAN/Direct IP: advertise the selected interface:port. Online:
-                 * ignore the greyed-out IP/port fields, bind 0.0.0.0, prefer
-                 * 7777, and auto-pick nearby if busy (lobby rewrite / ICE). */
+                 * ignore greyed UI fields; advertise a concrete local IPv4 +
+                 * free port near 7777 so MotK rewrite keeps a usable LAN IP. */
                 char endpoint[96];
                 const char* port_label = "7777";
+                bool port_ok = true;
                 if (m->netplay_lan_only) {
                     port_label = m->netplay_host_port[0]
                         ? m->netplay_host_port : "7777";
                     std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
                                   m->netplay_host_ip[0] ? m->netplay_host_ip : "127.0.0.1",
                                   port_label);
-                } else {
-                    std::snprintf(endpoint, sizeof(endpoint), "0.0.0.0:7777");
-                }
-                /* Universal MotK port policy (owned by recomp-ui, not the host):
-                 * LAN requires the exact UI port; online ignores the field and
-                 * auto-picks 7777..7808. */
-                const int want_port = launcher_endpoint_port(endpoint);
-                bool port_ok = true;
-                if (m->netplay_lan_only) {
+                    const int want_port = launcher_endpoint_port(endpoint);
                     if (!launcher_udp_port_available(want_port)) {
                         std::snprintf(host_create_status, sizeof(host_create_status),
                                       "Port %s is already in use. Choose a "
@@ -2787,17 +2780,11 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                                       port_label);
                         port_ok = false;
                     }
-                } else {
-                    const int free_port =
-                        launcher_udp_find_free_port(/*preferred=*/7777, 32);
-                    if (free_port < 0 ||
-                        (free_port != 7777 &&
-                         launcher_endpoint_set_port(endpoint, sizeof(endpoint),
-                                                    free_port) != 0)) {
-                        std::snprintf(host_create_status, sizeof(host_create_status),
-                                      "No free UDP port near 7777. Try again.");
-                        port_ok = false;
-                    }
+                } else if (launcher_udp_prepare_host_bind(endpoint,
+                                                         sizeof(endpoint)) != 0) {
+                    std::snprintf(host_create_status, sizeof(host_create_status),
+                                  "No free UDP port near 7777. Try again.");
+                    port_ok = false;
                 }
                 if (port_ok) {
                     const char* lobby = m->netplay_host_name[0]

@@ -31,6 +31,7 @@ static void lng_sock_close(lng_sock *s) {
 }
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -83,14 +84,99 @@ int launcher_udp_find_free_port(int preferred, int span) {
     return -1;
 }
 
-int launcher_udp_prepare_guest_bind(char *out, size_t cap) {
-    const int port = launcher_udp_find_free_port(/*preferred=*/7778, 32);
+int launcher_udp_preferred_local_ipv4(char *out, size_t cap) {
+    lng_sock sock;
+    struct sockaddr_in dest;
+    struct sockaddr_in local;
+#ifdef _WIN32
+    int local_len;
+#else
+    socklen_t local_len;
+    struct ifaddrs *ifap = NULL;
+    struct ifaddrs *ifa;
+#endif
+    char buf[INET_ADDRSTRLEN];
+
+    if (!out || cap < 8U)
+        return 0;
+    out[0] = '\0';
+
+#ifndef _WIN32
+    /* Prefer a real interface address when getifaddrs is available. */
+    if (getifaddrs(&ifap) == 0) {
+        for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+            struct sockaddr_in *sa;
+            if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET)
+                continue;
+            if (!ifa->ifa_name || strncmp(ifa->ifa_name, "lo", 2) == 0)
+                continue;
+            sa = (struct sockaddr_in *)ifa->ifa_addr;
+            if (sa->sin_addr.s_addr == htonl(INADDR_LOOPBACK) ||
+                sa->sin_addr.s_addr == 0)
+                continue;
+            if (!inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf)))
+                continue;
+            snprintf(out, cap, "%s", buf);
+            break;
+        }
+        freeifaddrs(ifap);
+        if (out[0])
+            return 1;
+    }
+#endif
+
+    /* UDP connect trick: kernel picks the outbound interface source IP. */
+    lng_net_startup();
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == LNG_SOCK_INVALID)
+        return 0;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(9); /* discard; no packets need to be sent */
+    dest.sin_addr.s_addr = htonl(0x08080808u); /* 8.8.8.8 */
+    if (connect(sock, (struct sockaddr *)&dest, sizeof(dest)) != 0) {
+        lng_sock_close(&sock);
+        return 0;
+    }
+    memset(&local, 0, sizeof(local));
+#ifdef _WIN32
+    local_len = (int)sizeof(local);
+#else
+    local_len = (socklen_t)sizeof(local);
+#endif
+    if (getsockname(sock, (struct sockaddr *)&local, &local_len) != 0) {
+        lng_sock_close(&sock);
+        return 0;
+    }
+    lng_sock_close(&sock);
+    if (local.sin_addr.s_addr == 0 ||
+        local.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
+        return 0;
+    if (!inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf)))
+        return 0;
+    snprintf(out, cap, "%s", buf);
+    return out[0] != '\0';
+}
+
+static int prepare_bind(char *out, size_t cap, int preferred_port) {
+    char host[64];
+    const int port = launcher_udp_find_free_port(preferred_port, 32);
     int n;
 
     if (!out || cap < 16U || port < 0)
         return -1;
-    n = snprintf(out, cap, "0.0.0.0:%d", port);
+    if (!launcher_udp_preferred_local_ipv4(host, sizeof(host)))
+        snprintf(host, sizeof(host), "0.0.0.0");
+    n = snprintf(out, cap, "%s:%d", host, port);
     return (n > 0 && (size_t)n < cap) ? 0 : -1;
+}
+
+int launcher_udp_prepare_guest_bind(char *out, size_t cap) {
+    return prepare_bind(out, cap, /*preferred=*/7778);
+}
+
+int launcher_udp_prepare_host_bind(char *out, size_t cap) {
+    return prepare_bind(out, cap, /*preferred=*/7777);
 }
 
 int launcher_endpoint_port(const char *endpoint) {
@@ -126,8 +212,10 @@ int launcher_endpoint_set_port(char *endpoint, size_t cap, int port) {
     } else {
         host[0] = '\0';
     }
-    if (!host[0])
-        snprintf(host, sizeof(host), "0.0.0.0");
+    if (!host[0]) {
+        if (!launcher_udp_preferred_local_ipv4(host, sizeof(host)))
+            snprintf(host, sizeof(host), "0.0.0.0");
+    }
     n = snprintf(endpoint, cap, "%s:%d", host, port);
     return (n > 0 && (size_t)n < cap) ? 0 : -1;
 }
