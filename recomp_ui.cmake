@@ -179,6 +179,8 @@ function(recomp_target_launcher_ui TGT)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/common/fonts/LatoLatin-Regular.ttf
                 ${RUI_ASSETS}/common/fonts/LatoLatin-Bold.ttf
+                ${RUI_ASSETS}/common/fonts/OpenMoji-black-glyf.ttf
+                ${RUI_ASSETS}/common/fonts/NotoSansSymbols2-Regular.ttf
                 $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/common/img/brand_mark.tga
@@ -255,6 +257,8 @@ function(recomp_stage_launcher_assets TGT)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/common/fonts/LatoLatin-Regular.ttf
                 ${RUI_ASSETS}/common/fonts/LatoLatin-Bold.ttf
+                ${RUI_ASSETS}/common/fonts/OpenMoji-black-glyf.ttf
+                ${RUI_ASSETS}/common/fonts/NotoSansSymbols2-Regular.ttf
                 $<TARGET_FILE_DIR:${TGT}>/assets/fonts/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${RUI_ASSETS}/common/img/brand_mark.tga

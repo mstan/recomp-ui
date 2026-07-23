@@ -167,6 +167,7 @@ void launcher_model_init(LauncherModel* m,
     safe_copy(m->netplay_direct_ip, sizeof(m->netplay_direct_ip), "127.0.0.1");
     safe_copy(m->netplay_direct_port, sizeof(m->netplay_direct_port), "7777");
     m->netplay_lan_only = false;
+    m->netplay_list_fresh = false;
     m->netplay_selected_lobby = -1;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
@@ -295,6 +296,21 @@ void launcher_model_init(LauncherModel* m,
     m->view      = LNG_VIEW_DASHBOARD;
     m->action    = LNG_ACTION_NONE;
     m->cfg_player = 0;
+
+    /* Soft-return from a match: land on Netplay with the room modal open. */
+    if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
+        m->netplay->in_lobby && m->netplay->in_lobby(m->netplay->ctx)) {
+        m->view = LNG_VIEW_NETPLAY;
+        m->netplay_list_fresh = true;
+        if (game->resume_netplay_endpoint && game->resume_netplay_endpoint[0]) {
+            m->netplay_local_room = true;
+            safe_copy(m->netplay_host_endpoint, sizeof(m->netplay_host_endpoint),
+                      game->resume_netplay_endpoint);
+        } else {
+            m->netplay_local_room = false;
+            m->netplay_host_endpoint[0] = '\0';
+        }
+    }
 
     // Placeholder display until launcher_binds_load() fills real values from
     // keybinds.ini / config.ini [KeyMap]. Walk the ACTIVE profile's button
@@ -447,6 +463,9 @@ bool launcher_model_rom_verified(const LauncherModel* m) {
 
 void launcher_model_set_view(LauncherModel* m, LngView v) {
     if (v < 0 || v > LNG_VIEW_NETPLAY) return;
+    /* Re-entering Netplay should rescan server + LAN lists. */
+    if (m->view == LNG_VIEW_NETPLAY && v != LNG_VIEW_NETPLAY)
+        m->netplay_list_fresh = false;
     m->view = v;
 }
 
