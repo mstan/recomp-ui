@@ -17,7 +17,7 @@
 #include <string.h>
 
 // 32040 = the SNES S-DSP's native output rate; kept reachable in the cycle so
-// users chasing bit-exact SNES audio can pick it (matches the RmlUi launcher).
+// users chasing bit-exact SNES audio can pick it (matches the legacy launcher).
 static const int kFreqTable[] = { 32040, 32000, 44100, 48000 };
 static const int kFreqCount   = (int)(sizeof(kFreqTable) / sizeof(kFreqTable[0]));
 
@@ -174,7 +174,7 @@ void launcher_model_init(LauncherModel* m,
 
     // ---- memory-card slots default to enabled (0 == "unset": a host struct
     // that predates this field, or was zero-initialized, reads as both cards
-    // plugged in — matching the RmlUi launcher's default) ----
+    // plugged in — matching the legacy launcher's default) ----
     if (!m->s.memcard_enabled[0]) m->s.memcard_enabled[0] = 1;
     if (!m->s.memcard_enabled[1]) m->s.memcard_enabled[1] = 1;
 
@@ -770,7 +770,7 @@ void launcher_model_toggle_turbo_loads(LauncherModel* m) {
 // Fullscreen is a universal display setting: every console's runner applies
 // the committed tri-state (0 off / 1 borderless / 2 exclusive) to its window
 // at boot and persists it in its own config. The cycle walks all three
-// states, restoring the vocabulary of the original SNES RmlUi launcher.
+// states, restoring the vocabulary of the original SNES launcher.
 void launcher_model_cycle_fullscreen(LauncherModel* m) {
     m->s.fullscreen = (clampi(m->s.fullscreen, 0, 2) + 1) % 3;
 }
@@ -917,7 +917,7 @@ const char* launcher_model_audio_device_label(const LauncherModel* m) {
     return m->s.audio_device[0] ? m->s.audio_device : "(system default)";
 }
 
-// ---- SRAM save management (mirrors the RmlUi launcher's Import/Clear) --------
+// ---- SRAM save management (mirrors the legacy launcher's Import/Clear) --------
 // Both back up any existing save to "<sram>.bak" first (never a destructive op
 // without a recoverable copy), matching the old launcher's behavior.
 static bool lm_copy_file(const char* src, const char* dst) {
@@ -973,7 +973,7 @@ void launcher_model_set_hdpack_dir(LauncherModel* m, const char* dir) {
 }
 
 // Password/mantra save: the file is one line of text (e.g. Faxanadu's mantra),
-// read/rewritten whole. Mirrors the RmlUi NES launcher's SAVES-panel variant.
+// read/rewritten whole. Mirrors the legacy NES launcher's SAVES-panel variant.
 void launcher_model_password_reload(LauncherModel* m) {
     m->password_text[0] = '\0';
     if (!m->password_save_path || !m->password_save_path[0]) return;
@@ -1015,7 +1015,7 @@ void launcher_model_toggle_zapper_crosshair(LauncherModel* m) {
     launcher_binds_set_zapper(m->zapper_mouse ? 1 : 0, m->zapper_crosshair ? 1 : 0);
 }
 
-// ---- MSU-1 IPS auto-patching (mirrors the RmlUi launcher's do_patch() /
+// ---- MSU-1 IPS auto-patching (mirrors the legacy launcher's do_patch() /
 // msu1_patch_available predicate in snesrecomp's launcher_gui.cpp) -----------
 
 // Recomputed on every ROM change: the dashboard prompt only makes sense when
@@ -1044,7 +1044,7 @@ static bool lm_read_whole_file(const char* path, uint8_t** out_data, size_t* out
     return true;
 }
 
-// Build "<dir>/<stem>.msu1.<ext>" beside `rom_path` (matches the RmlUi
+// Build "<dir>/<stem>.msu1.<ext>" beside `rom_path` (matches the legacy
 // launcher's std::filesystem stem()/extension() splice exactly).
 static void lm_msu1_target_path(const char* rom_path, char* out, size_t out_cap) {
     const char* base = rom_path;

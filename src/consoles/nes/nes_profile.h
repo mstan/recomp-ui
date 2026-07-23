@@ -40,7 +40,7 @@ static const ButtonDef kNesPadButtons[] = {
 // No "hotkeys" panel: the nesrecomp runner reads no config.ini [KeyMap] (its
 // hotkeys are hardcoded F5 turbo / F6 save / F7 load / F11 fullscreen in
 // main_runner.c), so a hotkey editor would write lines nothing reads. This
-// also matches the old RmlUi NES launcher, which offered no hotkey UI.
+// also matches the old NES launcher, which offered no hotkey UI.
 static const char* const kPanelsSettingsNes[] = { "video", "audio", NULL };
 
 // ---- renderer vocabulary --------------------------------------------------------
@@ -113,7 +113,7 @@ static inline void launcher_profile_apply_nes(RecompLauncherCGameInfo* gi) {
     gi->hdpack_supported  = 1;
     // The runner's Accelerated/Software output toggle (config.ini [Display]
     // Renderer) — shown with kNesRendererLabels, not the PSX Software/OpenGL
-    // pair. This was a real control on the old RmlUi NES launcher.
+    // pair. This was a real control on the old NES launcher.
     gi->has_renderer      = 1;
 }
 

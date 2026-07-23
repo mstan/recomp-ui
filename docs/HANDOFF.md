@@ -28,7 +28,7 @@ is a shared, console-agnostic Dear ImGui pre-boot launcher, extracted from the
 SNES `launcher_ng`. Goal: ONE launcher every recomp ecosystem consumes as a
 submodule; per-console differences are DATA (a `SystemProfile`), not forks.
 Proven end-to-end on PSX (ApeEscapeRecomp). Extends the SNES work in the memory
-note [[rmlui-replacement-sdl3-clay-imgui]] and [[recomp-ui-shared-submodule]].
+note [[legacy-launcher-replacement]] and [[recomp-ui-shared-submodule]].
 
 ## ⚠️ NOT FINALIZED — do not treat as settled
 - **PSX theme AND PSX layout are BOTH unapproved** — they are my working draft.
@@ -37,7 +37,7 @@ note [[rmlui-replacement-sdl3-clay-imgui]] and [[recomp-ui-shared-submodule]].
   arrangement before treating them as done.
 - **Parity Phase 3 is NOT built**: the PSX **memory-card panel** (dual slots,
   Browse/New, 15-block usage grid) and the **disc-verdict** system (serial +
-  region + ISO-header + CRC → ok/warn/bad/none icons + 3-check row). The RmlUi
+  region + ISO-header + CRC → ok/warn/bad/none icons + 3-check row). The legacy
   PSX launcher has these; recomp-ui does not yet.
 - **PSX hotkeys are wrong**: the Settings HOTKEYS panel currently shows the SNES
   [KeyMap] set on PSX too. Per the design it should be a universal catalog with a
@@ -102,8 +102,8 @@ deeper PSX settings `7fbf0eb`; pad-mode + aspect `0af8918`; namespaced helpers
   `a6128fc`, CMakeLists wiring, and a junction `ApeEscapeRecomp/recomp-ui` →
   `F:\Projects\recomp-ui`.
 - main.cpp: `#if defined(RECOMP_LAUNCHER)` block calls `recomp_launcher_run_window`
-  instead of the RmlUi `psx_launcher::run` (RmlUi stays default when the define is
-  off). Uses `launcher_profile_apply("psx", &gi)` then per-game overrides
+  instead of the legacy `psx_launcher::run` (the legacy launcher stays default
+  when the define is off). Uses `launcher_profile_apply("psx", &gi)` then per-game overrides
   (lock_mode etc.), and maps PSX `UserSettings` ↔ `RecompLauncherCSettings` both
   ways (window_width, renderer, supersampling, antialiasing, texture_filter,
   screen_kind, frame_interpolation(+fps), spu_hq, auto_skip_fmv, turbo_loads,

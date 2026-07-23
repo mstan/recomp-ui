@@ -8,7 +8,7 @@
 // purely from the existing C ABI structs (RecompLauncherCSettings /
 // RecompLauncherCGameInfo) — identical across every game in the ecosystem.
 //
-// The surface mirrors the shipping RmlUi MMX launcher (launcher.rml) so the
+// The surface mirrors the shipping legacy MMX launcher so the
 // prototype is a faithful parity check of what we offer the end user:
 //   Dashboard  : game/ROM info + CRC/SHA badges + Change ROM + controllers
 //   Settings   : window scale, linear filter, sample rate, volume, hotkeys
@@ -115,7 +115,7 @@ typedef struct {
     // Computed each time the ROM changes (launcher_model_set_rom): true iff
     // msu1_supported && msu1_patch_path && the loaded ROM verifies against the
     // game's vanilla CRC && the user hasn't dismissed the prompt this session.
-    // Mirrors the RmlUi launcher's `msu1_patch_available` predicate exactly.
+    // Mirrors the legacy launcher's `msu1_patch_available` predicate exactly.
     bool        msu1_patch_available;
     bool        msu1_patch_skipped;  // session-only "Play Unpatched" dismissal
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
@@ -398,7 +398,7 @@ void launcher_model_volume_delta(LauncherModel* m, int delta);  // clamp 0..100
 
 // ---- deeper PSX-style settings (capability-gated; no-op / harmless when the
 // corresponding has_* flag is false — callers should still gate the UI on the
-// flag so the control isn't shown at all, per the RmlUi PSX launcher parity). ----
+// flag so the control isn't shown at all, per the legacy PSX launcher parity). ----
 void launcher_model_cycle_window_size(LauncherModel* m);       // {960,1280,1600,1920} wrap
 const char* launcher_model_window_size_label(const LauncherModel* m);  // "1280 x 960" (H follows aspect)
 void launcher_model_toggle_renderer(LauncherModel* m);         // Software/OpenGL
@@ -432,7 +432,7 @@ void launcher_model_clear_sram(LauncherModel* m);
 
 // ---- PSX memory-card slots (SAVE_MEMCARD only; no-op guarded by slot range) ----
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path);
-// Enable/disable one card slot (mirrors the RmlUi launcher's per-card switch;
+// Enable/disable one card slot (mirrors the legacy launcher's per-card switch;
 // a disabled slot's SIO port reports no card present to the host once wired).
 void launcher_model_toggle_memcard(LauncherModel* m, int slot);
 // "New" action: format a real, mountable blank 128KB PS1 memory-card image at

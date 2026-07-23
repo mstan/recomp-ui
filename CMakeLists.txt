@@ -37,6 +37,16 @@ recomp_target_launcher_ui(recomp-ui-launcher)
 
 include(CTest)
 if(BUILD_TESTING)
+    # Compile the exact SDL_Renderer2 adapter through its public integration
+    # helper. Calling the helper twice also guards its no-duplicate contract.
+    add_library(recomp-runtime-ui-sdlrenderer2-check OBJECT)
+    recomp_target_runtime_ui_sdlrenderer2(
+        recomp-runtime-ui-sdlrenderer2-check)
+    recomp_target_runtime_ui_sdlrenderer2(
+        recomp-runtime-ui-sdlrenderer2-check)
+    target_link_libraries(recomp-runtime-ui-sdlrenderer2-check PRIVATE
+        SDL2::SDL2)
+
     add_executable(recomp-runtime-ui-test
         tests/runtime_ui_test.c
         src/common/recomp_runtime_ui.c

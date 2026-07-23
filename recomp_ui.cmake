@@ -55,7 +55,7 @@ function(recomp_target_launcher_ui TGT)
     # that recomp-ui's own backend glue (launcher_imgui.cpp) compiles against.
     # Used by gb-recompiled, whose runtime already vendors + uses ImGui for its
     # in-game menu. Omit both to keep the default self-contained vendored ImGui.
-    cmake_parse_arguments(RUI "" "BOXART;BOXART_NAME;PAD;BRAND;HOST_IMGUI;IMGUI_DIR" "" ${ARGN})
+    cmake_parse_arguments(RUI "HOST_IMGUI" "BOXART;BOXART_NAME;PAD;BRAND;IMGUI_DIR" "" ${ARGN})
 
     set_target_properties(${TGT} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
@@ -68,8 +68,21 @@ function(recomp_target_launcher_ui TGT)
     # code against those headers and links the host's ImGui core/backends. The
     # launcher UI is version-guarded (see launcher_imgui.cpp) so it builds
     # against the host's ImGui even when older than the vendored one.
+    set(_rui_use_host_imgui FALSE)
+    set(_rui_host_imgui_include "")
     if(RECOMP_UI_HOST_IMGUI)
-        message(STATUS "recomp-ui: using HOST Dear ImGui (${RECOMP_UI_HOST_IMGUI_INCLUDE})")
+        set(_rui_use_host_imgui TRUE)
+        set(_rui_host_imgui_include "${RECOMP_UI_HOST_IMGUI_INCLUDE}")
+    elseif(RUI_HOST_IMGUI)
+        if(NOT RUI_IMGUI_DIR)
+            message(FATAL_ERROR "recomp_target_launcher_ui(HOST_IMGUI ...) requires IMGUI_DIR <host imgui source dir>")
+        endif()
+        set(_rui_use_host_imgui TRUE)
+        set(_rui_host_imgui_include "${RUI_IMGUI_DIR}")
+    endif()
+
+    if(_rui_use_host_imgui)
+        message(STATUS "recomp-ui: using HOST Dear ImGui (${_rui_host_imgui_include})")
         set(_rui_imgui_sources)   # host compiles imgui core + backends
     else()
         set(_rui_imgui_sources
@@ -117,37 +130,13 @@ function(recomp_target_launcher_ui TGT)
         ${_rui_imgui_sources}
     )
 
-    # Vendored Dear ImGui (C++) — compiled only when the host does NOT already
-    # provide it. Under HOST_IMGUI the host's single copy is reused (below).
-    if(NOT RECOMP_UI_HOST_IMGUI AND NOT RUI_HOST_IMGUI)
-        target_sources(${TGT} PRIVATE
-            ${RUI_IMGUI}/imgui.cpp
-            ${RUI_IMGUI}/imgui_draw.cpp
-            ${RUI_IMGUI}/imgui_tables.cpp
-            ${RUI_IMGUI}/imgui_widgets.cpp
-            ${RUI_IMGUI}/backends/imgui_impl_sdl2.cpp
-            ${RUI_IMGUI}/backends/imgui_impl_opengl3.cpp
-        )
-    endif()
-
-    # ImGui include dir: the host's under HOST_IMGUI (so launcher_imgui.cpp
-    # compiles against the SAME imgui.h the host's single copy was built from),
-    # else recomp-ui's vendored tree.
-    set(RUI_IMGUI_INC ${RUI_IMGUI})
-    if(RUI_HOST_IMGUI)
-        if(NOT RUI_IMGUI_DIR)
-            message(FATAL_ERROR "recomp_target_launcher_ui(HOST_IMGUI ...) requires IMGUI_DIR <host imgui source dir>")
-        endif()
-        set(RUI_IMGUI_INC ${RUI_IMGUI_DIR})
-    endif()
-
     target_include_directories(${TGT} PRIVATE
         ${RUI_SRC}                   # recomp_launcher.h / launcher_profile.h / launcher_system.h
                                      # + "third_party/..." + "consoles/<id>/..." includes
         ${RUI_SRC}/common            # launcher core headers (bare-name includes)
     )
-    if(RECOMP_UI_HOST_IMGUI)
-        target_include_directories(${TGT} PRIVATE ${RECOMP_UI_HOST_IMGUI_INCLUDE})
+    if(_rui_use_host_imgui)
+        target_include_directories(${TGT} PRIVATE ${_rui_host_imgui_include})
     else()
         target_include_directories(${TGT} PRIVATE ${RUI_IMGUI} ${RUI_IMGUI}/backends)
     endif()
@@ -243,6 +232,33 @@ function(recomp_target_launcher_ui TGT)
                     ${RUI_BRAND} $<TARGET_FILE_DIR:${TGT}>/assets/img/brand_mark.tga
             VERBATIM)
     endif()
+endfunction()
+
+# recomp_target_runtime_ui_sdlrenderer2(<host_target>)
+#
+# Adds the official Dear ImGui SDL_Renderer2 renderer backend to exactly one
+# host target. ImGui core and the SDL2 platform backend remain owned by
+# recomp_target_launcher_ui() (or by a HOST_IMGUI provider), so SDL_Renderer
+# runtime families can opt in without creating a second ImGui copy or duplicate
+# backend symbols.
+function(recomp_target_runtime_ui_sdlrenderer2 TGT)
+    if(NOT TARGET ${TGT})
+        message(FATAL_ERROR
+            "recomp_target_runtime_ui_sdlrenderer2(${TGT}): target does not exist")
+    endif()
+
+    get_target_property(_rui_sdlrenderer2_added ${TGT}
+        RECOMP_UI_SDLRENDERER2_ADDED)
+    if(_rui_sdlrenderer2_added)
+        return()
+    endif()
+
+    target_sources(${TGT} PRIVATE
+        ${RUI_IMGUI}/backends/imgui_impl_sdlrenderer2.cpp)
+    target_include_directories(${TGT} PRIVATE
+        ${RUI_IMGUI}
+        ${RUI_IMGUI}/backends)
+    set_property(TARGET ${TGT} PROPERTY RECOMP_UI_SDLRENDERER2_ADDED TRUE)
 endfunction()
 
 # recomp_stage_launcher_assets(<exe_target> [BOXART <path>] [BOXART_NAME <name>])

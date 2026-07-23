@@ -31,6 +31,7 @@ a GBA core, or recreate a Genesis renderer without the host's lifecycle rules.
 |---|---|---|
 | Existing runtime ImGui (for example RT64) | `recomp_runtime_ui_render_imgui` | Preferred; host owns context and draw submission. |
 | GPU host that can add an ImGui frame | `recomp_runtime_ui_render_imgui` | Preferred; use the existing recomp-ui ImGui dependency. |
+| SDL2 `SDL_Renderer` host | `recomp_runtime_ui_render_imgui` + `imgui_impl_sdlrenderer2` | Use `recomp_target_runtime_ui_sdlrenderer2()` once on the runtime target. |
 | Writable low-resolution CPU framebuffer | `recomp_runtime_ui_render_argb8888` | Compatibility fallback; compact by design. |
 | Different UI toolkit | Implement a presentation over the shared model | Do not duplicate settings behavior or console policy. |
 
@@ -40,6 +41,13 @@ Both use the same palette, spacing, radius, and semantic colors as the launcher.
 An N64 host therefore gets the clean graphite/red/blue N64 theme with no CRT
 scanlines; SNES uses its console theme; handheld themes remain flat rather than
 pretending to be a CRT.
+
+The vendored SDL_Renderer2 backend is the official backend from the matching
+Dear ImGui `v1.91.9b` release. It requires SDL 2.0.17 or newer. A host using an
+SDL logical presentation size must temporarily render the ImGui frame at the
+renderer output size, then restore its logical size and viewport before the
+next game frame. Event routing remains the host's responsibility through the
+shared SDL2 platform backend.
 
 ## What “every recomp-ui game” requires
 

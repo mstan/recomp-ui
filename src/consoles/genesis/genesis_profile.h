@@ -14,7 +14,7 @@
 //     3-button mode hides the X/Y/Z/Mode rebind rows,
 //   * a GAMEPAD bind column on the rebind page (has_pad_binds): the engine's
 //     input map stores an SDL_GameController button/axis bind per logical
-//     button alongside the keyboard scancode, and the RmlUi launcher this
+//     button alongside the keyboard scancode, and the legacy launcher this
 //     replaces offered "Set key" AND "Set pad" per row,
 //   * a widescreen "extra cells per side" stepper (video.widescreen_cells):
 //     the engine renders N extra 8-px background cells per side in widescreen.
@@ -62,12 +62,12 @@ static const PadModeDef kGenesisPadModes[] = {
 // card like SNES — per-game via sram_path, only S3/S3&K carts have a battery).
 // Settings is video + audio ONLY: the Genesis runtime's hotkeys (F1-F9
 // savestates, F11 fullscreen, F5 turbo, ...) are fixed in the runner and read
-// no config, and the RmlUi launcher this replaces exposed no hotkey editor —
+// no config, and the legacy launcher this replaces exposed no hotkey editor —
 // offering an editor that writes a file the game never reads would be a lie.
 static const char* const kPanelsSettingsGenesis[] = { "video", "audio", NULL };
 
 // ---- ROM file-picker filter -----------------------------------------------------
-// Same extension set the RmlUi launcher's Change-ROM dialog filtered on.
+// Same extension set the legacy launcher's Change-ROM dialog filtered on.
 static const char* const kGenesisRomPatterns[] = { "*.bin", "*.md", "*.gen", "*.smd" };
 #define LNG_GENESIS_ROM_PATTERN_COUNT \
     ((int)(sizeof(kGenesisRomPatterns) / sizeof(kGenesisRomPatterns[0])))

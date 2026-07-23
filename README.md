@@ -105,6 +105,12 @@ it uses the same responsive layout and console theme tokens as the launcher,
 without exposing ImGui types through the C ABI. This is the preferred path for
 RT64/N64 and other high-resolution renderers.
 
+SDL2 hosts that retain an `SDL_Renderer` can add the matching official
+SDL_Renderer2 backend to one runtime target with
+`recomp_target_runtime_ui_sdlrenderer2(<target>)`. The helper is idempotent and
+does not compile another ImGui core or SDL2 platform backend, avoiding duplicate
+symbols when the launcher and runtime menu share a binary.
+
 `recomp_runtime_ui_render_argb8888()` is a compatibility presentation for
 games that expose a writable CPU framebuffer. It is intentionally compact and
 works well for low-resolution framebuffer consoles, but it is not the visual

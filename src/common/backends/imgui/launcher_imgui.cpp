@@ -1,7 +1,7 @@
 // launcher_imgui.cpp — Dear ImGui (MIT) backend for the next-gen launcher.
 //
 // Draws the shared LauncherModel with Dear ImGui + SDL3 + OpenGL3, at parity
-// with the shipping RmlUi MMX launcher (box art, controller art, and all
+// with the shipping legacy MMX launcher (box art, controller art, and all
 // panels). Icons are drawn as vector primitives rather than font glyphs so they
 // stay crisp at any DPI and don't depend on the text font's glyph coverage.
 // Demonstrates the two hard requirements:
@@ -96,7 +96,7 @@ LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard
 LauncherTexture g_wordmark;
 // N64 Transfer Pak cartridge art, indexed by host cart_kind: [0] empty/unknown
 // (gray GB shell), [1] red, [2] blue, [3] yellow, [4] green. Loaded only for a
-// tpak game; real GB cart PNGs from the RmlUi launchers (assets/consoles/n64).
+// tpak game; real GB cart PNGs from the legacy launchers (assets/consoles/n64).
 LauncherTexture g_cart[5];
 // Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
 // VerifyResult.verdict (0 none,1 ok,2 warn,3 bad); see draw_verdict_block().
@@ -751,7 +751,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 
     // MSU-1 patch-available sub-block: this game ships an IPS patch that
     // converts the verified vanilla ROM into its MSU-1 streamed-audio variant.
-    // Ported from the RmlUi launcher's dashboard "MSU-1 patch available" card
+    // Ported from the legacy launcher's dashboard "MSU-1 patch available" card
     // (snesrecomp/runner/src/launcher/launcher_gui.cpp: msu1_patch_available +
     // do_patch()/patch_rom/skip_patch). "warn" amber styling — this is a
     // choice the player should notice, not a routine control.
@@ -807,7 +807,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
 void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     // Password/mantra save variant (e.g. Faxanadu): the row shows the current
     // password text instead of a binary save file. Editable behind an Edit ->
-    // type -> Save confirm step, mirroring the RmlUi NES launcher's flow.
+    // type -> Save confirm step, mirroring the legacy NES launcher's flow.
     if (m->password_save_path) {
         static bool s_pw_editing = false;
         static char s_pw_buf[128];
@@ -1317,7 +1317,7 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
 // PSX-style 3-way pad-mode selector: Hybrid / Analog / D-Pad segmented row.
 // Caller only draws this when pad_mode_supported && pad_mode_selectable (a
 // locked mode draws nothing — there's nothing to pick). The Hybrid segment is
-// itself hidden when !allow_hybrid, matching the real RmlUi PSX launcher.
+// itself hidden when !allow_hybrid, matching the original PSX launcher.
 void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     struct Seg { int mode; const char* label; };
     Seg segs[8];
@@ -1651,7 +1651,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button(launcher_model_scale_label(m), ImVec2(px(120), px(30))))
             launcher_model_cycle_scale(m);
         // Universal fullscreen row (every console; tri-state cycle restoring
-        // the RmlUi launcher's Off/Borderless/Exclusive vocabulary). Sits
+        // the legacy launcher's Off/Borderless/Exclusive vocabulary). Sits
         // right under Window scale, matching the old Display panel order.
         row_label("Fullscreen", th, cw);
         if (ImGui::Button(launcher_model_fullscreen_label(m), ImVec2(px(120), px(30))))
@@ -1707,7 +1707,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     // ---- deeper PSX-style surface, capability-gated per control -----------
-    // Order matches the real RmlUi PSX launcher: Window size, Renderer,
+    // Order matches the original PSX launcher: Window size, Renderer,
     // Supersampling, Aspect ratio, Texture filtering, Antialiasing, Screen
     // model, Frame interpolation (+Presentation target), Skip FMVs, Turbo
     // loads, Fullscreen.
@@ -2237,7 +2237,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (bpi >= 2) launcher_binds_refresh(m);
 
         // A pad-bind console (Genesis) offers a KEY chip AND a GAMEPAD chip per
-        // row — the RmlUi launcher's "Set key" / "Set pad" pair. Otherwise the
+        // row — the legacy launcher's "Set key" / "Set pad" pair. Otherwise the
         // grid is keyboard-only, exactly as before.
         const bool has_pad = spec.has_pad_binds != 0;
 

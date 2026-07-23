@@ -1,7 +1,7 @@
 // ips_patch.h — classic IPS patch format (PATCH...EOF, 24-bit offsets).
 //
 // Pure algorithm, no file I/O (mirrors the crc32.c/sha256.c "bundled engine
-// helper" pattern) — ported from the RmlUi SNES launcher's ips_apply()
+// helper" pattern) — ported from the legacy SNES launcher's ips_apply()
 // (snesrecomp/runner/src/launcher/launcher_gui.cpp) so recomp-ui's MSU-1
 // dashboard flow (launcher_model_apply_msu1_patch, launcher_model.c) can
 // write a patched ROM from a vanilla ROM + a game-supplied .ips file.

@@ -246,7 +246,7 @@ static void reload_player_display(LauncherModel* m, int player) {
     }
 }
 
-// ---- config.ini [KeyMap] surgical read/write (ported from the RmlUi launcher) --
+// ---- config.ini [KeyMap] surgical read/write (ported from the legacy launcher) --
 
 static int ieq(const char* a, size_t alen, const char* b) {
     size_t bl = strlen(b);

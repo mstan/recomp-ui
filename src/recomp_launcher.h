@@ -178,7 +178,7 @@ struct RecompLauncherCSettings {
     // Per-slot card-image file path (empty = none picked yet), editable via the
     // Save panel's Browse/New controls; mirrors bios_path's pattern exactly.
     char memcard_path[2][512];
-    // Per-slot enable/disable (mirrors the RmlUi PSX launcher's per-card
+    // Per-slot enable/disable (mirrors the legacy PSX launcher's per-card
     // "Enabled" switch / SIO-port concept: a disabled slot reports no card
     // present). 0 = unset (host predates this field) -> the model defaults it
     // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
@@ -245,7 +245,7 @@ struct RecompLauncherCSettings {
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
 // Plain-C structs so a host can implement the callbacks with zero launcher
-// internal types. Mirror what the RmlUi launcher computed inline.
+// internal types. Mirror what the legacy launcher computed inline.
 typedef struct RecompLauncherCDiscVerify {
     char serial[16];   // e.g. "SCUS-94423"; "" = unknown/unread
     char region[8];    // e.g. "NTSC-U"; "" = unknown
@@ -361,7 +361,7 @@ typedef struct RecompLauncherCGameInfo {
     // ---- host verification/inspection callbacks (optional; PSX uses them) ----
     // When set, the launcher shows REAL disc/memcard facts and RE-runs the
     // callback whenever the user changes the disc / a memory card (matching the
-    // RmlUi launcher). NULL => the launcher falls back to a placeholder verdict
+    // legacy launcher). NULL => the launcher falls back to a placeholder verdict
     // / empty card summary. `disc_verify` gets the current disc path; return 1
     // if `out` was filled. `memcard_inspect` gets one slot's card path; return
     // 1 if `out` was filled.
