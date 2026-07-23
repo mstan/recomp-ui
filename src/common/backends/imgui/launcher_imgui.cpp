@@ -2774,21 +2774,23 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                 if (!m->netplay_lan_only)
                     np_connect_and_list(m);
                 /* LAN/Direct IP: advertise the selected interface:port. Online:
-                 * bind-all so the lobby server can rewrite / ICE can gather. */
+                 * ignore the greyed-out IP/port fields, bind 0.0.0.0, prefer
+                 * 7777, and auto-pick nearby if busy (lobby rewrite / ICE). */
                 char endpoint[96];
+                const char* port_label = "7777";
                 if (m->netplay_lan_only) {
+                    port_label = m->netplay_host_port[0]
+                        ? m->netplay_host_port : "7777";
                     std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
                                   m->netplay_host_ip[0] ? m->netplay_host_ip : "127.0.0.1",
-                                  m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                                  port_label);
                 } else {
-                    std::snprintf(endpoint, sizeof(endpoint), "0.0.0.0:%s",
-                                  m->netplay_host_port[0] ? m->netplay_host_port : "7777");
+                    std::snprintf(endpoint, sizeof(endpoint), "0.0.0.0:7777");
                 }
                 /* Universal MotK port policy (owned by recomp-ui, not the host):
-                 * LAN requires the exact port; online auto-picks preferred..+31. */
+                 * LAN requires the exact UI port; online ignores the field and
+                 * auto-picks 7777..7808. */
                 const int want_port = launcher_endpoint_port(endpoint);
-                const char* port_label = m->netplay_host_port[0]
-                    ? m->netplay_host_port : "7777";
                 bool port_ok = true;
                 if (m->netplay_lan_only) {
                     if (!launcher_udp_port_available(want_port)) {
@@ -2800,15 +2802,13 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                     }
                 } else {
                     const int free_port =
-                        launcher_udp_find_free_port(want_port, 32);
+                        launcher_udp_find_free_port(/*preferred=*/7777, 32);
                     if (free_port < 0 ||
-                        (free_port != want_port &&
+                        (free_port != 7777 &&
                          launcher_endpoint_set_port(endpoint, sizeof(endpoint),
                                                     free_port) != 0)) {
                         std::snprintf(host_create_status, sizeof(host_create_status),
-                                      "No free UDP port near %s. Choose a "
-                                      "different port and try again.",
-                                      port_label);
+                                      "No free UDP port near 7777. Try again.");
                         port_ok = false;
                     }
                 }
@@ -2823,18 +2823,20 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                                       m->netplay_lan_only
                                           ? "Port %s is already in use. Choose a "
                                             "different port for this LAN lobby."
-                                          : "No free UDP port near %s. Choose a "
-                                            "different port and try again.",
+                                          : "No free UDP port near 7777. Try again.",
                                       port_label);
                     } else if (rc != 0) {
                         std::snprintf(host_create_status, sizeof(host_create_status),
                                       "Could not create lobby.");
                     } else {
-                        /* Sync port if online auto-selected an alternate. */
-                        if (const char* colon = std::strrchr(endpoint, ':')) {
-                            std::snprintf(m->netplay_host_port,
-                                          sizeof(m->netplay_host_port), "%s",
-                                          colon + 1);
+                        /* LAN: keep the UI port in sync. Online: leave the
+                         * greyed field alone; actual bind is host_endpoint. */
+                        if (m->netplay_lan_only) {
+                            if (const char* colon = std::strrchr(endpoint, ':')) {
+                                std::snprintf(m->netplay_host_port,
+                                              sizeof(m->netplay_host_port), "%s",
+                                              colon + 1);
+                            }
                         }
                         std::snprintf(m->netplay_host_endpoint,
                                       sizeof(m->netplay_host_endpoint), "%s",

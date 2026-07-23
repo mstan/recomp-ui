@@ -8,8 +8,8 @@ extern "C" {
 #endif
 
 /* Universal host-lobby UDP port policy used by recomp-ui before create():
- *   LAN/Direct IP — exact port required; fail when busy
- *   Online        — try preferred, then preferred+1 .. +span-1
+ *   LAN/Direct IP — exact UI port required; fail when busy
+ *   Online        — ignore UI port; prefer 7777, then 7777+1 .. +span-1
  *
  * Self-contained (no recomp-net link). Exclusive bind probes omit SO_REUSEADDR
  * so a second host on the same port is detected. */

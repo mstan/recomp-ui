@@ -111,10 +111,11 @@ callback is absent or returns no choices.
 The initial waiting-room UI supports two players. Hosts always bind UDP on
 `0.0.0.0`. **LAN/Direct IP** (unchecked by default) enables the interface
 dropdown and port so hosts can advertise a chosen LAN address to joiners; when
-unchecked those controls stay visible but disabled (selection preserved) and
-create uses `0.0.0.0` for lobby-server rewrite / ICE. Direct clients bind an
-ephemeral local UDP port, so a direct session requires only the host's exposed
-IP address and port.
+unchecked those controls stay visible but disabled (selection preserved) —
+create ignores the greyed port field, prefers UDP `7777`, and auto-picks a
+nearby free port (`7777`..`7808`) for lobby-server rewrite / ICE. Direct
+clients bind an ephemeral local UDP port, so a direct session requires only
+the host's exposed IP address and port.
 
 ---
 
