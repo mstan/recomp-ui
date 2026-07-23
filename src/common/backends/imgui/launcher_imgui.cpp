@@ -198,6 +198,7 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         0x2B00, 0x2BFF,   // Misc Symbols and Arrows
         0,
     };
+#ifdef IMGUI_USE_WCHAR32
     static const ImWchar kEmojiRanges[] = {
         0x1F300, 0x1F5FF, // Misc Symbols and Pictographs (incl. 🔒)
         0x1F600, 0x1F64F, // Emoticons
@@ -207,6 +208,10 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     };
     merge_font_if_present(symbols_font_path, body, kSymbolRanges);
     merge_font_if_present(emoji_font_path, body, kEmojiRanges);
+#else
+    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
+    (void)emoji_font_path;
+#endif
     io.Fonts->Build();
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     ImGui_ImplOpenGL3_CreateFontsTexture();
