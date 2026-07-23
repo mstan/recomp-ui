@@ -1643,7 +1643,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     if (!any_deep_display(m)) {
         // ---- legacy minimal surface (SNES/NES etc.) — aligned label grid -------
         float cw = ImGui::CalcTextSize("Linear filtering").x;   // widest legacy label
-        { float t = ImGui::CalcTextSize("Widescreen 16:9").x; if (t > cw) cw = t; }
+        { float t = ImGui::CalcTextSize("View mode").x; if (t > cw) cw = t; }
         if (m->has_integer_scale) { float t = ImGui::CalcTextSize("Integer scaling").x; if (t > cw) cw = t; }
         cw += px(18.0f);
         row_label("Window scale", th, cw);
@@ -1663,38 +1663,22 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Linear filtering", th, cw);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
-        if (m->adaptive_view_supported) {
-            row_label("Adaptive view", th, cw);
-            bool adaptive = m->s.adaptive_view != 0;
-            if (ImGui::Checkbox("##adaptive", &adaptive))
-                launcher_model_toggle_adaptive_view(m);
-            experimental_tag(th);
-        }
-        const bool adaptive_fullscreen = m->adaptive_view_supported &&
-                                         m->s.adaptive_view != 0 &&
-                                         m->s.fullscreen != 0;
-        if (m->aspect_mask || m->num_aspect_labels > 0) {   // PSX-style cycle, or a game-supplied vocabulary
-            if (adaptive_fullscreen) ImGui::BeginDisabled();
-            row_label("Aspect ratio", th, cw);
-            if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
-                launcher_model_cycle_aspect(m);
-            if (m->aspect_experimental) experimental_tag(th);
-            if (adaptive_fullscreen) ImGui::EndDisabled();
-        } else if (m->widescreen_supported) {   // legacy module: only for games that support it
-            if (adaptive_fullscreen) ImGui::BeginDisabled();
-            row_label("Widescreen 16:9", th, cw);
-            bool ws = m->s.widescreen != 0;
-            if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
+        if (m->aspect_mask || m->num_aspect_labels > 0 ||
+            m->widescreen_supported || m->adaptive_view_supported) {
+            row_label("View mode", th, cw);
+            if (ImGui::Button(launcher_model_view_mode_label(m),
+                              ImVec2(px(180), px(30))))
+                launcher_model_cycle_view_mode(m);
             experimental_tag(th);
             // Genesis-style "extra cells per side" stepper: only when the
             // console opts in (video.widescreen_cells) AND widescreen is on.
             const SystemProfile* wprof = (const SystemProfile*)m->profile;
-            if (wprof && wprof->video.widescreen_cells && m->s.widescreen != 0) {
+            if (wprof && wprof->video.widescreen_cells &&
+                m->s.widescreen != 0 && !m->s.adaptive_view) {
                 row_label("Extra cells / side", th, cw);
                 int d = 0; ws_cells_stepper("wscells", m, &d);
                 if (d) launcher_model_ws_cells_delta(m, d);
             }
-            if (adaptive_fullscreen) ImGui::EndDisabled();
         }
         // HD texture packs (NES module, Mesen hires.txt format): one line —
         //   [x] HD texture pack   …folder tail   [Browse]
@@ -1764,31 +1748,13 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::Button(launcher_model_fullscreen_label(m), ImVec2(px(120), px(30))))
         launcher_model_cycle_fullscreen(m);
 
-    if (m->adaptive_view_supported) {
-        row_label("Adaptive view", th);
-        bool adaptive = m->s.adaptive_view != 0;
-        if (ImGui::Checkbox("##adaptive", &adaptive))
-            launcher_model_toggle_adaptive_view(m);
+    if (m->aspect_mask || m->num_aspect_labels > 0 ||
+        m->widescreen_supported || m->adaptive_view_supported) {
+        row_label("View mode", th);
+        if (ImGui::Button(launcher_model_view_mode_label(m),
+                          ImVec2(px(180), px(30))))
+            launcher_model_cycle_view_mode(m);
         experimental_tag(th);
-    }
-
-    const bool adaptive_fullscreen = m->adaptive_view_supported &&
-                                     m->s.adaptive_view != 0 &&
-                                     m->s.fullscreen != 0;
-    if (m->aspect_mask || m->num_aspect_labels > 0) {
-        if (adaptive_fullscreen) ImGui::BeginDisabled();
-        row_label("Aspect ratio", th);
-        if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
-            launcher_model_cycle_aspect(m);
-        if (m->aspect_experimental) experimental_tag(th);
-        if (adaptive_fullscreen) ImGui::EndDisabled();
-    } else if (m->widescreen_supported) {
-        if (adaptive_fullscreen) ImGui::BeginDisabled();
-        row_label("Widescreen 16:9", th);
-        bool ws = m->s.widescreen != 0;
-        if (ImGui::Checkbox("##ws", &ws)) launcher_model_toggle_widescreen(m);
-        experimental_tag(th);
-        if (adaptive_fullscreen) ImGui::EndDisabled();
     }
 
     if (m->has_texture_filter) {

@@ -91,6 +91,8 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_debug.c
         ${RUI_SRC}/common/launcher_binds.c
         ${RUI_SRC}/common/launcher_udp_port.c  # host-lobby UDP port probe / auto-pick
+        ${RUI_SRC}/common/recomp_runtime_ui.c # renderer-agnostic in-game overlay
+        ${RUI_SRC}/common/recomp_runtime_settings.c # shared cross-ecosystem setting catalog
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
@@ -111,6 +113,7 @@ function(recomp_target_launcher_ui TGT)
         # Dear ImGui backend (the shipping UI) + vendored ImGui core/backends
         # (the latter omitted when a host provides its own — see above)
         ${RUI_SRC}/common/backends/imgui/launcher_imgui.cpp
+        ${RUI_SRC}/common/backends/imgui/runtime_ui_imgui.cpp
         ${_rui_imgui_sources}
     )
 
