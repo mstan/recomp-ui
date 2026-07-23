@@ -39,13 +39,15 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(recomp-runtime-ui-test
         tests/runtime_ui_test.c
-        src/common/recomp_runtime_ui.c)
+        src/common/recomp_runtime_ui.c
+        src/common/recomp_runtime_settings.c)
     target_include_directories(recomp-runtime-ui-test PRIVATE src)
-    add_test(NAME recomp-runtime-ui COMMAND recomp-runtime-ui-test)
+    add_test(NAME recomp-runtime-ui COMMAND $<TARGET_FILE:recomp-runtime-ui-test>)
 
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp
         src/common/recomp_runtime_ui.c
+        src/common/recomp_runtime_settings.c
         src/common/backends/imgui/runtime_ui_imgui.cpp
         src/third_party/imgui/imgui.cpp
         src/third_party/imgui/imgui_draw.cpp
@@ -53,5 +55,5 @@ if(BUILD_TESTING)
         src/third_party/imgui/imgui_widgets.cpp)
     target_include_directories(recomp-runtime-ui-imgui-test PRIVATE
         src src/common src/third_party/imgui)
-    add_test(NAME recomp-runtime-ui-imgui COMMAND recomp-runtime-ui-imgui-test)
+    add_test(NAME recomp-runtime-ui-imgui COMMAND $<TARGET_FILE:recomp-runtime-ui-imgui-test>)
 endif()

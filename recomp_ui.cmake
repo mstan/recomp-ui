@@ -92,6 +92,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_binds.c
         ${RUI_SRC}/common/launcher_udp_port.c  # host-lobby UDP port probe / auto-pick
         ${RUI_SRC}/common/recomp_runtime_ui.c # renderer-agnostic in-game overlay
+        ${RUI_SRC}/common/recomp_runtime_settings.c # shared cross-ecosystem setting catalog
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only

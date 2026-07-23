@@ -120,9 +120,9 @@ rollout matrix.
 ```c
 static const RecompRuntimeUiItem rows[] = {
     { "fullscreen", "Display", "Fullscreen", "Choose the window mode.",
-      RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, modes, 3 },
+      RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, modes, 3, NULL },
     { "reset", "System", "Reset game", "Reset the emulated machine.",
-      RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0 },
+      RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL },
 };
 
 RecompRuntimeUiConfig menu = {0};

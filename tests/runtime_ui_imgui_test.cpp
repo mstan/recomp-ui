@@ -22,7 +22,7 @@ int main() {
     static const char *const modes[] = { "Standard (4:3)", "16:9", "Adaptive" };
     static const RecompRuntimeUiItem items[] = {
         { "view", "Display", "View mode", "Choose the visible game area.",
-          RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, modes, 3 },
+          RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, modes, 3, nullptr },
     };
     int value = 0;
     RecompRuntimeUiConfig config{};

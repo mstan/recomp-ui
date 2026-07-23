@@ -17,6 +17,7 @@ static int get_value(void *context, const RecompRuntimeUiItem *item, int *out) {
     TestState *state = (TestState *)context;
     if (!strcmp(item->key, "enabled")) *out = state->enabled;
     else if (!strcmp(item->key, "level")) *out = state->level;
+    else if (!strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE)) *out = state->level;
     else return 0;
     return 1;
 }
@@ -25,6 +26,7 @@ static int set_value(void *context, const RecompRuntimeUiItem *item, int value) 
     TestState *state = (TestState *)context;
     if (!strcmp(item->key, "enabled")) state->enabled = value;
     else if (!strcmp(item->key, "level")) state->level = value;
+    else if (!strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE)) state->level = value;
     else return 0;
     return 1;
 }
@@ -44,11 +46,11 @@ static void visible(void *context, int open) {
 int main(void) {
     static const RecompRuntimeUiItem items[] = {
         { "enabled", "Video", "Enabled", "Toggle the feature.",
-          RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0 },
+          RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL },
         { "level", "Video", "Level", "Adjust the level.",
-          RECOMP_RUNTIME_UI_INT, 0, 10, 2, NULL, 0 },
+          RECOMP_RUNTIME_UI_INT, 0, 10, 2, NULL, 0, NULL },
         { "reset", "System", "Reset", "Run the action.",
-          RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0 },
+          RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL },
     };
     TestState state = { 0 };
     RecompRuntimeUiConfig config = {0};
@@ -98,6 +100,25 @@ int main(void) {
     recomp_runtime_ui_close(ui);
     assert(!state.visible);
     recomp_runtime_ui_destroy(ui);
+
+    /* Sparse universal view modes retain their semantic values (0 -> 2). */
+    state.level = RECOMP_RUNTIME_UI_VIEW_NATIVE;
+    RecompRuntimeUiStandardConfig standard = {0};
+    standard.menu.title = "Standard settings";
+    standard.menu.theme = "gba";
+    standard.menu.callbacks = config.callbacks;
+    standard.features = RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE;
+    standard.view_modes = RECOMP_RUNTIME_UI_VIEW_MODE_NATIVE |
+                          RECOMP_RUNTIME_UI_VIEW_MODE_ADAPTIVE;
+    RecompRuntimeUi *standard_ui = recomp_runtime_ui_create_standard(&standard);
+    assert(standard_ui != NULL);
+    recomp_runtime_ui_open(standard_ui);
+    assert(recomp_runtime_ui_handle_input(
+        standard_ui, RECOMP_RUNTIME_UI_INPUT_ACCEPT, 1, 0));
+    assert(recomp_runtime_ui_handle_input(
+        standard_ui, RECOMP_RUNTIME_UI_INPUT_RIGHT, 1, 0));
+    assert(state.level == RECOMP_RUNTIME_UI_VIEW_ADAPTIVE);
+    recomp_runtime_ui_destroy(standard_ui);
     puts("runtime UI tests passed");
     return 0;
 }

@@ -71,6 +71,9 @@ void recomp_runtime_ui_destroy(RecompRuntimeUi *ui) {
     if (ui->open && ui->config.callbacks.visibility_changed)
         ui->config.callbacks.visibility_changed(ui->config.callbacks.context, 0);
     free(ui->sections);
+    free(ui->owned_items);
+    free(ui->owned_view_choices);
+    free(ui->owned_view_values);
     free(ui);
 }
 
@@ -138,9 +141,15 @@ void recomp_runtime_ui_adjust_current(RecompRuntimeUi *ui, int direction,
                                        : item->maximum - item->minimum + 1;
         if (count <= 0) return;
         int base = value - item->minimum;
+        if (item->choice_values) {
+            base = 0;
+            for (int i = 0; i < count; ++i)
+                if (item->choice_values[i] == value) { base = i; break; }
+        }
         int delta = direction < 0 ? -1 : 1;
         base = (base + delta + count) % count;
-        next = item->minimum + base;
+        next = item->choice_values ? item->choice_values[base]
+                                   : item->minimum + base;
     } else {
         int step = item->step > 0 ? item->step : 1;
         next = value + (direction < 0 ? -step : step);
@@ -362,10 +371,19 @@ static void item_value(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
         snprintf(out, out_size, "?");
     } else if (item->type == RECOMP_RUNTIME_UI_BOOL) {
         snprintf(out, out_size, "%s", value ? "On" : "Off");
-    } else if (item->type == RECOMP_RUNTIME_UI_CHOICE && item->choices &&
-               value >= item->minimum &&
-               (size_t)(value - item->minimum) < item->choice_count) {
-        snprintf(out, out_size, "%s", item->choices[value - item->minimum]);
+    } else if (item->type == RECOMP_RUNTIME_UI_CHOICE && item->choices) {
+        size_t index = item->choice_count;
+        if (item->choice_values) {
+            for (size_t i = 0; i < item->choice_count; ++i)
+                if (item->choice_values[i] == value) { index = i; break; }
+        } else if (value >= item->minimum &&
+                   (size_t)(value - item->minimum) < item->choice_count) {
+            index = (size_t)(value - item->minimum);
+        }
+        if (index < item->choice_count)
+            snprintf(out, out_size, "%s", item->choices[index]);
+        else
+            snprintf(out, out_size, "?");
     } else {
         snprintf(out, out_size, "%d", value);
     }
@@ -398,18 +416,29 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
     rect(pixels,width,height,pitch,panel_x,panel_y,panel_w,panel_h,panel,238);
     outline(pixels,width,height,pitch,panel_x,panel_y,panel_w,panel_h,
             scale,accent);
+    const char *title = ui->config.title ? ui->config.title : "Settings";
+    const char *subtitle = ui->config.subtitle;
+    const int title_w = text_width(title, scale);
+    const int subtitle_w = text_width(subtitle, scale);
+    const int header_inner_w = panel_w - pad * 2;
+    const int stacked_header = subtitle && subtitle[0] &&
+        title_w + subtitle_w + 4 * scale > header_inner_w;
     draw_text(pixels,width,height,pitch,panel_x+pad,panel_y+pad,scale,accent,
-              ui->config.title ? ui->config.title : "Settings",
-              panel_x+panel_w-pad);
-    if (ui->config.subtitle) {
-        int sw = text_width(ui->config.subtitle, scale);
-        draw_text(pixels,width,height,pitch,panel_x+panel_w-pad-sw,panel_y+pad,
-                  scale,muted,ui->config.subtitle,panel_x+panel_w-pad);
+              title,panel_x+panel_w-pad);
+    if (subtitle && subtitle[0]) {
+        const int subtitle_y = panel_y + pad +
+            (stacked_header ? 10 * scale : 0);
+        int subtitle_x = panel_x + panel_w - pad - subtitle_w;
+        if (subtitle_x < panel_x + pad) subtitle_x = panel_x + pad;
+        draw_text(pixels,width,height,pitch,subtitle_x,
+                  subtitle_y,scale,muted,subtitle,panel_x+panel_w-pad);
     }
-    rect(pixels,width,height,pitch,panel_x+pad,panel_y+24*scale,
+    const int header_extra = stacked_header ? 10 * scale : 0;
+    rect(pixels,width,height,pitch,panel_x+pad,
+         panel_y+24*scale+header_extra,
          panel_w-pad*2,scale,border,255);
 
-    int list_y = panel_y + 32 * scale;
+    int list_y = panel_y + 32 * scale + header_extra;
     int footer_y = panel_y + panel_h - 28 * scale;
     int row_h = 15 * scale;
     int visible = (footer_y - list_y) / row_h;

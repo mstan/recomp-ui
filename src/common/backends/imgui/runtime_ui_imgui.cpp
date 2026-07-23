@@ -29,10 +29,19 @@ void value_text(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
         std::snprintf(out, out_size, "Unavailable");
     } else if (item->type == RECOMP_RUNTIME_UI_BOOL) {
         std::snprintf(out, out_size, "%s", value ? "On" : "Off");
-    } else if (item->type == RECOMP_RUNTIME_UI_CHOICE && item->choices &&
-               value >= item->minimum &&
-               static_cast<size_t>(value - item->minimum) < item->choice_count) {
-        std::snprintf(out, out_size, "%s", item->choices[value - item->minimum]);
+    } else if (item->type == RECOMP_RUNTIME_UI_CHOICE && item->choices) {
+        size_t index = item->choice_count;
+        if (item->choice_values) {
+            for (size_t i = 0; i < item->choice_count; ++i)
+                if (item->choice_values[i] == value) { index = i; break; }
+        } else if (value >= item->minimum &&
+                   static_cast<size_t>(value - item->minimum) < item->choice_count) {
+            index = static_cast<size_t>(value - item->minimum);
+        }
+        if (index < item->choice_count)
+            std::snprintf(out, out_size, "%s", item->choices[index]);
+        else
+            std::snprintf(out, out_size, "Unavailable");
     } else {
         std::snprintf(out, out_size, "%d", value);
     }

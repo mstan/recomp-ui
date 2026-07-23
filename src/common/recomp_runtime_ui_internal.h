@@ -17,6 +17,9 @@ struct RecompRuntimeUi {
     int in_section;
     unsigned status_frames;
     char status[48];
+    RecompRuntimeUiItem *owned_items;
+    const char **owned_view_choices;
+    int *owned_view_values;
 };
 
 int recomp_runtime_ui_item_enabled(const RecompRuntimeUi *ui,
