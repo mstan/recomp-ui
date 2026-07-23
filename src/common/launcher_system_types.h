@@ -48,7 +48,7 @@ typedef struct {
     const ButtonDef* buttons; int button_count;   // per-system base set (rebind page)
     const char* image;                             // base pad art (fallback / no pad-mode)
     const char* image_analog, *image_digital;       // optional mode-swap pair (PSX-style)
-    int  max_players;                              // 1, 2 or 4
+    int  max_players;                              // 1..RECOMP_LAUNCHER_MAX_PLAYERS
     int  has_pad_mode;                              // analog/digital selector offered
     // Alternate bind slots per input the console's bind store keeps (N64's
     // input.cfg format stores 2 — e.g. Z on both shoulder triggers). 0 (the

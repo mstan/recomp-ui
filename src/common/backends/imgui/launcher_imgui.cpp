@@ -1458,8 +1458,8 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 }
 
 // Lays out the player cards: one card for a 1-player game, two side-by-side
-// for a 2-player game, a 2x2 grid for a 4-port console (N64). Driven by the
-// model, never hardcoded.
+// for a 2-player game, a 2x2/2+1 wrap for 3–5 (N64 4-port, PSX multitap).
+// Driven by the model, never hardcoded.
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
     int n = m->player_count;
@@ -1468,11 +1468,12 @@ void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     const float gap = px(th.spacing_md);
     const float availw = ImGui::GetContentRegionAvail().x;
     // A 2P game splits the row; a 1P game gets ONE card of the same size rather
-    // than a full-width card with a lone pad floating in it. 3-4 players wrap
-    // into rows of two same-size cards.
+    // than a full-width card with a lone pad floating in it. 3–5 players wrap
+    // into rows of two same-size cards (last row may hold a single card).
     float cardw = (availw - gap) * 0.5f;
     if (n == 1 && cardw < px(300.0f)) cardw = availw;   // narrow window: fill
-    static const char* kCardIds[LNG_MAX_PLAYERS] = { "pc0", "pc1", "pc2", "pc3" };
+    static const char* kCardIds[LNG_MAX_PLAYERS] = {
+        "pc0", "pc1", "pc2", "pc3", "pc4"};
     for (int p = 0; p < n; ++p) {
         if (p & 1) ImGui::SameLine(0, gap);
         else if (p) ImGui::Dummy(ImVec2(0, gap));   // new row of cards
@@ -3013,15 +3014,22 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     bool occupied[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS] = {};
     const bool is_host = np->is_host && np->is_host(np->ctx);
     const int count = np->member_count ? np->member_count(np->ctx) : 0;
-    int seated_players = 0;
+    /* Lobby seat count: game player_count when set, else the ABI ceiling. */
+    int max_slots = m->player_count > 0 ? m->player_count
+                                        : RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+    if (max_slots < 2) max_slots = 2;
+    if (max_slots > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+        max_slots = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
     for (int i = 0; i < count; ++i) {
         RecompLauncherCNetplayMember mem{};
         if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
         if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
         slots[mem.slot] = mem;
         occupied[mem.slot] = mem.display_name[0] != '\0';
-        if (occupied[mem.slot]) ++seated_players;
     }
+    int seated_players = 0;
+    for (int slot = 0; slot < max_slots; ++slot)
+        if (occupied[slot]) ++seated_players;
     if (ImGui::BeginTable("lobby_players", 5,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                           ImGuiTableFlags_SizingStretchProp)) {
@@ -3032,7 +3040,7 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
         ImGui::TableHeadersRow();
         const float text_h = ImGui::GetTextLineHeight();
-        for (int slot = 0; slot < RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS; ++slot) {
+        for (int slot = 0; slot < max_slots; ++slot) {
             const float member_row_h = px(42);
             ImGui::PushID(slot);
             ImGui::TableNextRow(ImGuiTableRowFlags_None, member_row_h);
@@ -3196,8 +3204,9 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col(play_hov));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(play_act));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            /* Require two seated players (not merely slot-1 occupied — host can
-             * sit in P2 alone after a seat swap). */
+            /* Require two seated players, without waiting for every open seat.
+             * Count only visible game slots: a host sitting alone in P2 after a
+             * seat swap must not satisfy the start gate. */
             const bool can_start = seated_players >= 2;
             ImGui::BeginDisabled(!can_start);
             if (ImGui::Button(u8"\u25B6 Play", ImVec2(play_w, btn_h))) {
@@ -3207,8 +3216,8 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                     ? np->request_start(np->ctx, &m->s) : -1;
                 if (rc != 0) {
                     std::snprintf(m->netplay_status, sizeof(m->netplay_status),
-                                  "Could not start lobby (need two players, or "
-                                  "server rejected start).");
+                                  "Could not start lobby (need at least two "
+                                  "players, or server rejected start).");
                 } else {
                     m->netplay_status[0] = '\0';
                     /* LAN arms launch_pending inside request_start so host can

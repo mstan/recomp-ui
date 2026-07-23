@@ -181,6 +181,13 @@ void launcher_model_init(LauncherModel* m,
     // ---- infer the SystemProfile this game belongs to (panel composition +
     // per-system specs) from the ABI caps launcher_profile_apply() already set ----
     m->profile = launcher_system_infer(game);
+    if (m->profile && m->profile->controller.max_players > 0) {
+        /* num_players is a per-game capability, while max_players is the
+         * console ceiling. Raising the ABI storage width must never make a
+         * two-player game/system expose extra controller or lobby seats. */
+        m->player_count = clampi(m->player_count, 1,
+                                 m->profile->controller.max_players);
+    }
 
     // ---- gate pad_mode per player ----
     if (m->pad_mode_supported) {
