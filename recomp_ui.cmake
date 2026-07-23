@@ -90,6 +90,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_files.c
         ${RUI_SRC}/common/launcher_debug.c
         ${RUI_SRC}/common/launcher_binds.c
+        ${RUI_SRC}/common/launcher_udp_port.c  # host-lobby UDP port probe / auto-pick
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
@@ -158,7 +159,8 @@ function(recomp_target_launcher_ui TGT)
     # CMakeLists.txt. SDL2 is still the host's to provide (its provenance varies:
     # vendored, find_package, etc.); GL is a uniform system lib, so it lives here.
     if(WIN32)
-        target_link_libraries(${TGT} PRIVATE opengl32)
+        # ws2_32: launcher_udp_port.c exclusive UDP bind probes for host lobby.
+        target_link_libraries(${TGT} PRIVATE opengl32 ws2_32)
     else()
         find_package(OpenGL REQUIRED)
         target_link_libraries(${TGT} PRIVATE OpenGL::GL ${CMAKE_DL_LIBS})

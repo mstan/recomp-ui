@@ -16,6 +16,7 @@
 #include "launcher_files.h"
 #include "launcher_debug.h"
 #include "launcher_binds.h"
+#include "launcher_udp_port.h"
 #include "launcher_panels.h"
 #include "launcher_system.h"
 #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
@@ -2767,10 +2768,13 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button("Create Lobby", ImVec2(px(150), 0))) {
             const auto* np = np_cb(m);
             if (np && np->create) {
-                np_connect_and_list(m);
+                /* Online create needs the lobby WebSocket. LAN/Direct IP only
+                 * publishes the local registry — do not connect or advertise
+                 * there, or the same room would appear twice in the list. */
+                if (!m->netplay_lan_only)
+                    np_connect_and_list(m);
                 /* LAN/Direct IP: advertise the selected interface:port. Online:
-                 * bind-all so the lobby server can rewrite / ICE can gather.
-                 * Online may rewrite the port in `endpoint` if busy. */
+                 * bind-all so the lobby server can rewrite / ICE can gather. */
                 char endpoint[96];
                 if (m->netplay_lan_only) {
                     std::snprintf(endpoint, sizeof(endpoint), "%s:%s",
@@ -2780,36 +2784,69 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                     std::snprintf(endpoint, sizeof(endpoint), "0.0.0.0:%s",
                                   m->netplay_host_port[0] ? m->netplay_host_port : "7777");
                 }
-                const char* lobby = m->netplay_host_name[0]
-                    ? m->netplay_host_name : "Netplay Lobby";
-                const int rc = np->create(np->ctx, lobby, endpoint,
-                                          m->netplay_host_password, &m->s);
-                if (rc == -4) {
-                    std::snprintf(host_create_status, sizeof(host_create_status),
-                                  m->netplay_lan_only
-                                      ? "Port %s is already in use. Choose a "
-                                        "different port for this LAN lobby."
-                                      : "No free UDP port near %s. Choose a "
-                                        "different port and try again.",
-                                  m->netplay_host_port[0] ? m->netplay_host_port
-                                                          : "7777");
-                } else if (rc != 0) {
-                    std::snprintf(host_create_status, sizeof(host_create_status),
-                                  "Could not create lobby.");
-                } else {
-                    /* Sync port if online auto-selected an alternate. */
-                    if (const char* colon = std::strrchr(endpoint, ':')) {
-                        std::snprintf(m->netplay_host_port,
-                                      sizeof(m->netplay_host_port), "%s", colon + 1);
+                /* Universal MotK port policy (owned by recomp-ui, not the host):
+                 * LAN requires the exact port; online auto-picks preferred..+31. */
+                const int want_port = launcher_endpoint_port(endpoint);
+                const char* port_label = m->netplay_host_port[0]
+                    ? m->netplay_host_port : "7777";
+                bool port_ok = true;
+                if (m->netplay_lan_only) {
+                    if (!launcher_udp_port_available(want_port)) {
+                        std::snprintf(host_create_status, sizeof(host_create_status),
+                                      "Port %s is already in use. Choose a "
+                                      "different port for this LAN lobby.",
+                                      port_label);
+                        port_ok = false;
                     }
-                    std::snprintf(m->netplay_host_endpoint,
-                                  sizeof(m->netplay_host_endpoint), "%s", endpoint);
-                    host_create_status[0] = '\0';
-                    /* LAN/Direct IP is a local room (file registry). Online create
-                     * seats on the WebSocket lobby when connected. */
-                    m->netplay_local_room = m->netplay_lan_only || !np_connected(m);
-                    m->netplay_host_modal_open = false;
-                    ImGui::CloseCurrentPopup();
+                } else {
+                    const int free_port =
+                        launcher_udp_find_free_port(want_port, 32);
+                    if (free_port < 0 ||
+                        (free_port != want_port &&
+                         launcher_endpoint_set_port(endpoint, sizeof(endpoint),
+                                                    free_port) != 0)) {
+                        std::snprintf(host_create_status, sizeof(host_create_status),
+                                      "No free UDP port near %s. Choose a "
+                                      "different port and try again.",
+                                      port_label);
+                        port_ok = false;
+                    }
+                }
+                if (port_ok) {
+                    const char* lobby = m->netplay_host_name[0]
+                        ? m->netplay_host_name : "Netplay Lobby";
+                    const int rc = np->create(np->ctx, lobby, endpoint,
+                                              m->netplay_host_password, &m->s,
+                                              m->netplay_lan_only ? 1 : 0);
+                    if (rc == -4) {
+                        std::snprintf(host_create_status, sizeof(host_create_status),
+                                      m->netplay_lan_only
+                                          ? "Port %s is already in use. Choose a "
+                                            "different port for this LAN lobby."
+                                          : "No free UDP port near %s. Choose a "
+                                            "different port and try again.",
+                                      port_label);
+                    } else if (rc != 0) {
+                        std::snprintf(host_create_status, sizeof(host_create_status),
+                                      "Could not create lobby.");
+                    } else {
+                        /* Sync port if online auto-selected an alternate. */
+                        if (const char* colon = std::strrchr(endpoint, ':')) {
+                            std::snprintf(m->netplay_host_port,
+                                          sizeof(m->netplay_host_port), "%s",
+                                          colon + 1);
+                        }
+                        std::snprintf(m->netplay_host_endpoint,
+                                      sizeof(m->netplay_host_endpoint), "%s",
+                                      endpoint);
+                        host_create_status[0] = '\0';
+                        /* LAN/Direct IP is a local room (file registry). Online
+                         * create seats on the WebSocket lobby when connected. */
+                        m->netplay_local_room =
+                            m->netplay_lan_only || !np_connected(m);
+                        m->netplay_host_modal_open = false;
+                        ImGui::CloseCurrentPopup();
+                    }
                 }
             }
         }
@@ -3088,8 +3125,12 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                         if (!is_host)
                             ImGui::SetTooltip("Only the host can kick");
-                        else if (occupied[slot] && slots[slot].is_host)
+                        else if (!occupied[slot])
+                            ImGui::SetTooltip("Open slot");
+                        else if (slots[slot].is_host)
                             ImGui::SetTooltip("Cannot kick the host");
+                        else if (!np->kick_member)
+                            ImGui::SetTooltip("Kick unavailable");
                         else
                             ImGui::SetTooltip("Open slot");
                     }

@@ -76,7 +76,8 @@ typedef struct RecompLauncherCNetplayCallbacks {
     void (*pump)(void* ctx);
     void (*set_player_name)(void* ctx, const char* name);
     const char* (*player_name)(void* ctx);
-    /* list_* exposes the host's combined remote and LAN discovery results. */
+    /* list_* merges remote server lobbies with any same-machine LAN registry
+     * row. Hosts advertise to exactly one channel (see create lan_only). */
     void (*request_list)(void* ctx);
     int  (*list_count)(void* ctx);
     int  (*list_get)(void* ctx, int index, RecompLauncherCNetplayLobby* out);
@@ -84,11 +85,17 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*local_ip)(void* ctx, char* out, size_t out_len);
     int  (*external_ip)(void* ctx, char* out, size_t out_len);
     /* Lobby operations return 0 when the request was accepted.
-     * create: host_endpoint is in/out (capacity >= 64). Online hosts may
-     * rewrite the UDP port when the requested one is busy. Returns -4 when
-     * no usable port is available (LAN: requested port busy). */
+     * create: host_endpoint is in/out (capacity >= 64). recomp-ui applies the
+     * universal UDP port policy before calling this — LAN keeps the exact port
+     * (UI blocks create when busy); online may already have rewritten the port
+     * to the first free value in preferred..preferred+31. Hosts should publish
+     * the given endpoint as-is. Returns -4 only as a defensive fallback when
+     * the host itself cannot use the port (UI surfaces the same messages).
+     * lan_only != 0: publish only the local LAN registry (no lobby server).
+     * lan_only == 0: publish only on the lobby server (no LAN registry). */
     int  (*create)(void* ctx, const char* lobby_name, char* host_endpoint,
-                   const char* password, const RecompLauncherCSettings* settings);
+                   const char* password, const RecompLauncherCSettings* settings,
+                   int lan_only);
     int  (*join)(void* ctx, const char* lobby_id, const char* password);
     int  (*leave)(void* ctx);
     int  (*in_lobby)(void* ctx);
