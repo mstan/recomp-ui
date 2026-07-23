@@ -38,6 +38,8 @@
   #define LNG_ImplSDL_Shutdown       ImGui_ImplSDL2_Shutdown
 #endif
 #include "imgui_impl_opengl3.h"
+
+#include <atomic>
 #if defined(_MSC_VER)
   #include <intrin.h>
 #endif
@@ -3872,7 +3874,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 #if defined(_MSC_VER)
     _ReadWriteBarrier();
 #else
-    __asm__ __volatile__("" : : "r"(th) : "memory");
+    std::atomic_signal_fence(std::memory_order_seq_cst);
 #endif
     g_th = th;
     LNG_ImplSDL_InitForOpenGL(p->window, p->gl);
