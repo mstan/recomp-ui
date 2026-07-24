@@ -158,6 +158,11 @@ typedef struct {
     // (re-run on every disc/card change) instead of the placeholder synthesis.
     int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
+    int (*bios_verify_cb)(const char* bios_path, RecompLauncherCBiosVerify* out);
+    int (*prepare_disc_cb)(const char* source_path, char* out_disc_path, size_t out_cap,
+                           char* err_msg, size_t err_cap);
+    const char* prepare_disc_label;   // borrowed; NULL => default button text
+    const char* prepare_disc_note;    // borrowed; NULL => default help
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
@@ -279,6 +284,14 @@ typedef struct {
     LngAction action;
     int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
+    bool      setup_wizard_open;     // first-run BIOS/ROM setup (blocking)
+    bool      setup_bios_ok;         // last bios_verify_cb result (or path-only ok)
+    bool      setup_bios_warn;
+    char      setup_bios_detail[256];
+    bool      setup_preparing;       // prepare_disc job in flight
+    float     setup_prepare_pulse;   // 0..1 animation phase while preparing
+    char      setup_status[256];     // busy / result line under the wizard
+    char      setup_error[256];
     bool      netplay_name_modal_open;
     bool      netplay_name_prompted;
     bool      netplay_host_modal_open;
@@ -518,6 +531,19 @@ void launcher_model_toggle_mouse_invert_y(LauncherModel* m);
 // the active profile's ControllerSpec.buttons[] (0..button_count-1), or -1 for
 // none. Out-of-range `which` is a no-op.
 void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index);
+
+// ---- first-run setup wizard ----
+// True when BIOS (if required) and ROM/disc are ready to launch.
+bool launcher_model_can_launch(const LauncherModel* m);
+// Re-run bios_verify_cb against m->s.bios_path (or clear ok when empty).
+void launcher_model_refresh_bios_status(LauncherModel* m);
+// Kick a host prepare_disc job on a background thread. No-op if no callback
+// or a job is already running. On success adopts the resulting disc path.
+void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
+// Poll prepare job; call once per frame from the UI while setup_preparing.
+void launcher_model_poll_prepare_disc(LauncherModel* m);
+// Dismiss the wizard once can_launch is true (keeps dashboard).
+void launcher_model_finish_setup(LauncherModel* m);
 
 // ---- skip-on-boot (footer switch + confirm modal) ----
 void launcher_model_request_skip_toggle(LauncherModel* m); // opens modal when enabling
