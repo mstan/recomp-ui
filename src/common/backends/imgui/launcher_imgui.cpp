@@ -336,29 +336,32 @@ void draw_dot(bool on, const LngColor& good, const LngColor& off) {
 }
 // The primary neon CTA (PLAY): glow + violet gradient + play triangle. Fully
 // custom-drawn over an InvisibleButton so it looks nothing like a stock button.
-bool neon_cta(const char* id, const char* label, ImVec2 size) {
+bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = true) {
     const LauncherTheme& th = *g_th;
     ImVec2 p = ImGui::GetCursorScreenPos();
     // EnableNav is REQUIRED: ImGui::InvisibleButton() adds ImGuiItemFlags_NoNav by
     // default, which silently excludes the CTA from gamepad/keyboard nav — that was
     // why PLAY could never be focused at runtime (only via boot SetItemDefaultFocus)
     // while normal widgets (Skip, Settings) always could.
+    if (!enabled) ImGui::BeginDisabled();
     bool clk = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
-    bool hov = ImGui::IsItemHovered();
-    bool act = ImGui::IsItemActive();
+    bool hov = enabled && ImGui::IsItemHovered();
+    bool act = enabled && ImGui::IsItemActive();
     bool foc = ImGui::IsItemFocused();   // gamepad/keyboard nav focus
     ImVec2 mn = p, mx = ImVec2(p.x + size.x, p.y + size.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = px(th.radius_sm);
 
-    glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
-    LngColor top = hov ? th.accent : th.accent;
-    LngColor bot = act ? th.accent_dim : th.accent_dim;
+    if (enabled)
+        glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
+    LngColor top = enabled ? (hov ? th.accent : th.accent) : th.panel_hovered;
+    LngColor bot = enabled ? (act ? th.accent_dim : th.accent_dim) : th.border;
     grad_rect(dl, mn, mx, r, top, bot);
-    dl->AddRect(mn, mx, imcol(th.accent, hov ? 0.9f : 0.5f), r, 0, px(1.0f));  // crisp edge
+    dl->AddRect(mn, mx, imcol(enabled ? th.accent : th.border, hov ? 0.9f : 0.5f),
+                r, 0, px(1.0f));  // crisp edge
     // InvisibleButton draws no nav highlight itself — paint the cyan focus ring
     // when nav-focused so the CTA reads as selectable via controller/keyboard.
-    if (foc) {
+    if (foc && enabled) {
         ImVec2 om = ImVec2(mn.x - px(2), mn.y - px(2)), ox = ImVec2(mx.x + px(2), mx.y + px(2));
         dl->AddRect(om, ox, imcol(th.focus_ring), r + px(2), 0, px(th.focus_ring_width));
     }
@@ -369,11 +372,12 @@ bool neon_cta(const char* id, const char* label, ImVec2 size) {
     float tri = px(11.0f), gap = px(10.0f);
     float total = tri + gap + tw;
     float cx = p.x + (size.x - total) * 0.5f, cy = p.y + size.y * 0.5f;
-    ImU32 fg = imcol(th.accent_text);
+    ImU32 fg = imcol(enabled ? th.accent_text : th.text_muted);
     dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
                           ImVec2(cx + tri, cy), fg);
     dl->AddText(ImVec2(cx + tri + gap, cy - th_h*0.5f), fg, label);
-    return clk;
+    if (!enabled) ImGui::EndDisabled();
+    return enabled && clk;
 }
 
 // Uppercase section eyebrow with letter-spacing + a short accent tick, e.g.
@@ -3653,10 +3657,177 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         }
     }
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
-    if (neon_cta("##play", "PLAY", ImVec2(play_w, play_h)))
+    const bool can_play = launcher_model_can_launch(m);
+    if (neon_cta("##play", "PLAY", ImVec2(play_w, play_h), can_play))
         m->action = LNG_ACTION_LAUNCH;
+    else if (!can_play && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Select a valid %s%s first",
+                          m->rom_noun ? m->rom_noun : "ROM",
+                          m->has_bios ? " and BIOS" : "");
+    if (!can_play && ImGui::IsItemClicked())
+        m->setup_wizard_open = true;
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
     (void)win;
+}
+
+void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (!m->setup_wizard_open) return;
+    launcher_model_poll_prepare_disc(m);
+    ImGui::OpenPopup("First-run setup");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("First-run setup", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoMove))
+        return;
+
+    const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
+    const char* game = (m->game_name && m->game_name[0]) ? m->game_name : "this game";
+    ImGui::TextColored(col(th.accent), "Setup required");
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+    ImGui::TextColored(col(th.text_muted),
+        "%s needs a playable %s%s before you can launch. Pick your files below "
+        "(you must legally own these dumps).",
+        game, noun, m->has_bios ? " and PlayStation BIOS" : "");
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(10)));
+
+    const bool busy = m->setup_preparing;
+    if (busy) ImGui::BeginDisabled();
+
+    /* ---- BIOS (PSX / GBA) ---- */
+    if (m->has_bios) {
+        ImGui::TextUnformatted("1. PlayStation BIOS");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.text_muted),
+            "Usually SCPH1001.BIN — exactly 512 KB. Dump from your own console.");
+        ImGui::PopTextWrapPos();
+        const char* bp = m->s.bios_path[0] ? m->s.bios_path : "(none selected)";
+        char belided[220];
+        elide_left(bp, px(360), belided, sizeof(belided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(m->setup_bios_ok ? th.good : th.warn), "%s",
+                           m->setup_bios_ok ? "OK" : "Needed");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text), "%s", belided);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(28)))) {
+            char buf[512];
+            static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
+            if (launcher_pick_file("Select PlayStation BIOS (SCPH1001.BIN)",
+                                   kBiosPatterns, 2, "BIOS image (.bin .rom)",
+                                   buf, sizeof(buf)))
+                launcher_model_set_bios_path(m, buf);
+        }
+        if (m->setup_bios_detail[0]) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+            ImGui::TextColored(col(m->setup_bios_warn ? th.warn : th.text_muted),
+                               "%s", m->setup_bios_detail);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Dummy(ImVec2(0, px(12)));
+    }
+
+    /* ---- Disc / ROM ---- */
+    ImGui::Text("%s. %s image", m->has_bios ? "2" : "1", noun);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+    ImGui::TextColored(col(th.text_muted),
+        m->has_bios
+            ? "Prefer a .cue with its .bin beside it (MODE2/2352). Raw dumps may need conversion."
+            : "Select your game ROM file.");
+    ImGui::PopTextWrapPos();
+    {
+        const char* rp = m->rom_present ? m->rom_full : "(none selected)";
+        char relided[220];
+        elide_left(rp, px(360), relided, sizeof(relided));
+        const bool rom_ok = m->rom_present && strcmp(m->rom_size, "--") != 0 &&
+                            !(m->profile && m->profile->verify.mode == 1 &&
+                              (m->verify.verdict == 0 || m->verify.verdict == 3));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(rom_ok ? th.good : th.warn), "%s",
+                           rom_ok ? "OK" : "Needed");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text), "%s", relided);
+        ImGui::SameLine();
+        char browse_lbl[48];
+        std::snprintf(browse_lbl, sizeof(browse_lbl), "Browse %s##setup", noun);
+        if (ImGui::Button(browse_lbl, ImVec2(px(120), px(28)))) {
+            const SystemProfile* prof = (const SystemProfile*)m->profile;
+            char title[96];
+            std::snprintf(title, sizeof(title), "Select %s", noun);
+            bool picked = false;
+            if (prof && prof->rom_filter.pattern_count > 0)
+                picked = launcher_pick_file(title, prof->rom_filter.patterns,
+                                            prof->rom_filter.pattern_count,
+                                            prof->rom_filter.desc,
+                                            g_pick_buf, sizeof(g_pick_buf));
+            else
+                picked = launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf));
+            if (picked) launcher_model_set_rom(m, g_pick_buf);
+        }
+        if (m->profile && m->profile->verify.mode == 1 && m->rom_present)
+            draw_verdict_block(m, th, px(480));
+    }
+
+    /* ---- Optional prepare_disc ---- */
+    if (m->prepare_disc_cb) {
+        ImGui::Dummy(ImVec2(0, px(12)));
+        ImGui::TextUnformatted(m->has_bios ? "3. Convert raw dump (optional)"
+                                           : "2. Convert raw dump (optional)");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.text_muted), "%s",
+            (m->prepare_disc_note && m->prepare_disc_note[0])
+                ? m->prepare_disc_note
+                : "If your disc image is a raw dump that this game cannot boot "
+                  "directly, convert it here. Output is written next to the game.");
+        ImGui::PopTextWrapPos();
+        const char* prep_lbl = (m->prepare_disc_label && m->prepare_disc_label[0])
+                                   ? m->prepare_disc_label
+                                   : "Convert raw dump…";
+        if (ImGui::Button(prep_lbl, ImVec2(px(220), px(32)))) {
+            char buf[512];
+            static const char* kDumpPatterns[] = { "*.iso", "*.bin", "*.img", "*.*" };
+            if (launcher_pick_file("Select raw disc dump to convert",
+                                   kDumpPatterns, 4, "Disc dump",
+                                   buf, sizeof(buf)))
+                launcher_model_start_prepare_disc(m, buf);
+        }
+    }
+
+    if (busy) ImGui::EndDisabled();
+
+    /* ---- Progress / status ---- */
+    if (m->setup_preparing) {
+        ImGui::Dummy(ImVec2(0, px(10)));
+        ImGui::TextColored(col(th.accent), "%s",
+                           m->setup_status[0] ? m->setup_status : "Working…");
+        ImGui::ProgressBar(m->setup_prepare_pulse, ImVec2(-1, px(8)), "");
+    } else if (m->setup_status[0]) {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.good), "%s", m->setup_status);
+    }
+    if (m->setup_error[0]) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Dummy(ImVec2(0, px(14)));
+    const bool ready = launcher_model_can_launch(m);
+    if (!ready) ImGui::BeginDisabled();
+    if (ImGui::Button("Continue to launcher", ImVec2(px(220), px(34))))
+        launcher_model_finish_setup(m);
+    if (!ready) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
+        m->action = LNG_ACTION_QUIT;
+
+    /* Keep modal open until finished or quit — Esc would otherwise close it. */
+    if (!ImGui::IsPopupOpen("First-run setup"))
+        m->setup_wizard_open = true;
+    ImGui::EndPopup();
 }
 
 void draw_skip_modal(LauncherModel* m) {
@@ -3796,6 +3967,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     end_container();
 
     draw_footer(m, th, footer_h);
+    draw_setup_wizard_modal(m, th);
     draw_skip_modal(m);
     draw_netplay_player_modal(m);
     draw_netplay_network_modal(m, th);
