@@ -317,9 +317,17 @@ typedef struct {
     char      netplay_direct_port[16];
     char      netplay_password[64];
     char      netplay_status[160];
+    bool      netplay_lobby_settings_open;
+    int       netplay_lobby_input_delay; /* UI cache; engine clamps 2..20 */
     /* STUN / host external_ip cache for LAN lobby Public IP field. */
     char      netplay_public_ip[64];
     bool      netplay_public_ip_resolved;
+    /* Lobby Settings cache: Force Server Input Relay (server lobbies only). */
+    bool      netplay_force_input_relay;
+    /* Host Lobby: desired max seats (2..min(8, game player_count)). */
+    int       netplay_host_max_players;
+    /* Active room seat ceiling after create/join (0 = use game player_count). */
+    int       netplay_lobby_max_slots;
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
     // SDL_JoystickID; name is cached for display if the device disconnects.
@@ -514,9 +522,11 @@ void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,
-// 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name.
+// 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name + GUID
+// (GUID may be NULL/empty; then player_gamepad_guid[player] is cleared).
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
-                               uint32_t pad_id, const char* pad_name);
+                               uint32_t pad_id, const char* pad_name,
+                               const char* pad_guid);
 
 // ---- mouse controls (has_mouse_controls games only; no-op otherwise) --------
 // Select the player-0 keyboard source with mouse-aim on (enabled != 0) or off

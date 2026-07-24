@@ -68,8 +68,10 @@ int recomp_launcher_run_window(const char* window_title,
 
     launcher_platform_close(&plat);
 
-    if (act == LNG_ACTION_LAUNCH) {
-        launcher_model_commit(&model, io);   // edited settings back to the caller
+    /* Always hand back settings + ROM path — Continue may have persisted to
+     * rom.cfg already; hosts that WriteConfigFile on quit still need *io. */
+    launcher_model_commit(&model, io);
+    {
         const char* rom = launcher_model_rom_path(&model);
         if (out_rom_path && out_rom_path_len) {
             if (rom && rom[0])
@@ -79,8 +81,10 @@ int recomp_launcher_run_window(const char* window_title,
             else
                 out_rom_path[0] = '\0';
         }
-        return 0;   // LAUNCH
     }
+
+    if (act == LNG_ACTION_LAUNCH)
+        return 0;   // LAUNCH
 
     return 1;       // QUIT
 }

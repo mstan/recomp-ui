@@ -188,7 +188,7 @@ static void genesis_pad_label(int kind, int code, int axis_dir, char* out, size_
 
 static void reload_player_display(LauncherModel* m, int player) {
     if (is_psx_profile(m)) {
-        if (player > 2) return;   // PSX store is 2-player
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
         for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_psx_binds_get(
@@ -461,14 +461,15 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
         launcher_binds_set_field(m, player, b, 0, RUI_N64_FIELD_KEY, scancode);
         return;
     }
-    if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
         if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
         rui_psx_binds_set(keybinds_file_path(), player - 1, b, scancode);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                  scancode_label((SDL_Scancode)scancode));
         return;
     }
+    if (player < 1 || player > 2) return;
     if (is_nes_profile(m)) {
         if (b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT) return;
         rui_nes_binds_set(keybinds_file_path(), player - 1, b, scancode);
@@ -532,12 +533,13 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
         launcher_binds_refresh(m);
         return;
     }
-    if (player < 1 || player > 2) return;
     if (is_psx_profile(m)) {
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
         rui_psx_binds_reset(keybinds_file_path(), player - 1);
         reload_player_display(m, player);
         return;
     }
+    if (player < 1 || player > 2) return;
     if (is_nes_profile(m)) {
         rui_nes_binds_reset(keybinds_file_path(), player - 1);
         reload_player_display(m, player);

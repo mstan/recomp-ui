@@ -49,8 +49,12 @@ through on lobby join.
 | Path | Host behavior |
 |------|----------------|
 | Online / lobby-server join | Pass `guest_bind` through to the lobby client |
-| LAN file-registry (`lan:…`) | May ignore `guest_bind` |
+| LAN file-registry (`lan:…`, same machine) | May ignore `guest_bind` |
+| LAN Direct IP (typed `lan:ip:port`) | snesrecomp UDP seat-claim (`rnet_lan_direct_*`); pass prepared `guest_bind` when possible |
 | Engine fallback | snesrecomp `snes_lobby_join` still rewrites NULL/empty/`host:0` |
+
+Join Direct return codes (UI): `0` ok, `-2` password, `-3` no UDP response /
+unreachable, other = full / started / identity mismatch.
 
 Never rewrite a prepared bind to `:0` — the server would publish `peer_ip:0`
 and LAN session start rejects it.

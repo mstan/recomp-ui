@@ -19,6 +19,7 @@ extern "C" {
 typedef struct {
     uint32_t id;        // SDL_JoystickID (stable while connected)
     char     name[64];  // e.g. "PS5 Controller", "Xbox Series Controller"
+    char     guid[40];  // SDL_JoystickGetGUIDString (persists across reconnects)
 } LauncherPad;
 
 // Fill `out` (capacity `max`) with the gamepads SDL currently sees. Returns the

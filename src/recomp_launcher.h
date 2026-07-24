@@ -23,13 +23,15 @@ extern "C" {
 // leaves new slots in the same "none" state they had implicitly before.
 // Every consumer compiles this header from source (submodule pin), so the
 // layout change is absorbed by the consumer's normal rebuild on a pin bump.
-#define RECOMP_LAUNCHER_MAX_PLAYERS 5
+#define RECOMP_LAUNCHER_MAX_PLAYERS 8
+/* Host may #ifdef this when reading player_gamepad_guid[] from settings. */
+#define RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID 1
 
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
 
-/* Netplay lobby membership ceiling (matches MAX_PLAYERS / PSX multitap). */
-#define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 5
+/* Netplay lobby membership ceiling (party games up to 8). */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 8
 
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
@@ -48,6 +50,8 @@ typedef struct RecompLauncherCNetplayMember {
     char display_name[64];
     int  ready;
     int  is_host;
+    /* Round-trip ms to the lobby host; -1 when unknown or this row is host. */
+    int  latency_ms;
 } RecompLauncherCNetplayMember;
 
 typedef struct RecompLauncherCNetplayLaunch {
@@ -58,7 +62,12 @@ typedef struct RecompLauncherCNetplayLaunch {
     char     peer_hostport[64];
     uint32_t session_id;
     int      input_delay;
-    int      max_slots; /* session pad count (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) */
+    int      max_slots; /* lobby seat ceiling (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) */
+    /* Seated players at launch — delay-sync slot_count. 0 = unknown / use max_slots. */
+    int      player_count;
+    /* Host match_caps: opt into lobby-server UDP input relay (0/1).
+     * 3+ defaults to host-as-relay unless this is set. */
+    int      force_input_relay;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -95,9 +104,11 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * the host itself cannot use the port (UI surfaces the same messages).
      * lan_only != 0: publish only the local LAN registry (no lobby server).
      * lan_only == 0: publish only on the lobby server (no LAN registry). */
+    /* max_slots: 2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS, clamped by the host
+     * to the game's supported player count. */
     int  (*create)(void* ctx, const char* lobby_name, char* host_endpoint,
                    const char* password, const RecompLauncherCSettings* settings,
-                   int lan_only);
+                   int lan_only, int max_slots);
     /* join: guest_bind is in/out (capacity >= 64). recomp-ui applies the
      * universal guest UDP bind policy before calling — prefer 7778, then
      * 7778+1 .. +31, written as "0.0.0.0:<port>". Hosts should advertise that
@@ -134,6 +145,16 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * Cleared by the host after the UI reads it, or when a later op succeeds. */
     const char* (*last_error)(void* ctx);
     void (*clear_last_error)(void* ctx);
+    /* Optional host waiting-room settings. input_delay is frames, clamped 2..20. */
+    int  (*input_delay_get)(void* ctx);
+    int  (*input_delay_set)(void* ctx, int delay_frames);
+    /* Optional: host opt-in to server UDP input relay (0/1).
+     * 3+ lobbies default to host-as-relay unless this is enabled. */
+    int  (*force_input_relay_get)(void* ctx);
+    int  (*force_input_relay_set)(void* ctx, int force);
+    /* Optional: current room seat ceiling (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS).
+     * 0 when not in a lobby / unknown. Prefer this over game num_players. */
+    int  (*lobby_max_slots)(void* ctx);
 } RecompLauncherCNetplayCallbacks;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
@@ -241,6 +262,12 @@ struct RecompLauncherCSettings {
     // transient output and is cleared by the launcher when it initializes.
     char netplay_player_name[64];
     RecompLauncherCNetplayLaunch netplay_launch;
+
+    // ---- per-player SDL gamepad GUID (player_src==2). Empty when none/keyboard.
+    // Appended additively; see RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID. Hosts
+    // persist these as pN_device in settings.toml so multi-pad assignments
+    // survive relaunches (instance IDs do not).
+    char player_gamepad_guid[RECOMP_LAUNCHER_MAX_PLAYERS][40];
 };
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -482,13 +509,21 @@ typedef struct RecompLauncherCGameInfo {
      * Blocking host callback; the UI shows a busy state while it runs.
      * Return 1 and write the playable .cue/.bin/.iso path into out_disc_path.
      * prepare_disc_label / prepare_disc_note are button + help text (NULL =>
-     * "Convert raw dump…" / default note). */
+     * "Convert raw dump…" / default note).
+     *
+     * Path persistence (Continue to launcher / Change ROM / BIOS browse):
+     * The launcher writes `rom_cache_path` (NULL => "rom.cfg") immediately so
+     * quitting without PLAY still remembers the ROM. Optional persist_setup
+     * lets the host also flush BIOS / config.ini (return 0 on success). */
     int needs_setup;
     int (*bios_verify)(const char* bios_path, RecompLauncherCBiosVerify* out);
     int (*prepare_disc)(const char* source_path, char* out_disc_path, size_t out_cap,
                         char* err_msg, size_t err_cap);
     const char* prepare_disc_label;
     const char* prepare_disc_note;
+    const char* rom_cache_path; /* NULL => "rom.cfg" next to cwd/exe */
+    int (*persist_setup)(void* ctx, const char* rom_path, const char* bios_path);
+    void* persist_setup_ctx;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),

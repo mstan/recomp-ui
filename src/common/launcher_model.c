@@ -182,6 +182,17 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_selected_lobby = -1;
     m->netplay_public_ip[0] = '\0';
     m->netplay_public_ip_resolved = false;
+    m->netplay_lobby_settings_open = false;
+    m->netplay_lobby_input_delay = 2;
+    m->netplay_force_input_relay = false;
+    {
+        int max_p = m->player_count > 0 ? m->player_count : 2;
+        if (max_p < 2) max_p = 2;
+        if (max_p > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+            max_p = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+        m->netplay_host_max_players = max_p;
+    }
+    m->netplay_lobby_max_slots = 0;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
@@ -220,6 +231,10 @@ void launcher_model_init(LauncherModel* m,
             } else if (!m->allow_hybrid && m->s.pad_mode[p] == 0) {
                 m->s.pad_mode[p] = 1;   // snap Hybrid -> Analog
             }
+            /* Keyboard cannot drive Analog/Hybrid — force D-Pad. */
+            if (m->s.player_src[p] == 1 &&
+                !(pm_spec && pm_spec->modes && pm_spec->mode_count > 0))
+                m->s.pad_mode[p] = 2;
         }
     }
 
@@ -1281,6 +1296,21 @@ void launcher_model_skip_msu1_patch(LauncherModel* m) {
     update_msu1_patch_available(m);
 }
 
+/* PSX Hybrid/Analog need sticks; keyboard players are forced to D-Pad. */
+static int pad_mode_is_psx_legacy(const LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const ControllerSpec* spec = prof ? &prof->controller : NULL;
+    return !(spec && spec->modes && spec->mode_count > 0);
+}
+
+static void force_digital_if_keyboard(LauncherModel* m, int player) {
+    if (!m->pad_mode_supported || !m->pad_mode_selectable) return;
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
+    if (m->s.player_src[player] != 1) return;
+    if (!pad_mode_is_psx_legacy(m)) return;
+    m->s.pad_mode[player] = 2;   // D-Pad / digital
+}
+
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
     if (!m->pad_mode_supported || !m->pad_mode_selectable) return;   // gated/locked
     player = clampi(player, 0, 1);
@@ -1292,6 +1322,8 @@ void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
             if (spec->modes[i].mode == mode) { m->s.pad_mode[player] = mode; return; }
         return;
     }
+    /* Keyboard has no sticks — Analog/Hybrid are unavailable. */
+    if (m->s.player_src[player] == 1 && mode != 2) return;
     mode = clampi(mode, 0, 2);
     if (mode == 0 && !m->allow_hybrid) mode = 1;   // Hybrid hidden -> snap to Analog
     m->s.pad_mode[player] = mode;
@@ -1316,6 +1348,7 @@ int launcher_model_active_button_count(const LauncherModel* m, int player) {
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = (m->s.player_src[player] + 1) % 3;  // None/Kbd/Pad
+    force_digital_if_keyboard(m, player);
 }
 
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
@@ -1324,24 +1357,30 @@ void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
 }
 
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
-                               uint32_t pad_id, const char* pad_name) {
+                               uint32_t pad_id, const char* pad_name,
+                               const char* pad_guid) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = clampi(kind, 0, 2);
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
         safe_copy(m->player_pad_name[player], sizeof(m->player_pad_name[player]),
                   pad_name ? pad_name : "Gamepad");
+        safe_copy(m->s.player_gamepad_guid[player],
+                  sizeof(m->s.player_gamepad_guid[player]),
+                  pad_guid ? pad_guid : "");
     } else {
         m->player_pad_id[player] = 0;
         m->player_pad_name[player][0] = '\0';
+        m->s.player_gamepad_guid[player][0] = '\0';
     }
+    force_digital_if_keyboard(m, player);
 }
 
 // ---- mouse controls --------------------------------------------------------
 
 void launcher_model_set_mouse_source(LauncherModel* m, int enabled) {
     if (!m->has_mouse_controls) return;
-    launcher_model_set_source(m, 0, 1, 0, NULL);   // player 0 -> Keyboard
+    launcher_model_set_source(m, 0, 1, 0, NULL, NULL);   // player 0 -> Keyboard
     m->s.mouse_enabled = enabled ? 1 : 0;
 }
 
