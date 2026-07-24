@@ -16,6 +16,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <pthread.h>
+#endif
+
 // 32040 = the SNES S-DSP's native output rate; kept reachable in the cycle so
 // users chasing bit-exact SNES audio can pick it (matches the RmlUi launcher).
 static const int kFreqTable[] = { 32040, 32000, 44100, 48000 };
@@ -122,6 +128,10 @@ void launcher_model_init(LauncherModel* m,
         m->num_languages        = game->num_languages;
         m->disc_verify_cb       = game->disc_verify;      // real disc verdict (PSX), or NULL
         m->memcard_inspect_cb   = game->memcard_inspect;  // real memcard summary (PSX), or NULL
+        m->bios_verify_cb       = game->bios_verify;
+        m->prepare_disc_cb      = game->prepare_disc;
+        m->prepare_disc_label   = game->prepare_disc_label;
+        m->prepare_disc_note    = game->prepare_disc_note;
         m->boxart_path          = game->boxart_path;      // NULL => default boxart.tga
         m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
         m->num_aspect_labels    = game->num_aspect_labels;
@@ -169,6 +179,19 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_lan_only = false;
     m->netplay_list_fresh = false;
     m->netplay_selected_lobby = -1;
+    m->netplay_public_ip[0] = '\0';
+    m->netplay_public_ip_resolved = false;
+    m->netplay_lobby_settings_open = false;
+    m->netplay_lobby_input_delay = 2;
+    m->netplay_force_input_relay = false;
+    {
+        int max_p = m->player_count > 0 ? m->player_count : 2;
+        if (max_p < 2) max_p = 2;
+        if (max_p > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+            max_p = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+        m->netplay_host_max_players = max_p;
+    }
+    m->netplay_lobby_max_slots = 0;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
@@ -200,6 +223,10 @@ void launcher_model_init(LauncherModel* m,
             } else if (!m->allow_hybrid && m->s.pad_mode[p] == 0) {
                 m->s.pad_mode[p] = 1;   // snap Hybrid -> Analog
             }
+            /* Keyboard cannot drive Analog/Hybrid — force D-Pad. */
+            if (m->s.player_src[p] == 1 &&
+                !(pm_spec && pm_spec->modes && pm_spec->mode_count > 0))
+                m->s.pad_mode[p] = 2;
         }
     }
 
@@ -296,6 +323,12 @@ void launcher_model_init(LauncherModel* m,
     m->view      = LNG_VIEW_DASHBOARD;
     m->action    = LNG_ACTION_NONE;
     m->cfg_player = 0;
+    m->setup_wizard_open = false;
+    m->setup_preparing = false;
+    m->setup_prepare_pulse = 0.0f;
+    m->setup_status[0] = '\0';
+    m->setup_error[0] = '\0';
+    launcher_model_refresh_bios_status(m);
 
     /* Soft-return from a match: land on Netplay with the room modal open. */
     if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
@@ -310,6 +343,15 @@ void launcher_model_init(LauncherModel* m,
             m->netplay_local_room = false;
             m->netplay_host_endpoint[0] = '\0';
         }
+    }
+
+    /* First-run setup: host can force it, or we open when ROM/BIOS is missing. */
+    {
+        const int force = game && game->needs_setup;
+        const int missing_rom = !m->rom_present || strcmp(m->rom_size, "--") == 0;
+        const int missing_bios = m->has_bios && !m->setup_bios_ok;
+        if (force || missing_rom || missing_bios)
+            m->setup_wizard_open = true;
     }
 
     // Placeholder display until launcher_binds_load() fills real values from
@@ -733,8 +775,156 @@ const char* launcher_model_deadzone_pct_label(const LauncherModel* m) {
     return buf;
 }
 
+void launcher_model_refresh_bios_status(LauncherModel* m) {
+    if (!m) return;
+    m->setup_bios_ok = false;
+    m->setup_bios_warn = false;
+    m->setup_bios_detail[0] = '\0';
+    if (!m->has_bios) {
+        m->setup_bios_ok = true;
+        return;
+    }
+    if (!m->s.bios_path[0]) return;
+    if (!m->bios_verify_cb) {
+        /* No host verifier: path non-empty is enough. */
+        FILE* f = fopen(m->s.bios_path, "rb");
+        if (f) { fclose(f); m->setup_bios_ok = true; }
+        else safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                       "BIOS file not found.");
+        return;
+    }
+    RecompLauncherCBiosVerify bv;
+    memset(&bv, 0, sizeof(bv));
+    if (!m->bios_verify_cb(m->s.bios_path, &bv)) {
+        safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                  "BIOS verification failed.");
+        return;
+    }
+    m->setup_bios_ok = bv.ok != 0;
+    m->setup_bios_warn = bv.warn != 0;
+    safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail), bv.detail);
+}
+
 void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
+    launcher_model_refresh_bios_status(m);
+}
+
+bool launcher_model_can_finish_setup(const LauncherModel* m) {
+    if (!m) return false;
+    if (m->setup_preparing) return false;
+    /* Path selected is enough to leave the wizard (settings stay in the model).
+     * PLAY still requires a readable, fingerprinted image via can_launch. */
+    if (!m->rom_present || !m->rom_full[0]) return false;
+    if (m->has_bios && !m->setup_bios_ok) return false;
+    return true;
+}
+
+bool launcher_model_can_launch(const LauncherModel* m) {
+    if (!m) return false;
+    if (!m->rom_present || strcmp(m->rom_size, "--") == 0) return false;
+    if (m->profile && m->profile->verify.mode == 1) {
+        /* Disc systems: reject none/bad; warn (2) and ok (1) are playable. */
+        if (m->verify.verdict == 0 || m->verify.verdict == 3) return false;
+    } else {
+        const int has_fp = m->has_expected_crc || m->num_known_sha256 > 0 ||
+                           m->num_known_sha1 > 0;
+        if (has_fp && !launcher_model_rom_verified(m)) return false;
+    }
+    if (m->has_bios && !m->setup_bios_ok) return false;
+    if (m->setup_preparing) return false;
+    return true;
+}
+
+void launcher_model_finish_setup(LauncherModel* m) {
+    if (!m || !launcher_model_can_finish_setup(m)) return;
+    m->setup_wizard_open = false;
+    m->setup_status[0] = '\0';
+    m->setup_error[0] = '\0';
+}
+
+/* ---- prepare_disc background job (file-scope; one at a time) ---- */
+typedef struct {
+    LauncherModel* m;
+    char source[512];
+    char out_path[512];
+    char err[256];
+    int  result;     /* 0 fail, 1 ok */
+    volatile int done;
+} PrepJob;
+
+static PrepJob g_prep_job;
+
+#if defined(_WIN32)
+static DWORD WINAPI prep_thread_main(LPVOID arg) {
+#else
+static void* prep_thread_main(void* arg) {
+#endif
+    PrepJob* j = (PrepJob*)arg;
+    j->out_path[0] = '\0';
+    j->err[0] = '\0';
+    j->result = 0;
+    if (j->m && j->m->prepare_disc_cb) {
+        j->result = j->m->prepare_disc_cb(j->source, j->out_path, sizeof(j->out_path),
+                                          j->err, sizeof(j->err)) ? 1 : 0;
+    } else {
+        safe_copy(j->err, sizeof(j->err), "No prepare_disc callback.");
+    }
+    j->done = 1;
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path) {
+    if (!m || !m->prepare_disc_cb || m->setup_preparing) return;
+    if (!source_path || !source_path[0]) return;
+    memset(&g_prep_job, 0, sizeof(g_prep_job));
+    g_prep_job.m = m;
+    safe_copy(g_prep_job.source, sizeof(g_prep_job.source), source_path);
+    m->setup_preparing = true;
+    m->setup_prepare_pulse = 0.0f;
+    m->setup_error[0] = '\0';
+    safe_copy(m->setup_status, sizeof(m->setup_status), "Preparing disc image…");
+#if defined(_WIN32)
+    HANDLE th = CreateThread(NULL, 0, prep_thread_main, &g_prep_job, 0, NULL);
+    if (!th) {
+        m->setup_preparing = false;
+        safe_copy(m->setup_error, sizeof(m->setup_error), "Failed to start prepare thread.");
+        m->setup_status[0] = '\0';
+        return;
+    }
+    CloseHandle(th);
+#else
+    pthread_t th;
+    if (pthread_create(&th, NULL, prep_thread_main, &g_prep_job) != 0) {
+        m->setup_preparing = false;
+        safe_copy(m->setup_error, sizeof(m->setup_error), "Failed to start prepare thread.");
+        m->setup_status[0] = '\0';
+        return;
+    }
+    pthread_detach(th);
+#endif
+}
+
+void launcher_model_poll_prepare_disc(LauncherModel* m) {
+    if (!m || !m->setup_preparing) return;
+    m->setup_prepare_pulse += 0.02f;
+    if (m->setup_prepare_pulse > 1.0f) m->setup_prepare_pulse = 0.0f;
+    if (!g_prep_job.done || g_prep_job.m != m) return;
+    m->setup_preparing = false;
+    if (g_prep_job.result && g_prep_job.out_path[0]) {
+        launcher_model_set_rom(m, g_prep_job.out_path);
+        safe_copy(m->setup_status, sizeof(m->setup_status), "Disc ready.");
+        m->setup_error[0] = '\0';
+    } else {
+        m->setup_status[0] = '\0';
+        safe_copy(m->setup_error, sizeof(m->setup_error),
+                  g_prep_job.err[0] ? g_prep_job.err : "Disc prepare failed.");
+    }
+    g_prep_job.m = NULL;
 }
 
 // Re-inspect one memory-card slot via the host callback (if any), caching the
@@ -1027,6 +1217,21 @@ void launcher_model_skip_msu1_patch(LauncherModel* m) {
     update_msu1_patch_available(m);
 }
 
+/* PSX Hybrid/Analog need sticks; keyboard players are forced to D-Pad. */
+static int pad_mode_is_psx_legacy(const LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const ControllerSpec* spec = prof ? &prof->controller : NULL;
+    return !(spec && spec->modes && spec->mode_count > 0);
+}
+
+static void force_digital_if_keyboard(LauncherModel* m, int player) {
+    if (!m->pad_mode_supported || !m->pad_mode_selectable) return;
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
+    if (m->s.player_src[player] != 1) return;
+    if (!pad_mode_is_psx_legacy(m)) return;
+    m->s.pad_mode[player] = 2;   // D-Pad / digital
+}
+
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
     if (!m->pad_mode_supported || !m->pad_mode_selectable) return;   // gated/locked
     player = clampi(player, 0, 1);
@@ -1038,6 +1243,8 @@ void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
             if (spec->modes[i].mode == mode) { m->s.pad_mode[player] = mode; return; }
         return;
     }
+    /* Keyboard has no sticks — Analog/Hybrid are unavailable. */
+    if (m->s.player_src[player] == 1 && mode != 2) return;
     mode = clampi(mode, 0, 2);
     if (mode == 0 && !m->allow_hybrid) mode = 1;   // Hybrid hidden -> snap to Analog
     m->s.pad_mode[player] = mode;
@@ -1062,6 +1269,7 @@ int launcher_model_active_button_count(const LauncherModel* m, int player) {
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = (m->s.player_src[player] + 1) % 3;  // None/Kbd/Pad
+    force_digital_if_keyboard(m, player);
 }
 
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
@@ -1070,24 +1278,30 @@ void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
 }
 
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
-                               uint32_t pad_id, const char* pad_name) {
+                               uint32_t pad_id, const char* pad_name,
+                               const char* pad_guid) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     m->s.player_src[player] = clampi(kind, 0, 2);
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
         safe_copy(m->player_pad_name[player], sizeof(m->player_pad_name[player]),
                   pad_name ? pad_name : "Gamepad");
+        safe_copy(m->s.player_gamepad_guid[player],
+                  sizeof(m->s.player_gamepad_guid[player]),
+                  pad_guid ? pad_guid : "");
     } else {
         m->player_pad_id[player] = 0;
         m->player_pad_name[player][0] = '\0';
+        m->s.player_gamepad_guid[player][0] = '\0';
     }
+    force_digital_if_keyboard(m, player);
 }
 
 // ---- mouse controls --------------------------------------------------------
 
 void launcher_model_set_mouse_source(LauncherModel* m, int enabled) {
     if (!m->has_mouse_controls) return;
-    launcher_model_set_source(m, 0, 1, 0, NULL);   // player 0 -> Keyboard
+    launcher_model_set_source(m, 0, 1, 0, NULL, NULL);   // player 0 -> Keyboard
     m->s.mouse_enabled = enabled ? 1 : 0;
 }
 

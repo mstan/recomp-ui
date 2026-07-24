@@ -158,6 +158,11 @@ typedef struct {
     // (re-run on every disc/card change) instead of the placeholder synthesis.
     int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
+    int (*bios_verify_cb)(const char* bios_path, RecompLauncherCBiosVerify* out);
+    int (*prepare_disc_cb)(const char* source_path, char* out_disc_path, size_t out_cap,
+                           char* err_msg, size_t err_cap);
+    const char* prepare_disc_label;   // borrowed; NULL => default button text
+    const char* prepare_disc_note;    // borrowed; NULL => default help
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
@@ -279,6 +284,14 @@ typedef struct {
     LngAction action;
     int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
+    bool      setup_wizard_open;     // first-run BIOS/ROM setup (blocking)
+    bool      setup_bios_ok;         // last bios_verify_cb result (or path-only ok)
+    bool      setup_bios_warn;
+    char      setup_bios_detail[256];
+    bool      setup_preparing;       // prepare_disc job in flight
+    float     setup_prepare_pulse;   // 0..1 animation phase while preparing
+    char      setup_status[256];     // busy / result line under the wizard
+    char      setup_error[256];
     bool      netplay_name_modal_open;
     bool      netplay_name_prompted;
     bool      netplay_host_modal_open;
@@ -304,6 +317,17 @@ typedef struct {
     char      netplay_direct_port[16];
     char      netplay_password[64];
     char      netplay_status[160];
+    bool      netplay_lobby_settings_open;
+    int       netplay_lobby_input_delay; /* UI cache; engine clamps 2..20 */
+    /* STUN / host external_ip cache for LAN lobby Public IP field. */
+    char      netplay_public_ip[64];
+    bool      netplay_public_ip_resolved;
+    /* Lobby Settings cache: Force Server Input Relay (server lobbies only). */
+    bool      netplay_force_input_relay;
+    /* Host Lobby: desired max seats (2..min(8, game player_count)). */
+    int       netplay_host_max_players;
+    /* Active room seat ceiling after create/join (0 = use game player_count). */
+    int       netplay_lobby_max_slots;
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
     // SDL_JoystickID; name is cached for display if the device disconnects.
@@ -493,9 +517,11 @@ void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,
-// 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name.
+// 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name + GUID
+// (GUID may be NULL/empty; then player_gamepad_guid[player] is cleared).
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
-                               uint32_t pad_id, const char* pad_name);
+                               uint32_t pad_id, const char* pad_name,
+                               const char* pad_guid);
 
 // ---- mouse controls (has_mouse_controls games only; no-op otherwise) --------
 // Select the player-0 keyboard source with mouse-aim on (enabled != 0) or off
@@ -510,6 +536,22 @@ void launcher_model_toggle_mouse_invert_y(LauncherModel* m);
 // the active profile's ControllerSpec.buttons[] (0..button_count-1), or -1 for
 // none. Out-of-range `which` is a no-op.
 void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index);
+
+// ---- first-run setup wizard ----
+// True when required BIOS + ROM/disc paths are present (readable). Used to
+// enable "Continue to launcher"; fingerprint mismatch is allowed here.
+bool launcher_model_can_finish_setup(const LauncherModel* m);
+// True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
+bool launcher_model_can_launch(const LauncherModel* m);
+// Re-run bios_verify_cb against m->s.bios_path (or clear ok when empty).
+void launcher_model_refresh_bios_status(LauncherModel* m);
+// Kick a host prepare_disc job on a background thread. No-op if no callback
+// or a job is already running. On success adopts the resulting disc path.
+void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
+// Poll prepare job; call once per frame from the UI while setup_preparing.
+void launcher_model_poll_prepare_disc(LauncherModel* m);
+// Dismiss the wizard once can_finish_setup is true (keeps dashboard).
+void launcher_model_finish_setup(LauncherModel* m);
 
 // ---- skip-on-boot (footer switch + confirm modal) ----
 void launcher_model_request_skip_toggle(LauncherModel* m); // opens modal when enabling
