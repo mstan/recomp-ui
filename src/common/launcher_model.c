@@ -16,6 +16,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#  include <windows.h>
+#else
+#  include <pthread.h>
+#endif
+
 // 32040 = the SNES S-DSP's native output rate; kept reachable in the cycle so
 // users chasing bit-exact SNES audio can pick it (matches the legacy launcher).
 static const int kFreqTable[] = { 32040, 32000, 44100, 48000 };
@@ -63,6 +69,7 @@ static float clampf(float v, float lo, float hi) {
 
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
+/* Declared in header; needed before definition for init(). */
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 
@@ -122,6 +129,10 @@ void launcher_model_init(LauncherModel* m,
         m->num_languages        = game->num_languages;
         m->disc_verify_cb       = game->disc_verify;      // real disc verdict (PSX), or NULL
         m->memcard_inspect_cb   = game->memcard_inspect;  // real memcard summary (PSX), or NULL
+        m->bios_verify_cb       = game->bios_verify;
+        m->prepare_disc_cb      = game->prepare_disc;
+        m->prepare_disc_label   = game->prepare_disc_label;
+        m->prepare_disc_note    = game->prepare_disc_note;
         m->boxart_path          = game->boxart_path;      // NULL => default boxart.tga
         m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
         m->num_aspect_labels    = game->num_aspect_labels;
@@ -169,6 +180,8 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_lan_only = false;
     m->netplay_list_fresh = false;
     m->netplay_selected_lobby = -1;
+    m->netplay_public_ip[0] = '\0';
+    m->netplay_public_ip_resolved = false;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
@@ -303,6 +316,12 @@ void launcher_model_init(LauncherModel* m,
     m->view      = LNG_VIEW_DASHBOARD;
     m->action    = LNG_ACTION_NONE;
     m->cfg_player = 0;
+    m->setup_wizard_open = false;
+    m->setup_preparing = false;
+    m->setup_prepare_pulse = 0.0f;
+    m->setup_status[0] = '\0';
+    m->setup_error[0] = '\0';
+    launcher_model_refresh_bios_status(m);
 
     /* Soft-return from a match: land on Netplay with the room modal open. */
     if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
@@ -317,6 +336,15 @@ void launcher_model_init(LauncherModel* m,
             m->netplay_local_room = false;
             m->netplay_host_endpoint[0] = '\0';
         }
+    }
+
+    /* First-run setup: host can force it, or we open when ROM/BIOS is missing. */
+    {
+        const int force = game && game->needs_setup;
+        const int missing_rom = !m->rom_present || strcmp(m->rom_size, "--") == 0;
+        const int missing_bios = m->has_bios && !m->setup_bios_ok;
+        if (force || missing_rom || missing_bios)
+            m->setup_wizard_open = true;
     }
 
     // Placeholder display until launcher_binds_load() fills real values from
@@ -811,8 +839,146 @@ const char* launcher_model_deadzone_pct_label(const LauncherModel* m) {
     return buf;
 }
 
+void launcher_model_refresh_bios_status(LauncherModel* m) {
+    if (!m) return;
+    m->setup_bios_ok = false;
+    m->setup_bios_warn = false;
+    m->setup_bios_detail[0] = '\0';
+    if (!m->has_bios) {
+        m->setup_bios_ok = true;
+        return;
+    }
+    if (!m->s.bios_path[0]) return;
+    if (!m->bios_verify_cb) {
+        /* No host verifier: path non-empty is enough. */
+        FILE* f = fopen(m->s.bios_path, "rb");
+        if (f) { fclose(f); m->setup_bios_ok = true; }
+        else safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                       "BIOS file not found.");
+        return;
+    }
+    RecompLauncherCBiosVerify bv;
+    memset(&bv, 0, sizeof(bv));
+    if (!m->bios_verify_cb(m->s.bios_path, &bv)) {
+        safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                  "BIOS verification failed.");
+        return;
+    }
+    m->setup_bios_ok = bv.ok != 0;
+    m->setup_bios_warn = bv.warn != 0;
+    safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail), bv.detail);
+}
+
 void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
+    launcher_model_refresh_bios_status(m);
+}
+
+bool launcher_model_can_launch(const LauncherModel* m) {
+    if (!m) return false;
+    if (!m->rom_present || strcmp(m->rom_size, "--") == 0) return false;
+    if (m->profile && m->profile->verify.mode == 1) {
+        /* Disc systems: reject none/bad; warn (2) and ok (1) are playable. */
+        if (m->verify.verdict == 0 || m->verify.verdict == 3) return false;
+    } else {
+        const int has_fp = m->has_expected_crc || m->num_known_sha256 > 0 ||
+                           m->num_known_sha1 > 0;
+        if (has_fp && !launcher_model_rom_verified(m)) return false;
+    }
+    if (m->has_bios && !m->setup_bios_ok) return false;
+    if (m->setup_preparing) return false;
+    return true;
+}
+
+void launcher_model_finish_setup(LauncherModel* m) {
+    if (!m || !launcher_model_can_launch(m)) return;
+    m->setup_wizard_open = false;
+    m->setup_status[0] = '\0';
+    m->setup_error[0] = '\0';
+}
+
+/* ---- prepare_disc background job (file-scope; one at a time) ---- */
+typedef struct {
+    LauncherModel* m;
+    char source[512];
+    char out_path[512];
+    char err[256];
+    int  result;     /* 0 fail, 1 ok */
+    volatile int done;
+} PrepJob;
+
+static PrepJob g_prep_job;
+
+#if defined(_WIN32)
+static DWORD WINAPI prep_thread_main(LPVOID arg) {
+#else
+static void* prep_thread_main(void* arg) {
+#endif
+    PrepJob* j = (PrepJob*)arg;
+    j->out_path[0] = '\0';
+    j->err[0] = '\0';
+    j->result = 0;
+    if (j->m && j->m->prepare_disc_cb) {
+        j->result = j->m->prepare_disc_cb(j->source, j->out_path, sizeof(j->out_path),
+                                          j->err, sizeof(j->err)) ? 1 : 0;
+    } else {
+        safe_copy(j->err, sizeof(j->err), "No prepare_disc callback.");
+    }
+    j->done = 1;
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path) {
+    if (!m || !m->prepare_disc_cb || m->setup_preparing) return;
+    if (!source_path || !source_path[0]) return;
+    memset(&g_prep_job, 0, sizeof(g_prep_job));
+    g_prep_job.m = m;
+    safe_copy(g_prep_job.source, sizeof(g_prep_job.source), source_path);
+    m->setup_preparing = true;
+    m->setup_prepare_pulse = 0.0f;
+    m->setup_error[0] = '\0';
+    safe_copy(m->setup_status, sizeof(m->setup_status), "Preparing disc image…");
+#if defined(_WIN32)
+    HANDLE th = CreateThread(NULL, 0, prep_thread_main, &g_prep_job, 0, NULL);
+    if (!th) {
+        m->setup_preparing = false;
+        safe_copy(m->setup_error, sizeof(m->setup_error), "Failed to start prepare thread.");
+        m->setup_status[0] = '\0';
+        return;
+    }
+    CloseHandle(th);
+#else
+    pthread_t th;
+    if (pthread_create(&th, NULL, prep_thread_main, &g_prep_job) != 0) {
+        m->setup_preparing = false;
+        safe_copy(m->setup_error, sizeof(m->setup_error), "Failed to start prepare thread.");
+        m->setup_status[0] = '\0';
+        return;
+    }
+    pthread_detach(th);
+#endif
+}
+
+void launcher_model_poll_prepare_disc(LauncherModel* m) {
+    if (!m || !m->setup_preparing) return;
+    m->setup_prepare_pulse += 0.02f;
+    if (m->setup_prepare_pulse > 1.0f) m->setup_prepare_pulse = 0.0f;
+    if (!g_prep_job.done || g_prep_job.m != m) return;
+    m->setup_preparing = false;
+    if (g_prep_job.result && g_prep_job.out_path[0]) {
+        launcher_model_set_rom(m, g_prep_job.out_path);
+        safe_copy(m->setup_status, sizeof(m->setup_status), "Disc ready.");
+        m->setup_error[0] = '\0';
+    } else {
+        m->setup_status[0] = '\0';
+        safe_copy(m->setup_error, sizeof(m->setup_error),
+                  g_prep_job.err[0] ? g_prep_job.err : "Disc prepare failed.");
+    }
+    g_prep_job.m = NULL;
 }
 
 // Re-inspect one memory-card slot via the host callback (if any), caching the

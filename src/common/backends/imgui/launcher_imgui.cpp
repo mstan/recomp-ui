@@ -67,6 +67,12 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#if defined(_WIN32)
+  #include <direct.h>
+#else
+  #include <sys/stat.h>
+  #include <sys/types.h>
+#endif
 
 extern "C" const char* launcher_backend_name(void) { return "Dear ImGui"; }
 
@@ -330,29 +336,32 @@ void draw_dot(bool on, const LngColor& good, const LngColor& off) {
 }
 // The primary neon CTA (PLAY): glow + violet gradient + play triangle. Fully
 // custom-drawn over an InvisibleButton so it looks nothing like a stock button.
-bool neon_cta(const char* id, const char* label, ImVec2 size) {
+bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = true) {
     const LauncherTheme& th = *g_th;
     ImVec2 p = ImGui::GetCursorScreenPos();
     // EnableNav is REQUIRED: ImGui::InvisibleButton() adds ImGuiItemFlags_NoNav by
     // default, which silently excludes the CTA from gamepad/keyboard nav — that was
     // why PLAY could never be focused at runtime (only via boot SetItemDefaultFocus)
     // while normal widgets (Skip, Settings) always could.
+    if (!enabled) ImGui::BeginDisabled();
     bool clk = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
-    bool hov = ImGui::IsItemHovered();
-    bool act = ImGui::IsItemActive();
+    bool hov = enabled && ImGui::IsItemHovered();
+    bool act = enabled && ImGui::IsItemActive();
     bool foc = ImGui::IsItemFocused();   // gamepad/keyboard nav focus
     ImVec2 mn = p, mx = ImVec2(p.x + size.x, p.y + size.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = px(th.radius_sm);
 
-    glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
-    LngColor top = hov ? th.accent : th.accent;
-    LngColor bot = act ? th.accent_dim : th.accent_dim;
+    if (enabled)
+        glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
+    LngColor top = enabled ? (hov ? th.accent : th.accent) : th.panel_hovered;
+    LngColor bot = enabled ? (act ? th.accent_dim : th.accent_dim) : th.border;
     grad_rect(dl, mn, mx, r, top, bot);
-    dl->AddRect(mn, mx, imcol(th.accent, hov ? 0.9f : 0.5f), r, 0, px(1.0f));  // crisp edge
+    dl->AddRect(mn, mx, imcol(enabled ? th.accent : th.border, hov ? 0.9f : 0.5f),
+                r, 0, px(1.0f));  // crisp edge
     // InvisibleButton draws no nav highlight itself — paint the cyan focus ring
     // when nav-focused so the CTA reads as selectable via controller/keyboard.
-    if (foc) {
+    if (foc && enabled) {
         ImVec2 om = ImVec2(mn.x - px(2), mn.y - px(2)), ox = ImVec2(mx.x + px(2), mx.y + px(2));
         dl->AddRect(om, ox, imcol(th.focus_ring), r + px(2), 0, px(th.focus_ring_width));
     }
@@ -363,11 +372,12 @@ bool neon_cta(const char* id, const char* label, ImVec2 size) {
     float tri = px(11.0f), gap = px(10.0f);
     float total = tri + gap + tw;
     float cx = p.x + (size.x - total) * 0.5f, cy = p.y + size.y * 0.5f;
-    ImU32 fg = imcol(th.accent_text);
+    ImU32 fg = imcol(enabled ? th.accent_text : th.text_muted);
     dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
                           ImVec2(cx + tri, cy), fg);
     dl->AddText(ImVec2(cx + tri + gap, cy - th_h*0.5f), fg, label);
-    return clk;
+    if (!enabled) ImGui::EndDisabled();
+    return enabled && clk;
 }
 
 // Uppercase section eyebrow with letter-spacing + a short accent tick, e.g.
@@ -2511,6 +2521,100 @@ void np_format_local_address(const RecompLauncherCNetplayLocalAddress& address,
         std::snprintf(out, out_len, "%s", address.address);
 }
 
+/* Matches snes_lobby_default_url() when SNES_NET_LOBBY_URL is unset. */
+static const char kNpDefaultLobbyUrl[] =
+    "ws://netplay.technicallycomputers.ca:8765";
+/* Persisted next to guest netplay saves (cwd-relative). */
+static const char kNpNetworkSettingsPath[] = "saves/netplay/network settings";
+
+static void np_ensure_netplay_dir(void) {
+#if defined(_WIN32)
+    _mkdir("saves");
+    _mkdir("saves\\netplay");
+#else
+    mkdir("saves", 0755);
+    mkdir("saves/netplay", 0755);
+#endif
+}
+
+/* Read-only + greyed, but still allows click-drag select / Ctrl+C. */
+static void np_copyable_readonly_input(const char* id, char* buf, size_t buf_len,
+                                       const LauncherTheme& th) {
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,
+                          ImVec4(th.control.r * 0.65f, th.control.g * 0.65f,
+                                 th.control.b * 0.65f, th.control.a));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,
+                          ImVec4(th.control.r * 0.65f, th.control.g * 0.65f,
+                                 th.control.b * 0.65f, th.control.a));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive,
+                          ImVec4(th.control.r * 0.65f, th.control.g * 0.65f,
+                                 th.control.b * 0.65f, th.control.a));
+    ImGui::InputText(id, buf, buf_len, ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopStyleColor(4);
+}
+
+static void np_save_network_settings(const LauncherModel* m) {
+    if (!m) return;
+    np_ensure_netplay_dir();
+    FILE* f = std::fopen(kNpNetworkSettingsPath, "wb");
+    if (!f) return;
+    std::fprintf(f, "lobby_url=%s\n", m->netplay_lobby_url);
+    std::fprintf(f, "preferred_ip=%s\n",
+                 m->netplay_host_local_ip[0] ? m->netplay_host_local_ip
+                                             : m->netplay_host_ip);
+    std::fprintf(f, "preferred_port=%s\n", m->netplay_host_port);
+    std::fclose(f);
+}
+
+static void np_load_network_settings(LauncherModel* m) {
+    if (!m) return;
+    FILE* f = std::fopen(kNpNetworkSettingsPath, "rb");
+    if (!f) return;
+    char line[320];
+    while (std::fgets(line, sizeof(line), f)) {
+        char* nl = std::strchr(line, '\n');
+        if (nl) *nl = '\0';
+        char* cr = std::strchr(line, '\r');
+        if (cr) *cr = '\0';
+        char* eq = std::strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        const char* key = line;
+        const char* val = eq + 1;
+        if (std::strcmp(key, "lobby_url") == 0 && val[0]) {
+            std::snprintf(m->netplay_lobby_url, sizeof(m->netplay_lobby_url), "%s",
+                          val);
+        } else if (std::strcmp(key, "preferred_ip") == 0 && val[0]) {
+            std::snprintf(m->netplay_host_ip, sizeof(m->netplay_host_ip), "%s",
+                          val);
+            std::snprintf(m->netplay_host_local_ip,
+                          sizeof(m->netplay_host_local_ip), "%s", val);
+        } else if (std::strcmp(key, "preferred_port") == 0 && val[0]) {
+            std::snprintf(m->netplay_host_port, sizeof(m->netplay_host_port),
+                          "%s", val);
+        }
+    }
+    std::fclose(f);
+    const auto* np = np_cb(m);
+    if (np && np->set_lobby_url && m->netplay_lobby_url[0])
+        np->set_lobby_url(np->ctx, m->netplay_lobby_url);
+}
+
+static void np_ensure_public_ip(LauncherModel* m) {
+    if (!m || m->netplay_public_ip_resolved) return;
+    const auto* np = np_cb(m);
+    m->netplay_public_ip_resolved = true;
+    if (np && np->external_ip &&
+        np->external_ip(np->ctx, m->netplay_public_ip,
+                        sizeof(m->netplay_public_ip)) &&
+        m->netplay_public_ip[0]) {
+        return;
+    }
+    std::snprintf(m->netplay_public_ip, sizeof(m->netplay_public_ip),
+                  "Unavailable");
+}
+
 void draw_netplay_player_modal(LauncherModel* m) {
     if (m->netplay_name_modal_open) ImGui::OpenPopup("Player Name");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -2631,6 +2735,11 @@ void draw_netplay_network_modal(LauncherModel* m, const LauncherTheme& th) {
                                      sizeof(m->netplay_lobby_url),
                                      ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Spacing();
+        if (ImGui::Button("Reset to Default", ImVec2(px(160), 0))) {
+            std::snprintf(m->netplay_lobby_url, sizeof(m->netplay_lobby_url),
+                          "%s", kNpDefaultLobbyUrl);
+        }
+        ImGui::Spacing();
         if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
             const auto* np = np_cb(m);
             const char* current = np && np->default_url ? np->default_url(np->ctx) : "";
@@ -2646,6 +2755,7 @@ void draw_netplay_network_modal(LauncherModel* m, const LauncherTheme& th) {
             const auto* np = np_cb(m);
             if (np && np->set_lobby_url)
                 np->set_lobby_url(np->ctx, m->netplay_lobby_url);
+            np_save_network_settings(m);
             np_connect_and_list(m);
             m->netplay_network_modal_open = false;
             ImGui::CloseCurrentPopup();
@@ -2684,7 +2794,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TableSetupColumn("port", ImGuiTableColumnFlags_WidthFixed, px(120));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(col(th.text_muted), "IP address");
+            ImGui::TextColored(col(th.text_muted), "LAN IP Address");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(col(th.text_muted), "Port");
             ImGui::TableNextRow();
@@ -2714,21 +2824,23 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                             std::snprintf(m->netplay_host_local_ip,
                                           sizeof(m->netplay_host_local_ip), "%s",
                                           m->netplay_local_addresses[index].address);
+                            np_save_network_settings(m);
                         }
                         if (is_selected) ImGui::SetItemDefaultFocus();
                     }
                     ImGui::EndCombo();
                 }
             } else {
-                ImGui::InputText("##host_ip", m->netplay_host_ip,
-                                 sizeof(m->netplay_host_ip),
-                                 ImGuiInputTextFlags_ReadOnly);
+                np_copyable_readonly_input("##host_ip", m->netplay_host_ip,
+                                           sizeof(m->netplay_host_ip), th);
             }
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::InputText("##host_port", m->netplay_host_port,
                              sizeof(m->netplay_host_port),
                              ImGuiInputTextFlags_CharsDecimal);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                np_save_network_settings(m);
             ImGui::EndTable();
         }
         ImGui::EndDisabled();
@@ -2816,6 +2928,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                                       sizeof(m->netplay_host_endpoint), "%s",
                                       endpoint);
                         host_create_status[0] = '\0';
+                        np_save_network_settings(m);
                         /* LAN/Direct IP is a local room (file registry). Online
                          * create seats on the WebSocket lobby when connected. */
                         m->netplay_local_room =
@@ -2980,27 +3093,59 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 *colon = '\0';
             }
         }
-        ImGui::BeginDisabled(true);
+        np_ensure_public_ip(m);
         if (ImGui::BeginTable("##lobby_lan_conn", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(300));
+            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(360));
             ImGui::TableSetupColumn("port", ImGuiTableColumnFlags_WidthFixed, px(120));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(col(th.text_muted), "IP address");
+            ImGui::TextColored(col(th.text_muted), "LAN IP Address");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(col(th.text_muted), "Port");
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##lobby_ip", room_ip, sizeof(room_ip),
-                             ImGuiInputTextFlags_ReadOnly);
+            np_copyable_readonly_input("##lobby_ip", room_ip, sizeof(room_ip), th);
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##lobby_port", room_port, sizeof(room_port),
-                             ImGuiInputTextFlags_ReadOnly);
+            np_copyable_readonly_input("##lobby_port", room_port, sizeof(room_port),
+                                       th);
             ImGui::EndTable();
         }
-        ImGui::EndDisabled();
+        ImGui::Spacing();
+        ImGui::TextColored(col(th.text_muted), "Public IP Address");
+        if (ImGui::BeginTable("##lobby_public_ip", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(440));
+            ImGui::TableSetupColumn("help", ImGuiTableColumnFlags_WidthFixed, px(36));
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::SetNextItemWidth(-1.0f);
+            np_copyable_readonly_input("##lobby_public_ip", m->netplay_public_ip,
+                                       sizeof(m->netplay_public_ip), th);
+            ImGui::TableSetColumnIndex(1);
+            const float help_sz = ImGui::GetFrameHeight();
+            if (ImGui::Button("?", ImVec2(help_sz, help_sz))) {
+                /* tooltip on hover only */
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(
+                    "Direct IP over the internet needs UDP port forwarding on "
+                    "your router.\n\n"
+                    "1. On your router, forward the Port shown above (UDP) from "
+                    "the Public IP Address to this PC's LAN IP Address.\n"
+                    "2. Remote friends Join Direct with your Public IP and that "
+                    "Port.\n"
+                    "3. Players on your local network can keep using the LAN IP "
+                    "Address.\n\n"
+                    "Router menus differ (Port Forwarding, Virtual Server, or "
+                    "NAT). Leave the lobby open while they connect.");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            ImGui::EndTable();
+        }
     } else {
         char lobby_server[256];
         const char* url = np->default_url ? np->default_url(np->ctx) : "";
@@ -3008,11 +3153,9 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         std::snprintf(lobby_server, sizeof(lobby_server), "%s",
                       (url && url[0]) ? url : "lobby server");
         ImGui::TextColored(col(th.text_muted), "Lobby Server");
-        ImGui::BeginDisabled(true);
-        ImGui::SetNextItemWidth(px(430));
-        ImGui::InputText("##lobby_server", lobby_server, sizeof(lobby_server),
-                         ImGuiInputTextFlags_ReadOnly);
-        ImGui::EndDisabled();
+        ImGui::SetNextItemWidth(px(480));
+        np_copyable_readonly_input("##lobby_server", lobby_server,
+                                   sizeof(lobby_server), th);
     }
     ImGui::Spacing();
     ImGui::Separator();
@@ -3299,6 +3442,12 @@ void np_join_selected(LauncherModel* m) {
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    static bool network_settings_loaded = false;
+    if (!network_settings_loaded) {
+        network_settings_loaded = true;
+        np_load_network_settings(m);
+        np_refresh_host_ip(m);
+    }
     if (!m->s.netplay_player_name[0] && !m->netplay_name_modal_open && !m->netplay_name_prompted) {
         m->netplay_name_prompted = true;
         m->netplay_name_modal_open = true;
@@ -3508,10 +3657,177 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         }
     }
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
-    if (neon_cta("##play", "PLAY", ImVec2(play_w, play_h)))
+    const bool can_play = launcher_model_can_launch(m);
+    if (neon_cta("##play", "PLAY", ImVec2(play_w, play_h), can_play))
         m->action = LNG_ACTION_LAUNCH;
+    else if (!can_play && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Select a valid %s%s first",
+                          m->rom_noun ? m->rom_noun : "ROM",
+                          m->has_bios ? " and BIOS" : "");
+    if (!can_play && ImGui::IsItemClicked())
+        m->setup_wizard_open = true;
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
     (void)win;
+}
+
+void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (!m->setup_wizard_open) return;
+    launcher_model_poll_prepare_disc(m);
+    ImGui::OpenPopup("First-run setup");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("First-run setup", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoMove))
+        return;
+
+    const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
+    const char* game = (m->game_name && m->game_name[0]) ? m->game_name : "this game";
+    ImGui::TextColored(col(th.accent), "Setup required");
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+    ImGui::TextColored(col(th.text_muted),
+        "%s needs a playable %s%s before you can launch. Pick your files below "
+        "(you must legally own these dumps).",
+        game, noun, m->has_bios ? " and PlayStation BIOS" : "");
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(10)));
+
+    const bool busy = m->setup_preparing;
+    if (busy) ImGui::BeginDisabled();
+
+    /* ---- BIOS (PSX / GBA) ---- */
+    if (m->has_bios) {
+        ImGui::TextUnformatted("1. PlayStation BIOS");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.text_muted),
+            "Usually SCPH1001.BIN — exactly 512 KB. Dump from your own console.");
+        ImGui::PopTextWrapPos();
+        const char* bp = m->s.bios_path[0] ? m->s.bios_path : "(none selected)";
+        char belided[220];
+        elide_left(bp, px(360), belided, sizeof(belided));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(m->setup_bios_ok ? th.good : th.warn), "%s",
+                           m->setup_bios_ok ? "OK" : "Needed");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text), "%s", belided);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(28)))) {
+            char buf[512];
+            static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
+            if (launcher_pick_file("Select PlayStation BIOS (SCPH1001.BIN)",
+                                   kBiosPatterns, 2, "BIOS image (.bin .rom)",
+                                   buf, sizeof(buf)))
+                launcher_model_set_bios_path(m, buf);
+        }
+        if (m->setup_bios_detail[0]) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+            ImGui::TextColored(col(m->setup_bios_warn ? th.warn : th.text_muted),
+                               "%s", m->setup_bios_detail);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Dummy(ImVec2(0, px(12)));
+    }
+
+    /* ---- Disc / ROM ---- */
+    ImGui::Text("%s. %s image", m->has_bios ? "2" : "1", noun);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+    ImGui::TextColored(col(th.text_muted),
+        m->has_bios
+            ? "Prefer a .cue with its .bin beside it (MODE2/2352). Raw dumps may need conversion."
+            : "Select your game ROM file.");
+    ImGui::PopTextWrapPos();
+    {
+        const char* rp = m->rom_present ? m->rom_full : "(none selected)";
+        char relided[220];
+        elide_left(rp, px(360), relided, sizeof(relided));
+        const bool rom_ok = m->rom_present && strcmp(m->rom_size, "--") != 0 &&
+                            !(m->profile && m->profile->verify.mode == 1 &&
+                              (m->verify.verdict == 0 || m->verify.verdict == 3));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(rom_ok ? th.good : th.warn), "%s",
+                           rom_ok ? "OK" : "Needed");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text), "%s", relided);
+        ImGui::SameLine();
+        char browse_lbl[48];
+        std::snprintf(browse_lbl, sizeof(browse_lbl), "Browse %s##setup", noun);
+        if (ImGui::Button(browse_lbl, ImVec2(px(120), px(28)))) {
+            const SystemProfile* prof = (const SystemProfile*)m->profile;
+            char title[96];
+            std::snprintf(title, sizeof(title), "Select %s", noun);
+            bool picked = false;
+            if (prof && prof->rom_filter.pattern_count > 0)
+                picked = launcher_pick_file(title, prof->rom_filter.patterns,
+                                            prof->rom_filter.pattern_count,
+                                            prof->rom_filter.desc,
+                                            g_pick_buf, sizeof(g_pick_buf));
+            else
+                picked = launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf));
+            if (picked) launcher_model_set_rom(m, g_pick_buf);
+        }
+        if (m->profile && m->profile->verify.mode == 1 && m->rom_present)
+            draw_verdict_block(m, th, px(480));
+    }
+
+    /* ---- Optional prepare_disc ---- */
+    if (m->prepare_disc_cb) {
+        ImGui::Dummy(ImVec2(0, px(12)));
+        ImGui::TextUnformatted(m->has_bios ? "3. Convert raw dump (optional)"
+                                           : "2. Convert raw dump (optional)");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.text_muted), "%s",
+            (m->prepare_disc_note && m->prepare_disc_note[0])
+                ? m->prepare_disc_note
+                : "If your disc image is a raw dump that this game cannot boot "
+                  "directly, convert it here. Output is written next to the game.");
+        ImGui::PopTextWrapPos();
+        const char* prep_lbl = (m->prepare_disc_label && m->prepare_disc_label[0])
+                                   ? m->prepare_disc_label
+                                   : "Convert raw dump…";
+        if (ImGui::Button(prep_lbl, ImVec2(px(220), px(32)))) {
+            char buf[512];
+            static const char* kDumpPatterns[] = { "*.iso", "*.bin", "*.img", "*.*" };
+            if (launcher_pick_file("Select raw disc dump to convert",
+                                   kDumpPatterns, 4, "Disc dump",
+                                   buf, sizeof(buf)))
+                launcher_model_start_prepare_disc(m, buf);
+        }
+    }
+
+    if (busy) ImGui::EndDisabled();
+
+    /* ---- Progress / status ---- */
+    if (m->setup_preparing) {
+        ImGui::Dummy(ImVec2(0, px(10)));
+        ImGui::TextColored(col(th.accent), "%s",
+                           m->setup_status[0] ? m->setup_status : "Working…");
+        ImGui::ProgressBar(m->setup_prepare_pulse, ImVec2(-1, px(8)), "");
+    } else if (m->setup_status[0]) {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.good), "%s", m->setup_status);
+    }
+    if (m->setup_error[0]) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
+        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Dummy(ImVec2(0, px(14)));
+    const bool ready = launcher_model_can_launch(m);
+    if (!ready) ImGui::BeginDisabled();
+    if (ImGui::Button("Continue to launcher", ImVec2(px(220), px(34))))
+        launcher_model_finish_setup(m);
+    if (!ready) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
+        m->action = LNG_ACTION_QUIT;
+
+    /* Keep modal open until finished or quit — Esc would otherwise close it. */
+    if (!ImGui::IsPopupOpen("First-run setup"))
+        m->setup_wizard_open = true;
+    ImGui::EndPopup();
 }
 
 void draw_skip_modal(LauncherModel* m) {
@@ -3651,6 +3967,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     end_container();
 
     draw_footer(m, th, footer_h);
+    draw_setup_wizard_modal(m, th);
     draw_skip_modal(m);
     draw_netplay_player_modal(m);
     draw_netplay_network_modal(m, th);
