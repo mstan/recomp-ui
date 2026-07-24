@@ -169,6 +169,8 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_lan_only = false;
     m->netplay_list_fresh = false;
     m->netplay_selected_lobby = -1;
+    m->netplay_public_ip[0] = '\0';
+    m->netplay_public_ip_resolved = false;
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 

@@ -304,6 +304,9 @@ typedef struct {
     char      netplay_direct_port[16];
     char      netplay_password[64];
     char      netplay_status[160];
+    /* STUN / host external_ip cache for LAN lobby Public IP field. */
+    char      netplay_public_ip[64];
+    bool      netplay_public_ip_resolved;
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
     // SDL_JoystickID; name is cached for display if the device disconnects.
