@@ -253,6 +253,13 @@ typedef struct RecompLauncherCDiscVerify {
     int  verdict;      // 0 none, 1 ok, 2 warn, 3 bad
 } RecompLauncherCDiscVerify;
 
+// BIOS verification result (filled by GameInfo.bios_verify).
+typedef struct RecompLauncherCBiosVerify {
+    int  ok;             // 1 = usable (warn may still be set)
+    int  warn;           // 1 = usable but not the preferred dump
+    char detail[256];    // human-readable note ("" when silent)
+} RecompLauncherCBiosVerify;
+
 typedef struct RecompLauncherCMemcard {
     int           valid;          // 128 KB + "MC" magic present
     int           used_blocks;    // 0..15
@@ -462,6 +469,26 @@ typedef struct RecompLauncherCGameInfo {
      * LAN room header (NULL/empty => online Lobby Server URL). */
     int resume_netplay_room;
     const char* resume_netplay_endpoint;
+
+    /* ---- first-run setup wizard -------------------------------------------
+     * When needs_setup is 1, OR the launcher detects a missing ROM/disc (and
+     * missing BIOS when has_bios), a blocking setup modal opens before the
+     * dashboard. Cart-only games (has_bios=0) only prompt for a ROM.
+     *
+     * bios_verify (optional): host checks BIOS size/CRC. Return 1 and fill
+     * `out` (ok/warn/detail). NULL => path non-empty is enough.
+     *
+     * prepare_disc (optional): convert a raw dump into a playable image.
+     * Blocking host callback; the UI shows a busy state while it runs.
+     * Return 1 and write the playable .cue/.bin/.iso path into out_disc_path.
+     * prepare_disc_label / prepare_disc_note are button + help text (NULL =>
+     * "Convert raw dump…" / default note). */
+    int needs_setup;
+    int (*bios_verify)(const char* bios_path, RecompLauncherCBiosVerify* out);
+    int (*prepare_disc)(const char* source_path, char* out_disc_path, size_t out_cap,
+                        char* err_msg, size_t err_cap);
+    const char* prepare_disc_label;
+    const char* prepare_disc_note;
 } RecompLauncherCGameInfo;
 
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
