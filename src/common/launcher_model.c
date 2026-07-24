@@ -874,6 +874,16 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     launcher_model_refresh_bios_status(m);
 }
 
+bool launcher_model_can_finish_setup(const LauncherModel* m) {
+    if (!m) return false;
+    if (m->setup_preparing) return false;
+    /* Path selected is enough to leave the wizard (settings stay in the model).
+     * PLAY still requires a readable, fingerprinted image via can_launch. */
+    if (!m->rom_present || !m->rom_full[0]) return false;
+    if (m->has_bios && !m->setup_bios_ok) return false;
+    return true;
+}
+
 bool launcher_model_can_launch(const LauncherModel* m) {
     if (!m) return false;
     if (!m->rom_present || strcmp(m->rom_size, "--") == 0) return false;
@@ -891,7 +901,7 @@ bool launcher_model_can_launch(const LauncherModel* m) {
 }
 
 void launcher_model_finish_setup(LauncherModel* m) {
-    if (!m || !launcher_model_can_launch(m)) return;
+    if (!m || !launcher_model_can_finish_setup(m)) return;
     m->setup_wizard_open = false;
     m->setup_status[0] = '\0';
     m->setup_error[0] = '\0';

@@ -533,7 +533,10 @@ void launcher_model_toggle_mouse_invert_y(LauncherModel* m);
 void launcher_model_set_mouse_bind(LauncherModel* m, int which, int button_index);
 
 // ---- first-run setup wizard ----
-// True when BIOS (if required) and ROM/disc are ready to launch.
+// True when required BIOS + ROM/disc paths are present (readable). Used to
+// enable "Continue to launcher"; fingerprint mismatch is allowed here.
+bool launcher_model_can_finish_setup(const LauncherModel* m);
+// True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
 bool launcher_model_can_launch(const LauncherModel* m);
 // Re-run bios_verify_cb against m->s.bios_path (or clear ok when empty).
 void launcher_model_refresh_bios_status(LauncherModel* m);
@@ -542,7 +545,7 @@ void launcher_model_refresh_bios_status(LauncherModel* m);
 void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
 // Poll prepare job; call once per frame from the UI while setup_preparing.
 void launcher_model_poll_prepare_disc(LauncherModel* m);
-// Dismiss the wizard once can_launch is true (keeps dashboard).
+// Dismiss the wizard once can_finish_setup is true (keeps dashboard).
 void launcher_model_finish_setup(LauncherModel* m);
 
 // ---- skip-on-boot (footer switch + confirm modal) ----

@@ -3712,7 +3712,8 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
         ImGui::TextColored(col(th.text), "%s", belided);
         ImGui::SameLine();
-        if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(28)))) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(12), px(6)));
+        if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(32)))) {
             char buf[512];
             static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
             if (launcher_pick_file("Select PlayStation BIOS (SCPH1001.BIN)",
@@ -3720,6 +3721,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                                    buf, sizeof(buf)))
                 launcher_model_set_bios_path(m, buf);
         }
+        ImGui::PopStyleVar();
         if (m->setup_bios_detail[0]) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
             ImGui::TextColored(col(m->setup_bios_warn ? th.warn : th.text_muted),
@@ -3752,7 +3754,9 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
         char browse_lbl[48];
         std::snprintf(browse_lbl, sizeof(browse_lbl), "Browse %s##setup", noun);
-        if (ImGui::Button(browse_lbl, ImVec2(px(120), px(28)))) {
+        /* Taller + FramePadding so label isn't glued to the bottom edge. */
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(12), px(6)));
+        if (ImGui::Button(browse_lbl, ImVec2(px(128), px(32)))) {
             const SystemProfile* prof = (const SystemProfile*)m->profile;
             char title[96];
             std::snprintf(title, sizeof(title), "Select %s", noun);
@@ -3766,6 +3770,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 picked = launcher_pick_rom(g_pick_buf, sizeof(g_pick_buf));
             if (picked) launcher_model_set_rom(m, g_pick_buf);
         }
+        ImGui::PopStyleVar();
         if (m->profile && m->profile->verify.mode == 1 && m->rom_present)
             draw_verdict_block(m, th, px(480));
     }
@@ -3815,18 +3820,23 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     }
 
     ImGui::Dummy(ImVec2(0, px(14)));
-    const bool ready = launcher_model_can_launch(m);
+    /* Continue once required files are present. Fingerprint mismatch still
+     * blocks PLAY on the dashboard, but must not trap the user in this modal. */
+    const bool ready = launcher_model_can_finish_setup(m);
     if (!ready) ImGui::BeginDisabled();
-    if (ImGui::Button("Continue to launcher", ImVec2(px(220), px(34))))
+    if (ImGui::Button("Continue to launcher", ImVec2(px(220), px(34)))) {
         launcher_model_finish_setup(m);
+        ImGui::CloseCurrentPopup();
+    }
     if (!ready) ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
         m->action = LNG_ACTION_QUIT;
 
-    /* Keep modal open until finished or quit — Esc would otherwise close it. */
-    if (!ImGui::IsPopupOpen("First-run setup"))
-        m->setup_wizard_open = true;
+    /* Esc must not dismiss while setup is still required. Do NOT force
+     * setup_wizard_open back on after finish_setup — that made Continue a no-op. */
+    if (m->setup_wizard_open && !ImGui::IsPopupOpen("First-run setup"))
+        ImGui::OpenPopup("First-run setup");
     ImGui::EndPopup();
 }
 
