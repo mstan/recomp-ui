@@ -109,6 +109,19 @@ static const SystemProfile kSystemProfileGba = {
     /* screen_kind_count */ LNG_GBA_SCREEN_KIND_COUNT,
     /* rom_filter        */ { kGbaRomPatterns, LNG_GBA_ROM_PATTERN_COUNT,
                               "Game Boy Advance ROM (.gba)" },
+    /* renderer_labels   */ NULL,
+    /* hide_audio_freq   */ 0,
+    /* brand             */ NULL,
+    /* wordmark_image    */ NULL,
+    // The GBA BIOS is REQUIRED, not optional: gbarecomp recompiles and executes
+    // the real BIOS rather than HLE-ing it (PRINCIPLES.md "BIOS is sacred"), and
+    // ships no bundled fallback, so the runtime refuses to launch without one.
+    // It is also 16 KB, not the 512 KB the PSX wording describes.
+    /* bios_label        */ "Game Boy Advance BIOS",
+    /* bios_note         */ "Required. A 16 KB gba_bios.bin dump — this runtime "
+                            "executes the real BIOS and ships no substitute.",
+    /* bios_picker_title */ "Select Game Boy Advance BIOS (gba_bios.bin)",
+    /* bios_required     */ 1,
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

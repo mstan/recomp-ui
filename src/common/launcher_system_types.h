@@ -144,6 +144,20 @@ typedef struct SystemProfile {
     // wordmark may be a third-party trademark); an absent file falls back to
     // the text, so this is inert unless a host drops the asset in.
     const char* wordmark_image;
+
+    // BIOS vocabulary for the first-run setup wizard's BIOS step. That step is
+    // shared by every has_bios console, but its strings were hardcoded to the
+    // PSX case, so a GBA game told the player a REQUIRED 16 KB gba_bios.bin was
+    // an OPTIONAL 512 KB SCPH1001.BIN backed by a bundled OpenBIOS that does not
+    // exist for that runtime.
+    //
+    // NULL => the legacy PSX strings, and bios_required zero-fills to 0 => the
+    // legacy "optional, a bundled BIOS covers it" semantics, so existing
+    // positional profile rows are unchanged.
+    const char* bios_label;         // e.g. "Game Boy Advance BIOS"
+    const char* bios_note;          // one line under the label
+    const char* bios_picker_title;  // native file-dialog title
+    int         bios_required;      // 1 => no bundled fallback; must be supplied
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------

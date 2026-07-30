@@ -5076,6 +5076,31 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     (void)win;
 }
 
+// First-run wizard BIOS vocabulary. That step is shared by every has_bios
+// console but its strings were hardcoded to the PSX case; these resolve from the
+// active SystemProfile and fall back to the legacy PSX wording, so a profile that
+// has not opted in reads exactly as before.
+const char* bios_label_of(const LauncherModel* m) {
+    if (m->profile && m->profile->bios_label && m->profile->bios_label[0])
+        return m->profile->bios_label;
+    return "PlayStation BIOS";
+}
+const char* bios_note_of(const LauncherModel* m) {
+    if (m->profile && m->profile->bios_note && m->profile->bios_note[0])
+        return m->profile->bios_note;
+    return "Default: bundled OpenBIOS. Optionally browse for your own "
+           "SCPH1001.BIN (exactly 512 KB, dumped from your console).";
+}
+const char* bios_picker_title_of(const LauncherModel* m) {
+    if (m->profile && m->profile->bios_picker_title &&
+        m->profile->bios_picker_title[0])
+        return m->profile->bios_picker_title;
+    return "Select PlayStation BIOS (SCPH1001.BIN)";
+}
+bool bios_is_required(const LauncherModel* m) {
+    return m->profile && m->profile->bios_required != 0;
+}
+
 void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     if (!m->setup_wizard_open) return;
     launcher_model_poll_prepare_disc(m);
@@ -5094,10 +5119,14 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
     if (m->has_bios) {
         ImGui::TextColored(col(th.text_muted),
-            "%s needs a playable %s before you can launch. This build includes "
-            "a bundled BIOS (OpenBIOS) by default — a retail SCPH1001.BIN dump "
-            "is optional. Pick your %s below (you must legally own these dumps).",
-            game, noun, noun);
+            bios_is_required(m)
+                ? "%s needs a playable %s and a %s before you can launch. Pick "
+                  "both below (you must legally own these dumps)."
+                : "%s needs a playable %s before you can launch. This build "
+                  "includes a bundled BIOS (OpenBIOS) by default — a retail "
+                  "SCPH1001.BIN dump is optional. Pick your %s below (you must "
+                  "legally own these dumps).",
+            game, noun, bios_is_required(m) ? bios_label_of(m) : noun);
     } else {
         ImGui::TextColored(col(th.text_muted),
             "%s needs a playable %s before you can launch. Pick your file below "
@@ -5113,13 +5142,16 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     /* ---- BIOS (PSX / GBA): empty = bundled; Browse for optional retail ---- */
     if (m->has_bios) {
         const bool has_pick = m->s.bios_path[0] != 0;
-        ImGui::TextUnformatted("1. PlayStation BIOS (optional)");
+        char bios_head[128];
+        snprintf(bios_head, sizeof(bios_head), "1. %s (%s)", bios_label_of(m),
+                 bios_is_required(m) ? "required" : "optional");
+        ImGui::TextUnformatted(bios_head);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(480));
-        ImGui::TextColored(col(th.text_muted),
-            "Default: bundled OpenBIOS. Optionally browse for your own "
-            "SCPH1001.BIN (exactly 512 KB, dumped from your console).");
+        ImGui::TextColored(col(th.text_muted), "%s", bios_note_of(m));
         ImGui::PopTextWrapPos();
-        const char* bp = has_pick ? m->s.bios_path : "Bundled BIOS (OpenBIOS)";
+        const char* bp = has_pick ? m->s.bios_path
+                        : (bios_is_required(m) ? "No BIOS selected yet"
+                                               : "Bundled BIOS (OpenBIOS)");
         char belided[220];
         elide_left(bp, px(300), belided, sizeof(belided));
         ImGui::AlignTextToFramePadding();
@@ -5132,7 +5164,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(32)))) {
             char buf[512];
             static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
-            if (launcher_pick_file("Select PlayStation BIOS (SCPH1001.BIN)",
+            if (launcher_pick_file(bios_picker_title_of(m),
                                    kBiosPatterns, 2, "BIOS image (.bin .rom)",
                                    buf, sizeof(buf)))
                 launcher_model_set_bios_path(m, buf);
