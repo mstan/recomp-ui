@@ -745,8 +745,6 @@ typedef struct RecompLauncherCGameInfo {
      * discovery, sensor selection, and axis mapping remain host-owned. */
     int has_gyro_controls;
 
-<<<<<<< HEAD
-=======
     /* Add independent checkboxes to Display settings. The host maps their
      * committed Settings values onto renderer configuration. */
     int has_sharp_filter;
@@ -759,7 +757,6 @@ typedef struct RecompLauncherCGameInfo {
     const char* const* display_layout_labels;
     int num_display_layouts;
 
->>>>>>> 7835628ba4ba92d253e228438527507a409bd365
     /* ---- prepare job UX (appended; disc convert / local codegen) ---------
      * prepare_use_selected_rom: 1 = the prepare button uses the already-
      * picked ROM/disc (no second file picker). Cart codegen hosts use this.
