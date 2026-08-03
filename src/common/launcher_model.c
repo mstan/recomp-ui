@@ -1020,12 +1020,12 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
                           bv.detail);
             else if (m->setup_bios_ok)
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                          "Using bundled BIOS.");
+                          "Using OpenBIOS.");
             return;
         }
         m->setup_bios_ok = true;
         safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                  "Using bundled BIOS.");
+                  "Using OpenBIOS.");
         return;
     }
     if (!m->bios_verify_cb) {

@@ -2172,22 +2172,23 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
     row_label("BIOS", th);
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const bool is_gba = prof && prof->id && std::strcmp(prof->id, "gba") == 0;
+    const bool is_psx = prof && prof->id && std::strcmp(prof->id, "psx") == 0;
     // Empty means "use the BIOS this build ships with" — not "unset". Runtimes
     // that bundle a redistributable BIOS (PSX/OpenBIOS, GBA) boot straight from
     // it, so the row states that outcome instead of the old "(default)", which
     // read as a missing setting the player still had to deal with.
     const bool  has_pick = m->s.bios_path[0] != 0;
     const float bw       = px(78);
-    // Clear is only meaningful once something has been picked; reserve its
-    // width only then so the path keeps the full row when there is nothing to
-    // clear.
-    const float cw       = has_pick ? px(58) : 0.0f;
-    const float gap      = has_pick ? px(th.spacing_sm) : 0.0f;
+    // PSX: always reserve "Use OpenBIOS" (disabled when already selected).
+    // GBA: Clear only when a retail path is picked.
+    const float cw =
+        is_psx ? px(108) : (has_pick ? px(58) : 0.0f);
+    const float gap = (cw > 0.0f) ? px(th.spacing_sm) : 0.0f;
     float avail = ImGui::GetContentRegionAvail().x - bw - cw - gap - px(th.spacing_sm);
     if (avail < px(50)) avail = px(50);
     const char* bp = has_pick ? m->s.bios_path
                               : (is_gba ? "Retail GBA BIOS required"
-                                        : "Bundled BIOS");
+                                        : "OpenBIOS");
     char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
@@ -2201,7 +2202,17 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
                                "BIOS image (.bin .rom)", buf, sizeof(buf)))
             launcher_model_set_bios_path(m, buf);
     }
-    if (has_pick) {
+    if (is_psx) {
+        ImGui::SameLine(0.0f, gap);
+        if (!has_pick) ImGui::BeginDisabled();
+        if (ImGui::Button("Use OpenBIOS", ImVec2(cw, px(28))))
+            launcher_model_set_bios_path(m, "");
+        if (!has_pick) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(has_pick
+                                  ? "Clear the retail BIOS path and use OpenBIOS."
+                                  : "OpenBIOS is already selected.");
+    } else if (has_pick) {
         ImGui::SameLine(0.0f, gap);
         if (ImGui::Button("Clear", ImVec2(cw, px(28))))
             launcher_model_set_bios_path(m, "");
@@ -5160,8 +5171,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->has_bios && !m->setup_bios_ok) {
             ImGui::SetTooltip(
-                "Select a valid BIOS first (or Clear to use the bundled "
-                "OpenBIOS when this build includes one).");
+                "Select a valid BIOS first (or Use OpenBIOS when this build "
+                "allows it).");
         } else if (!m->rom_present || strcmp(m->rom_size, "--") == 0) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         } else if (m->profile && m->profile->verify.mode == 1 &&
@@ -5493,7 +5504,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                   "SCPH1001.BIN (exactly 512 KB, dumped from your console)."
                 : "Browse for a BIOS image required by this console.";
         const char* empty_bios_label =
-            offers_bundled ? "Bundled BIOS (OpenBIOS)" : "(none selected)";
+            offers_bundled ? "OpenBIOS" : "(none selected)";
         const char* bios_picker =
             (plat == SETUP_PLAT_GBA) ? "Select GBA BIOS (gba_bios.bin)"
             : (plat == SETUP_PLAT_PSX) ? "Select PlayStation BIOS (SCPH1001.BIN)"
@@ -5520,13 +5531,19 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                                    "BIOS image (.bin .rom)", buf, sizeof(buf)))
                 launcher_model_set_bios_path(m, buf);
         }
-        if (has_pick && offers_bundled) {
+        if (offers_bundled) {
             ImGui::SameLine();
-            if (ImGui::Button("Use bundled##setup", ImVec2(px(120), px(32))))
+            /* Always visible; greyed out when OpenBIOS is already selected. */
+            if (!has_pick) ImGui::BeginDisabled();
+            if (ImGui::Button("Use OpenBIOS##setup", ImVec2(px(128), px(32))))
                 launcher_model_set_bios_path(m, "");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Clear the retail BIOS path and use the "
-                                  "bundled OpenBIOS included with this build.");
+            if (!has_pick) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(has_pick
+                                      ? "Clear the retail BIOS path and use "
+                                        "OpenBIOS (generated on first rebuild "
+                                        "if not already linked)."
+                                      : "OpenBIOS is already selected.");
         }
         ImGui::PopStyleVar();
         if (m->setup_bios_detail[0]) {
