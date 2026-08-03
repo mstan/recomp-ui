@@ -335,7 +335,13 @@ typedef struct {
     char      setup_tc_zip[512];     // offline cmake-clang-v1 zip when !auto
     bool      setup_bios_ok;         // last bios_verify_cb result (or path-only ok)
     bool      setup_bios_warn;
+    bool      setup_bios_needs_regen; // valid dump but not linked in this binary
     char      setup_bios_detail[256];
+    /* Confirm before persisting a BIOS switch that requires Generate & rebuild. */
+    bool      bios_confirm_open;
+    char      bios_pending_path[512]; // "" = OpenBIOS; absolute otherwise
+    /* Play blocked because saved BIOS is not linked — offer Generate / OpenBIOS. */
+    bool      bios_play_modal_open;
     bool      setup_preparing;       // prepare/rebuild/toolchain job in flight
     float     setup_prepare_pulse;   // 0..1 animation phase while preparing
     float     setup_prepare_fraction; // 0..1 real progress, or <0 for pulse-only
@@ -508,6 +514,18 @@ const char* launcher_model_language_label(const LauncherModel* m);
 void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, wraps; mirrors both players
 const char* launcher_model_deadzone_pct_label(const LauncherModel* m);  // "37%"
 void launcher_model_set_bios_path(LauncherModel* m, const char* path);
+/* Request a BIOS change. Persists immediately when the new choice is already
+ * Play-ready; otherwise opens bios_confirm_open (regen required). */
+void launcher_model_request_bios_path(LauncherModel* m, const char* path);
+void launcher_model_bios_confirm_accept(LauncherModel* m);
+void launcher_model_bios_confirm_cancel(LauncherModel* m);
+/* Play clicked while setup_bios_needs_regen (or !ok with a saved path). */
+void launcher_model_bios_play_prompt(LauncherModel* m);
+void launcher_model_bios_play_use_openbios(LauncherModel* m);
+void launcher_model_bios_play_generate(LauncherModel* m);
+void launcher_model_bios_play_cancel(LauncherModel* m);
+/* True when ROM/disc looks ready but BIOS needs Generate & rebuild. */
+bool launcher_model_bios_blocks_play(const LauncherModel* m);
 
 // ---- SRAM save management (Import/Clear; both back up to "<sram>.bak" first) ----
 void launcher_model_import_sram(LauncherModel* m, const char* src);
