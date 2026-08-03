@@ -1180,7 +1180,20 @@ static void lm_persist_setup_sidecars(LauncherModel* m) {
 }
 
 void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
-    safe_copy(m->s.bios_path, sizeof(m->s.bios_path), path ? path : "");
+    if (path && path[0]) {
+#if defined(_WIN32)
+        char abs[MAX_PATH];
+        DWORD n = GetFullPathNameA(path, (DWORD)sizeof(abs), abs, NULL);
+        safe_copy(m->s.bios_path, sizeof(m->s.bios_path),
+                  (n > 0 && n < (DWORD)sizeof(abs)) ? abs : path);
+#else
+        char* rp = realpath(path, NULL);
+        safe_copy(m->s.bios_path, sizeof(m->s.bios_path), rp ? rp : path);
+        free(rp);
+#endif
+    } else {
+        m->s.bios_path[0] = '\0';
+    }
     launcher_model_refresh_bios_status(m);
     lm_persist_setup_sidecars(m);
 }
