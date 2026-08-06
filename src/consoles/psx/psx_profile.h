@@ -64,6 +64,7 @@ static const SystemProfile kSystemProfilePsx = {
         "pad.tga", "pad_analog.tga", "pad_digital.tga",
         /* max_players */ 5, /* PSX + multitap ceiling; game num_players may be lower */
         /* has_pad_mode */ 1,
+        /* binds_per_input */ 2,  /* dual bindings: primary + alt (e.g. X + Mouse1) */
     },
     // MEMCARD is PSX's real target shape (2 slots): the standalone "save" panel
     // (see kPanelsDashboardPsx above) renders a dual-slot picker + 15-block

@@ -49,7 +49,19 @@ static const SDL_Scancode kPsxDefaults[LNG_PSX_PAD_BUTTON_COUNT] = {
 };
 
 static SDL_Scancode s_psx_binds[PSX_BINDS_MAX_PLAYERS][LNG_PSX_PAD_BUTTON_COUNT];
+/* Alternate (second) binding per input; UNKNOWN = no alt. Persisted as a
+ * comma-separated second name on the same ini line ("cross = X, Mouse1"),
+ * matching runtime psx_keybinds.c exactly. */
+static SDL_Scancode s_psx_alt[PSX_BINDS_MAX_PLAYERS][LNG_PSX_PAD_BUTTON_COUNT];
 static int s_psx_binds_init = 0;
+
+/* Mouse-button pseudo-scancodes — MUST mirror runtime psx_keybinds.c
+ * (PSXKB_MOUSE_SC_BASE): values above SDL's keyboard scancode space,
+ * base + SDL_BUTTON_* (1..5). */
+#define PSX_MOUSE_SC_BASE 512
+#define PSX_MOUSE_SC(btn) ((SDL_Scancode)(PSX_MOUSE_SC_BASE + (btn)))
+#define PSX_IS_MOUSE_SC(sc) \
+    ((int)(sc) > PSX_MOUSE_SC_BASE && (int)(sc) <= PSX_MOUSE_SC_BASE + 5)
 
 // Same scancode<->name normalization psx_keybinds.c/keybinds.c use (SDL name
 // first, then a handful of common aliases) so files round-trip identically
@@ -74,10 +86,23 @@ static SDL_Scancode psx_kb_name_to_scancode(const char* name) {
     if (!strcmp(buf, "escape") || !strcmp(buf, "esc")) return SDL_SCANCODE_ESCAPE;
     if (!strcmp(buf, "backspace")) return SDL_SCANCODE_BACKSPACE;
     if (!strcmp(buf, "none") || !buf[0]) return SDL_SCANCODE_UNKNOWN;
+    /* Mouse buttons — same vocabulary as runtime psx_keybinds.c. */
+    if (!strncmp(buf, "mouse", 5) && buf[5] >= '1' && buf[5] <= '5' && !buf[6])
+        return PSX_MOUSE_SC(buf[5] - '0');
+    if (!strcmp(buf, "lmb") || !strcmp(buf, "mouse left"))   return PSX_MOUSE_SC(1);
+    if (!strcmp(buf, "mmb") || !strcmp(buf, "mouse middle")) return PSX_MOUSE_SC(2);
+    if (!strcmp(buf, "rmb") || !strcmp(buf, "mouse right"))  return PSX_MOUSE_SC(3);
+    if (!strcmp(buf, "mouse x1")) return PSX_MOUSE_SC(4);
+    if (!strcmp(buf, "mouse x2")) return PSX_MOUSE_SC(5);
     return SDL_SCANCODE_UNKNOWN;
 }
 static const char* psx_kb_scancode_to_name(SDL_Scancode sc) {
     if (sc == SDL_SCANCODE_UNKNOWN) return "None";
+    if (PSX_IS_MOUSE_SC(sc)) {
+        static const char* mouse_names[5] =
+            { "Mouse1", "Mouse2", "Mouse3", "Mouse4", "Mouse5" };
+        return mouse_names[(int)sc - PSX_MOUSE_SC_BASE - 1];
+    }
     const char* n = SDL_GetScancodeName(sc);
     return (n && n[0]) ? n : "None";
 }
@@ -93,8 +118,15 @@ static void psx_kb_write_ini(const char* path) {
         "# Use SDL key names, or \"None\" to leave an input unbound.\n\n");
     for (int p = 0; p < PSX_BINDS_MAX_PLAYERS; ++p) {
         fprintf(f, "[player%d]\n", p + 1);
-        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
-            fprintf(f, "%-9s = %s\n", kPsxKbKeyName[b], psx_kb_scancode_to_name(s_psx_binds[p][b]));
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b) {
+            if (s_psx_alt[p][b] != SDL_SCANCODE_UNKNOWN)
+                fprintf(f, "%-9s = %s, %s\n", kPsxKbKeyName[b],
+                        psx_kb_scancode_to_name(s_psx_binds[p][b]),
+                        psx_kb_scancode_to_name(s_psx_alt[p][b]));
+            else
+                fprintf(f, "%-9s = %s\n", kPsxKbKeyName[b],
+                        psx_kb_scancode_to_name(s_psx_binds[p][b]));
+        }
         fprintf(f, "\n");
     }
     fclose(f);
@@ -157,9 +189,23 @@ static int psx_kb_load_ini(const char* path) {
         while (*val && isspace((unsigned char)*val)) ++val;
         size_t vl = strlen(val); while (vl > 0 && isspace((unsigned char)val[vl-1])) val[--vl] = '\0';
         for (char* c = key; *c; c++) *c = (char)tolower((unsigned char)*c);
+        /* Optional alternate binding after a comma: "cross = X, Mouse1". */
+        char* comma = strchr(val, ',');
+        char* alt_val = NULL;
+        if (comma) {
+            *comma = '\0'; alt_val = comma + 1;
+            size_t al = strlen(alt_val);
+            while (*alt_val && isspace((unsigned char)*alt_val)) ++alt_val;
+            al = strlen(alt_val);
+            while (al > 0 && isspace((unsigned char)alt_val[al-1])) alt_val[--al] = '\0';
+            size_t v2 = strlen(val);
+            while (v2 > 0 && isspace((unsigned char)val[v2-1])) val[--v2] = '\0';
+        }
         for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b) {
             if (!strcmp(key, kPsxKbKeyName[b])) {
                 s_psx_binds[player][b] = psx_kb_name_to_scancode(val);
+                s_psx_alt[player][b]   = alt_val ? psx_kb_name_to_scancode(alt_val)
+                                                 : SDL_SCANCODE_UNKNOWN;
                 if (psx_kb_key_is_native_only(b)) ++native_hits;
                 break;
             }
@@ -170,8 +216,10 @@ static int psx_kb_load_ini(const char* path) {
 }
 
 static void psx_kb_seed_defaults(void) {
-    for (int p = 0; p < PSX_BINDS_MAX_PLAYERS; ++p)
+    for (int p = 0; p < PSX_BINDS_MAX_PLAYERS; ++p) {
         memcpy(s_psx_binds[p], kPsxDefaults, sizeof(kPsxDefaults));
+        memset(s_psx_alt[p], 0, sizeof(s_psx_alt[p]));   /* alts: unbound */
+    }
 }
 
 static int psx_kb_player_all_unbound(int player) {
@@ -221,9 +269,30 @@ void rui_psx_binds_set(const char* path, int player, int b, int scancode) {
     psx_kb_write_ini(path);
 }
 
+int rui_psx_binds_get_slot(const char* path, int player, int b, int slot) {
+    if (!s_psx_binds_init) rui_psx_binds_init(path);
+    if (player < 0 || player >= PSX_BINDS_MAX_PLAYERS || b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT)
+        return SDL_SCANCODE_UNKNOWN;
+    return (int)((slot == 1) ? s_psx_alt[player][b] : s_psx_binds[player][b]);
+}
+
+void rui_psx_binds_set_slot(const char* path, int player, int b, int slot, int scancode) {
+    if (player < 0 || player >= PSX_BINDS_MAX_PLAYERS || b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
+    if (!s_psx_binds_init) rui_psx_binds_init(path);
+    if (slot == 1) s_psx_alt[player][b]   = (SDL_Scancode)scancode;
+    else           s_psx_binds[player][b] = (SDL_Scancode)scancode;
+    psx_kb_write_ini(path);
+}
+
+const char* rui_psx_binds_label(const char* path, int player, int b, int slot) {
+    return psx_kb_scancode_to_name(
+        (SDL_Scancode)rui_psx_binds_get_slot(path, player, b, slot));
+}
+
 void rui_psx_binds_reset(const char* path, int player) {
     if (player < 0 || player >= PSX_BINDS_MAX_PLAYERS) return;
     if (!s_psx_binds_init) rui_psx_binds_init(path);
     memcpy(s_psx_binds[player], kPsxDefaults, sizeof(kPsxDefaults));
+    memset(s_psx_alt[player], 0, sizeof(s_psx_alt[player]));
     psx_kb_write_ini(path);
 }

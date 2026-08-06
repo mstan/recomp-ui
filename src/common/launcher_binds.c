@@ -167,6 +167,13 @@ static void copy_str(char* d, size_t cap, const char* s) {
 
 static const char* scancode_label(SDL_Scancode sc) {
     if (sc == SDL_SCANCODE_UNKNOWN) return "(unbound)";
+    /* Mouse-button pseudo-scancodes (513..517, mirrors runtime psx_keybinds.c
+     * PSXKB_MOUSE_SC_BASE): SDL_GetScancodeName knows nothing about them. */
+    if ((int)sc > 512 && (int)sc <= 517) {
+        static const char* mouse_names[5] =
+            { "Mouse1", "Mouse2", "Mouse3", "Mouse4", "Mouse5" };
+        return mouse_names[(int)sc - 513];
+    }
     const char* n = SDL_GetScancodeName(sc);
     return (n && n[0]) ? n : "(unbound)";
 }
@@ -191,10 +198,14 @@ static void genesis_pad_label(int kind, int code, int axis_dir, char* out, size_
 static void reload_player_display(LauncherModel* m, int player) {
     if (is_psx_profile(m)) {
         if (player < 1 || player > LNG_MAX_PLAYERS) return;
-        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b) {
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
-                     scancode_label((SDL_Scancode)rui_psx_binds_get(
-                         keybinds_file_path(), player - 1, b)));
+                     scancode_label((SDL_Scancode)rui_psx_binds_get_slot(
+                         keybinds_file_path(), player - 1, b, 0)));
+            copy_str(m->binds_alt[player - 1][b], sizeof(m->binds_alt[player - 1][b]),
+                     scancode_label((SDL_Scancode)rui_psx_binds_get_slot(
+                         keybinds_file_path(), player - 1, b, 1)));
+        }
         return;
     }
     if (is_nes_profile(m)) {
@@ -530,7 +541,19 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
 
 void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
                               int type, int id) {
-    if (!is_n64_profile(m)) return;   // field binds exist only in the N64 store
+    if (is_psx_profile(m)) {
+        // PSX dual-slot store: scancode-typed only (mouse buttons ride the
+        // pseudo-scancode encoding, 513..517 — see psx_binds.c). slot 0 =
+        // primary, 1 = alternate; both persist to keybinds.ini on one line.
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
+        if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
+        if (type != RUI_N64_FIELD_KEY) return;
+        rui_psx_binds_set_slot(keybinds_file_path(), player - 1, b,
+                               slot ? 1 : 0, id);
+        reload_player_display(m, player);
+        return;
+    }
+    if (!is_n64_profile(m)) return;   // field binds exist only in the N64/PSX stores
     if (player < 1 || player > LNG_MAX_PLAYERS) return;
     if (b < 0 || b >= LNG_N64_PAD_BUTTON_COUNT) return;
     const int dev = n64_device_for_player(m, player - 1);

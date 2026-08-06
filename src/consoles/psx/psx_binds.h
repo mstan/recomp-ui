@@ -37,6 +37,14 @@ int rui_psx_binds_get(const char* path, int player, int b);
 // Rebind + persist.
 void rui_psx_binds_set(const char* path, int player, int b, int scancode);
 
+// Dual-binding slot API: slot 0 = primary, slot 1 = alternate (both assert
+// the input; persisted as "primary, alt" on one ini line — runtime-compatible).
+// Mouse buttons encode as pseudo-scancodes 513..517 (Mouse1..Mouse5).
+int  rui_psx_binds_get_slot(const char* path, int player, int b, int slot);
+void rui_psx_binds_set_slot(const char* path, int player, int b, int slot, int scancode);
+// Display name for a slot's current bind ("None"/"X"/"Mouse1"...).
+const char* rui_psx_binds_label(const char* path, int player, int b, int slot);
+
 // Reset one player to the shared default keyboard map + persist.
 void rui_psx_binds_reset(const char* path, int player);
 

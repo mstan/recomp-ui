@@ -6141,6 +6141,16 @@ static bool raw_input_is_mapped(SDL_JoystickID which, bool is_axis, int raw_inde
 #endif
 
 bool try_capture(LauncherModel* m, const SDL_Event& ev) {
+    // Arming delay for mouse-button binds: the click that opened the capture
+    // chip (or a double-click on it) must not self-bind. Stamped on the
+    // not-capturing -> capturing transition; mouse DOWNs before it are
+    // swallowed without committing.
+    static Uint64 s_mouse_ok_after = 0;
+    static bool   s_was_capturing  = false;
+    if (m->capturing != s_was_capturing) {
+        s_was_capturing = m->capturing;
+        if (m->capturing) s_mouse_ok_after = (Uint64)SDL_GetTicks() + 150;
+    }
     if (!m->capturing && !m->hk_capturing &&
         !m->camera_capturing)
         return false;
@@ -6222,6 +6232,26 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         }
 #endif
         return true;   // swallow all other input (keyboard included) while pad-capturing
+    }
+
+    // ---- Mouse-button bind capture (PSX dual-bind store) -------------------
+    // Mouse buttons commit as pseudo-scancodes (512 + SDL_BUTTON_*, mirroring
+    // runtime psx_keybinds.c's PSXKB_MOUSE_SC encoding, so keybinds.ini
+    // round-trips between launcher and game). The committing DOWN is
+    // swallowed; its UP then flows to ImGui with capture already cancelled -
+    // ImGui saw no DOWN, so the release cannot trigger a UI action.
+    if (m->capturing && ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        const bool mouse_ok = prof && prof->id && !strcmp(prof->id, "psx");
+        const int  btn = (int)ev.button.button;
+        if (mouse_ok && btn >= 1 && btn <= 5 &&
+            (Uint64)SDL_GetTicks() >= s_mouse_ok_after) {
+            launcher_binds_set_field(m, m->cfg_player + 1, m->capture_btn,
+                                     m->capture_slot, RUI_N64_FIELD_KEY,
+                                     512 + btn);
+            launcher_model_cancel_capture(m);
+        }
+        return true;   // swallow the DOWN either way while capturing
     }
 
     if (ev.type != SDL_EVENT_KEY_DOWN) return true;   // swallow non-key input while capturing
