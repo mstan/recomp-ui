@@ -2889,6 +2889,20 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // stretch policy divides available width evenly across `cols`
         // regardless of our computed cell_w, which reintroduces the very
         // overlap/clip this sizing pass exists to avoid.
+        // Duplicate-bind detection (this player's table, both slots): a label
+        // bound to more than one input renders in the warn color. Duplicates
+        // stay ALLOWED — double-mapping is a legitimate choice (e.g. one key
+        // on two shoulder buttons) — the highlight just makes accidents
+        // visible at a glance.
+        auto bind_is_dup = [&](const char* txt) -> bool {
+            if (!txt || !txt[0] || !strcmp(txt, "(unbound)")) return false;
+            int n = 0;
+            for (int i = 0; i < nbtn; ++i) {
+                if (!strcmp(m->binds[p][i], txt)) ++n;
+                if (bpi >= 2 && !strcmp(m->binds_alt[p][i], txt)) ++n;
+            }
+            return n > 1;
+        };
         if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
             for (int c = 0; c < cols; ++c)
                 ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
@@ -2909,19 +2923,31 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         const char* txt = cap
                             ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
                             : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
+                        const bool dup = !cap && bind_is_dup(txt);
                         if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                        if (dup) ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
                         if (ImGui::Button(txt, ImVec2(chip_w, 0)))
                             launcher_model_begin_capture_slot(m, b, slot);
+                        if (dup) ImGui::PopStyleColor();
                         if (cap) ImGui::PopStyleColor();
+                        // Right-click a chip to clear that slot's bind.
+                        if (!m->capturing && ImGui::IsItemClicked(ImGuiMouseButton_Right))
+                            launcher_binds_set_field(m, m->cfg_player + 1, b, slot,
+                                                     RUI_N64_FIELD_KEY, 0);
                         ImGui::PopID();
                     }
                 } else {
                     // KEY chip
                     const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
+                    const bool dup_key = !cap_key && bind_is_dup(m->binds[p][b]);
                     if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                    if (dup_key) ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
                     if (ImGui::Button(cap_key ? "[ press a key... ]" : m->binds[p][b], ImVec2(chip_w, 0)))
                         launcher_model_begin_capture(m, b);
+                    if (dup_key) ImGui::PopStyleColor();
                     if (cap_key) ImGui::PopStyleColor();
+                    if (!m->capturing && ImGui::IsItemClicked(ImGuiMouseButton_Right))
+                        launcher_binds_set_button(m, m->cfg_player + 1, b, 0);
                     // GAMEPAD chip (pad-bind consoles only: Genesis)
                     if (has_pad) {
                         ImGui::SameLine(0, chip_gap);
@@ -2941,6 +2967,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::Spacing();
         if (ImGui::Button("Reset to Defaults")) launcher_binds_reset_player(m, m->cfg_player + 1);
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text_muted),
+                           "right-click a bind to clear it; yellow = bound more than once");
         if (m->capturing) ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
     } end_panel();
 
