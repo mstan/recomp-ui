@@ -509,9 +509,13 @@ typedef struct RecompLauncherCDiscVerify {
 
 /* Host BIOS check for the first-run setup wizard (has_bios games). */
 typedef struct RecompLauncherCBiosVerify {
-    int  ok;           // 1 = usable BIOS present
+    int  ok;           // 1 = usable BIOS present (linked / ready to Play)
     int  warn;         // 1 = size/CRC soft mismatch (still ok to boot)
     char detail[160];  // short status for the UI
+    /* 1 = file looks valid but is not compiled into this binary — player must
+     * Generate & rebuild (or switch back to a linked BIOS like OpenBIOS).
+     * Appended for ABI compatibility; older hosts leave it 0 via memset. */
+    int  needs_regen;
 } RecompLauncherCBiosVerify;
 
 /* Optional progress callback for prepare_with_progress (worker thread).

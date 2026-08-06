@@ -397,6 +397,12 @@ void launcher_model_init(LauncherModel* m,
     m->setup_tc_auto = true;
     m->setup_tc_ready = false;
     m->setup_tc_zip[0] = '\0';
+    m->setup_bios_needs_regen = false;
+    m->bios_confirm_open = false;
+    m->bios_pending_path[0] = '\0';
+    m->bios_switch_uncommitted = false;
+    m->bios_revert_path[0] = '\0';
+    m->bios_play_modal_open = false;
     m->setup_preparing = false;
     m->setup_prepare_pulse = 0.0f;
     m->setup_prepare_fraction = -1.0f;
@@ -431,23 +437,26 @@ void launcher_model_init(LauncherModel* m,
     {
         const int force = game && game->needs_setup;
         const int missing_rom = !m->rom_present || strcmp(m->rom_size, "--") == 0;
-        const int missing_bios = m->has_bios && !m->setup_bios_ok;
+        const int missing_bios = m->has_bios && !m->setup_bios_ok &&
+                                 !m->setup_bios_needs_regen;
         if (force || missing_rom || missing_bios)
             m->setup_wizard_open = true;
     }
 
-    /* Toolchain page first for local codegen hosts unless already usable. */
-    if (m->setup_wizard_open && m->setup_needs_toolchain) {
-        if (m->toolchain_is_ready_cb && m->toolchain_is_ready_cb()) {
-            m->setup_tc_ready = true;
+    /* Probe toolchain readiness even when the wizard is closed — BIOS switch
+     * Generate & rebuild needs setup_tc_ready, and codegen hosts always set
+     * setup_needs_toolchain. */
+    if (m->setup_needs_toolchain) {
+        m->setup_tc_ready =
+            (m->toolchain_is_ready_cb && m->toolchain_is_ready_cb()) ? true
+                                                                    : false;
+        if (m->setup_wizard_open)
+            m->setup_page = m->setup_tc_ready ? 1 : 0;
+        else
             m->setup_page = 1;
-        } else {
-            m->setup_tc_ready = false;
-            m->setup_page = 0;
-        }
     } else {
         m->setup_page = 1;
-        m->setup_tc_ready = !m->setup_needs_toolchain;
+        m->setup_tc_ready = true;
     }
 
     // Placeholder display until launcher_binds_load() fills real values from
@@ -1021,6 +1030,7 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
     if (!m) return;
     m->setup_bios_ok = false;
     m->setup_bios_warn = false;
+    m->setup_bios_needs_regen = false;
     m->setup_bios_detail[0] = '\0';
     if (!m->has_bios) {
         m->setup_bios_ok = true;
@@ -1040,17 +1050,20 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
             }
             m->setup_bios_ok = bv.ok != 0;
             m->setup_bios_warn = bv.warn != 0;
+            /* Empty path is OpenBIOS — never treat as needing regen. */
+            m->setup_bios_needs_regen = false;
             if (bv.detail[0])
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
                           bv.detail);
             else if (m->setup_bios_ok)
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                          "Using bundled BIOS.");
+                          "Using OpenBIOS.");
             return;
         }
         m->setup_bios_ok = true;
+        m->setup_bios_needs_regen = false;
         safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                  "Using bundled BIOS.");
+                  "Using OpenBIOS.");
         return;
     }
     if (!m->bios_verify_cb) {
@@ -1070,6 +1083,7 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
     }
     m->setup_bios_ok = bv.ok != 0;
     m->setup_bios_warn = bv.warn != 0;
+    m->setup_bios_needs_regen = bv.needs_regen != 0;
     safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail), bv.detail);
 }
 
@@ -1196,6 +1210,215 @@ void launcher_model_set_bios_path(LauncherModel* m, const char* path) {
     }
     launcher_model_refresh_bios_status(m);
     lm_persist_setup_sidecars(m);
+}
+
+static void lm_normalize_bios_path(const char* path, char* out, size_t out_cap) {
+    if (!out || out_cap == 0) return;
+    out[0] = '\0';
+    if (!path || !path[0]) return;
+#if defined(_WIN32)
+    {
+        char abs[MAX_PATH];
+        DWORD n = GetFullPathNameA(path, (DWORD)sizeof(abs), abs, NULL);
+        safe_copy(out, out_cap,
+                  (n > 0 && n < (DWORD)sizeof(abs)) ? abs : path);
+    }
+#else
+    {
+        char* rp = realpath(path, NULL);
+        safe_copy(out, out_cap, rp ? rp : path);
+        free(rp);
+    }
+#endif
+}
+
+static int lm_bios_paths_equal(const char* a, const char* b) {
+    if ((!a || !a[0]) && (!b || !b[0])) return 1;
+    if (!a || !a[0] || !b || !b[0]) return 0;
+#if defined(_WIN32)
+    return _stricmp(a, b) == 0;
+#else
+    return strcmp(a, b) == 0;
+#endif
+}
+
+void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
+
+static void lm_bios_revert_uncommitted(LauncherModel* m) {
+    if (!m || !m->bios_switch_uncommitted) return;
+    safe_copy(m->s.bios_path, sizeof(m->s.bios_path), m->bios_revert_path);
+    m->bios_switch_uncommitted = false;
+    m->bios_pending_path[0] = '\0';
+    m->bios_revert_path[0] = '\0';
+    launcher_model_refresh_bios_status(m);
+    lm_persist_setup_sidecars(m);
+}
+
+static void lm_bios_commit_uncommitted(LauncherModel* m) {
+    if (!m || !m->bios_switch_uncommitted) return;
+    m->bios_switch_uncommitted = false;
+    m->bios_pending_path[0] = '\0';
+    m->bios_revert_path[0] = '\0';
+    /* Path already on the model; rewrite sidecars next to the new exe. */
+    lm_persist_setup_sidecars(m);
+}
+
+/* Apply pending/current BIOS and start Generate & rebuild without the full
+ * first-run wizard (progress modal only). Falls back to the wizard when the
+ * disc or toolchain is missing. */
+static void lm_bios_kick_generate(LauncherModel* m) {
+    if (!m) return;
+    if (m->setup_preparing) return; /* ignore double-clicks / overlapping jobs */
+    m->setup_wizard_open = false;
+    m->bios_confirm_open = false;
+    m->bios_play_modal_open = false;
+    /* Re-probe: setup_tc_ready may still be false if the wizard never opened. */
+    if (m->setup_needs_toolchain) {
+        if (m->toolchain_is_ready_cb && m->toolchain_is_ready_cb())
+            m->setup_tc_ready = true;
+        if (!m->setup_tc_ready) {
+            lm_bios_revert_uncommitted(m);
+            m->setup_wizard_open = true;
+            m->setup_page = 0;
+            return;
+        }
+    }
+    if (m->rom_present && m->rom_full[0] &&
+        (m->prepare_with_progress_cb || m->prepare_disc_cb)) {
+        /* Stage disc + BIOS sidecars so the host CLI gets --disc/--bios. */
+        lm_persist_setup_sidecars(m);
+        launcher_model_start_prepare_disc(m, m->rom_full);
+        return;
+    }
+    /* Need a disc pick — open the setup page, not a silent no-op. */
+    lm_bios_revert_uncommitted(m);
+    m->setup_wizard_open = true;
+    m->setup_page = 1;
+}
+
+void launcher_model_request_bios_path(LauncherModel* m, const char* path) {
+    char normalized[512];
+    RecompLauncherCBiosVerify bv;
+    if (!m) return;
+    lm_normalize_bios_path(path, normalized, sizeof(normalized));
+    if (lm_bios_paths_equal(m->s.bios_path, normalized))
+        return;
+
+    memset(&bv, 0, sizeof(bv));
+    if (m->bios_verify_cb) {
+        if (!m->bios_verify_cb(normalized, &bv)) {
+            safe_copy(bv.detail, sizeof(bv.detail), "BIOS verification failed.");
+            /* OpenBIOS never regenerates; retail may still need Generate. */
+            bv.needs_regen = normalized[0] ? 1 : 0;
+            bv.ok = 0;
+        }
+    } else {
+        /* No host callback: treat any change as immediate. */
+        launcher_model_set_bios_path(m, normalized);
+        return;
+    }
+
+    /* OpenBIOS (empty path): always hot-swap when accepted. Never open the
+     * Generate & rebuild confirm — Play uses the bundled backend already
+     * linked (or the setup host will emit it on first Generate for game C). */
+    if (!normalized[0]) {
+        if (bv.ok) {
+            launcher_model_set_bios_path(m, "");
+            return;
+        }
+        if (bv.detail[0])
+            safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                      bv.detail);
+        return;
+    }
+
+    /* Invalid dump (missing/wrong size) — keep the previous selection. */
+    if (!bv.ok && !bv.needs_regen) {
+        if (bv.detail[0])
+            safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                      bv.detail);
+        return;
+    }
+
+    /* Retail already compiled into this binary → hot-swap (no rebuild). */
+    if (bv.ok && !bv.needs_regen) {
+        launcher_model_set_bios_path(m, normalized);
+        return;
+    }
+
+    /* Retail dump is valid but its backend is not linked yet → confirm
+     * Generate & rebuild (codegen hosts kick generate on accept). */
+    safe_copy(m->bios_pending_path, sizeof(m->bios_pending_path), normalized);
+    if (bv.detail[0])
+        safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail), bv.detail);
+    else
+        safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                  "This retail BIOS is not compiled into the current build. "
+                  "Generate & rebuild to add it (or Use OpenBIOS).");
+    m->bios_confirm_open = true;
+}
+
+void launcher_model_bios_confirm_accept(LauncherModel* m) {
+    if (!m) return;
+    if (m->setup_preparing) return;
+    m->bios_confirm_open = false;
+    /* Stage the new BIOS for the generate CLI, but remember the prior pick so
+     * a failed prepare/rebuild can restore it (do not stick a failed switch). */
+    safe_copy(m->bios_revert_path, sizeof(m->bios_revert_path), m->s.bios_path);
+    safe_copy(m->s.bios_path, sizeof(m->s.bios_path), m->bios_pending_path);
+    m->bios_switch_uncommitted = true;
+    launcher_model_refresh_bios_status(m);
+    lm_bios_kick_generate(m);
+}
+
+void launcher_model_bios_confirm_cancel(LauncherModel* m) {
+    if (!m) return;
+    m->bios_confirm_open = false;
+    m->bios_pending_path[0] = '\0';
+    launcher_model_refresh_bios_status(m);
+}
+
+bool launcher_model_bios_blocks_play(const LauncherModel* m) {
+    if (!m || !m->has_bios) return false;
+    if (m->setup_preparing) return false;
+    /* Disc/ROM must otherwise look ready — otherwise the normal Play disable
+     * / setup-wizard path is enough. */
+    if (!m->rom_present || strcmp(m->rom_size, "--") == 0) return false;
+    if (m->profile && m->profile->verify.mode == 1) {
+        if (m->verify.verdict == 0 || m->verify.verdict == 3) return false;
+    }
+    /* OpenBIOS (empty path) never blocks Play for a BIOS regen. */
+    if (!m->s.bios_path[0]) return false;
+    /* Retail linked-backend mismatch (needs_regen) blocks Play. */
+    if (m->setup_bios_needs_regen) return true;
+    /* Retail path that isn't Play-ready in this binary. */
+    if (!m->setup_bios_ok) return true;
+    return false;
+}
+
+void launcher_model_bios_play_prompt(LauncherModel* m) {
+    if (!m) return;
+    m->bios_play_modal_open = true;
+}
+
+void launcher_model_bios_play_use_openbios(LauncherModel* m) {
+    if (!m) return;
+    m->bios_play_modal_open = false;
+    /* OpenBIOS always applies immediately — no Generate & rebuild. */
+    launcher_model_request_bios_path(m, "");
+}
+
+void launcher_model_bios_play_generate(LauncherModel* m) {
+    if (!m) return;
+    if (m->setup_preparing) return;
+    m->bios_play_modal_open = false;
+    /* Current m->s.bios_path is already the desired pick — stage + generate. */
+    lm_bios_kick_generate(m);
+}
+
+void launcher_model_bios_play_cancel(LauncherModel* m) {
+    if (!m) return;
+    m->bios_play_modal_open = false;
 }
 
 bool launcher_model_can_finish_setup(const LauncherModel* m) {
@@ -1520,6 +1743,8 @@ void launcher_model_poll_prepare_disc(LauncherModel* m) {
     if (kind == PREP_JOB_REBUILD) {
         if (result && out_path[0]) {
             safe_copy(m->relaunch_exe, sizeof(m->relaunch_exe), out_path);
+            /* BIOS switch sticks only after a successful rebuild. */
+            lm_bios_commit_uncommitted(m);
             /* Sidecars beside build/<exe> before the host execs it. */
             lm_persist_setup_sidecars(m);
             m->setup_prepare_satisfied = true;
@@ -1534,6 +1759,7 @@ void launcher_model_poll_prepare_disc(LauncherModel* m) {
                 m->action = LNG_ACTION_RELAUNCH;
             }
         } else {
+            lm_bios_revert_uncommitted(m);
             m->setup_status[0] = '\0';
             safe_copy(m->setup_error, sizeof(m->setup_error),
                       err[0] ? err : "Rebuild failed.");
@@ -1549,15 +1775,18 @@ void launcher_model_poll_prepare_disc(LauncherModel* m) {
                       (m->prepare_success_status && m->prepare_success_status[0])
                           ? m->prepare_success_status
                           : "Sources ready — starting build…");
+            /* Keep bios_switch_uncommitted through rebuild. */
             launcher_model_begin_rebuild_locked(m);
             return;
         }
+        lm_bios_commit_uncommitted(m);
         m->setup_prepare_satisfied = true;
         safe_copy(m->setup_status, sizeof(m->setup_status),
                   (m->prepare_success_status && m->prepare_success_status[0])
                       ? m->prepare_success_status
                       : "Disc ready.");
     } else {
+        lm_bios_revert_uncommitted(m);
         m->setup_status[0] = '\0';
         safe_copy(m->setup_error, sizeof(m->setup_error),
                   err[0] ? err : "Disc prepare failed.");

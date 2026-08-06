@@ -2239,12 +2239,12 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
                                       : "Select BIOS file",
                                kBiosPatterns, 2,
                                "BIOS image (.bin .rom)", buf, sizeof(buf)))
-            launcher_model_set_bios_path(m, buf);
+            launcher_model_request_bios_path(m, buf);
     }
     if (has_pick) {
         ImGui::SameLine(0.0f, gap);
         if (ImGui::Button("Clear", ImVec2(cw, px(28))))
-            launcher_model_set_bios_path(m, "");
+            launcher_model_request_bios_path(m, "");
         if (ImGui::IsItemHovered()) {
             if (is_gba)
                 ImGui::SetTooltip("Remove this selection. A retail GBA BIOS "
@@ -5386,8 +5386,12 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         }
     }
-    if (!can_play && ImGui::IsItemClicked())
-        m->setup_wizard_open = true;
+    if (!can_play && ImGui::IsItemClicked()) {
+        if (launcher_model_bios_blocks_play(m))
+            launcher_model_bios_play_prompt(m);
+        else
+            m->setup_wizard_open = true;
+    }
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
     (void)win;
 }
@@ -5452,6 +5456,103 @@ static void setup_url_link(const char* label, const char* url) {
 
 /* Compact progress-only modal while a setup job runs — closes the full
  * first-run form so nothing else is interactive. */
+void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->bios_confirm_open) ImGui::OpenPopup("Switch BIOS?");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Switch BIOS?", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(420));
+    ImGui::TextWrapped(
+        "This retail BIOS is not compiled into the current build yet. "
+        "Generate & rebuild will emit its BIOS C and rebuild the game binary "
+        "with your current disc and toolchain. OpenBIOS switches never need "
+        "this — use Use OpenBIOS instead.");
+    if (m->bios_pending_path[0]) {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.text_muted), "Selected:");
+        ImGui::TextWrapped("%s", m->bios_pending_path);
+    } else {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.text_muted), "Selected: OpenBIOS");
+    }
+    if (m->setup_bios_detail[0]) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        ImGui::TextColored(col(th.warn), "%s", m->setup_bios_detail);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(12)));
+    const bool can_gen = m->rom_present && m->rom_full[0] &&
+                         (m->prepare_with_progress_cb || m->prepare_disc_cb);
+    if (!can_gen) ImGui::BeginDisabled();
+    if (ImGui::Button("Generate & rebuild…", ImVec2(px(200), px(32))))
+        launcher_model_bios_confirm_accept(m);
+    if (!can_gen) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Select a disc image first");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
+        launcher_model_bios_confirm_cancel(m);
+        launcher_model_request_bios_path(m, "");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
+        launcher_model_bios_confirm_cancel(m);
+    if (!m->bios_confirm_open) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+
+void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->bios_play_modal_open) ImGui::OpenPopup("BIOS not ready to Play");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("BIOS not ready to Play", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(440));
+    ImGui::TextWrapped(
+        "The selected retail BIOS is not compiled into this build. Generate & "
+        "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play "
+        "without rebuilding, or cancel and keep the current selection.");
+    if (m->s.bios_path[0]) {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.text_muted), "Current selection:");
+        ImGui::TextWrapped("%s", m->s.bios_path);
+    } else {
+        ImGui::Dummy(ImVec2(0, px(8)));
+        ImGui::TextColored(col(th.text_muted), "Current selection: OpenBIOS");
+    }
+    if (m->setup_bios_detail[0]) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        ImGui::TextColored(col(th.warn), "%s", m->setup_bios_detail);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(12)));
+    const bool can_gen = m->rom_present && m->rom_full[0] &&
+                         (m->prepare_with_progress_cb || m->prepare_disc_cb);
+    if (!can_gen) ImGui::BeginDisabled();
+    if (ImGui::Button("Generate & rebuild…", ImVec2(px(200), px(32))))
+        launcher_model_bios_play_generate(m);
+    if (!can_gen) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Select a disc image first");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
+        launcher_model_bios_play_use_openbios(m);
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
+        launcher_model_bios_play_cancel(m);
+    if (!m->bios_play_modal_open) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+
 static void draw_setup_progress_modal(LauncherModel* m, const LauncherTheme& th) {
     static const char* kProgPopup = "Setup progress";
     ImGui::OpenPopup(kProgPopup);
@@ -5731,12 +5832,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             static const char* kBiosPatterns[] = { "*.bin", "*.rom" };
             if (launcher_pick_file(bios_picker, kBiosPatterns, 2,
                                    "BIOS image (.bin .rom)", buf, sizeof(buf)))
-                launcher_model_set_bios_path(m, buf);
+                launcher_model_request_bios_path(m, buf);
         }
         if (has_pick && offers_bundled) {
             ImGui::SameLine();
             if (ImGui::Button("Use bundled##setup", ImVec2(px(120), px(32))))
-                launcher_model_set_bios_path(m, "");
+                launcher_model_request_bios_path(m, "");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Clear the retail BIOS path and use the "
                                   "bundled OpenBIOS included with this build.");
@@ -6097,6 +6198,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_footer(m, th, footer_h);
     draw_setup_wizard_modal(m, th);
     draw_skip_modal(m);
+    draw_bios_confirm_modal(m, th);
+    draw_bios_play_modal(m, th);
     draw_netplay_player_modal(m);
     draw_netplay_network_modal(m, th);
     draw_netplay_host_modal(m, th);
