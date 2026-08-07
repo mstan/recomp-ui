@@ -3013,7 +3013,7 @@ void np_format_local_address(const RecompLauncherCNetplayLocalAddress& address,
 
 /* Matches snes_lobby_default_url() when SNES_NET_LOBBY_URL is unset. */
 static const char kNpDefaultLobbyUrl[] =
-    "ws://netplay.technicallycomputers.ca:8765";
+    "ws://netplay.retcomm.net:8765";
 /* Persisted next to guest netplay saves (cwd-relative). */
 static const char kNpNetworkSettingsPath[] = "saves/netplay/network settings";
 
