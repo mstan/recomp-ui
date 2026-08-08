@@ -1620,17 +1620,18 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
     }
 }
 
-// PSX-style 3-way pad-mode selector: Hybrid / Analog / D-Pad segmented row.
-// Caller only draws this when pad_mode_supported && pad_mode_selectable (a
-// locked mode draws nothing — there's nothing to pick). The Hybrid segment is
-// itself hidden when !allow_hybrid, matching the original PSX launcher.
+// PSX-style pad-mode selector: Analog / D-Pad segmented row. Caller only draws
+// this when pad_mode_supported && pad_mode_selectable (a locked mode draws
+// nothing — there's nothing to pick). Hybrid is deliberately absent: it is a
+// mod-only mode a trusted game plugin requests at runtime, never a player
+// choice.
 void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     struct Seg { int mode; const char* label; };
     Seg segs[8];
     int n = 0;
     // A console with a custom pad-mode list (ControllerSpec.modes, e.g. Genesis
     // 3-Button/6-Button) drives the segments from that list; otherwise the
-    // legacy PSX-shaped Hybrid/Analog/D-Pad set (Hybrid gated by allow_hybrid).
+    // legacy PSX-shaped Analog/D-Pad set.
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
         int mc = prof->controller.mode_count;
@@ -1638,12 +1639,11 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
         for (int i = 0; i < mc; ++i)
             segs[n++] = { prof->controller.modes[i].mode, prof->controller.modes[i].label };
     } else {
-        if (m->allow_hybrid) segs[n++] = { 0, "Hybrid" };
         segs[n++] = { 1, "Analog" };
         segs[n++] = { 2, "D-Pad" };
     }
 
-    // Keyboard has no analog sticks — Hybrid/Analog are unavailable (PSX modes).
+    // Keyboard has no analog sticks — Analog is unavailable (PSX modes).
     const bool kb_digital_only =
         m->s.player_src[p] == 1 &&
         !(prof && prof->controller.modes && prof->controller.mode_count > 0);
@@ -1653,8 +1653,8 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
     for (int i = 0; i < n; ++i) {
         if (i) ImGui::SameLine(0, gap);
         bool sel = m->s.pad_mode[p] == segs[i].mode;
-        // Modes 0 (Hybrid) and 1 (Analog) need sticks; grey out on keyboard.
-        const bool stick_mode = (segs[i].mode == 0 || segs[i].mode == 1);
+        // Analog needs sticks; grey out on keyboard.
+        const bool stick_mode = (segs[i].mode == 1);
         const bool disabled = kb_digital_only && stick_mode;
         ImGui::PushID(i);
         if (disabled) {
@@ -6474,6 +6474,25 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         return true;   // swallow all other input (keyboard included) while pad-capturing
     }
 
+    /* Mouse buttons are bindable inputs on stores that keep alternates
+     * (PSX): bind-a-mouse-button is the whole point of the alt slot. The
+     * click that OPENED this capture must not bind itself, so a
+     * button-UP has to be seen first (capture_mouse_armed). */
+    if (m->capturing && !m->capture_pad) {
+        const SystemProfile* mprof = (const SystemProfile*)m->profile;
+        const bool alt_store = mprof && mprof->controller.binds_per_input >= 2;
+        if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP) return true;   /* swallow */
+        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            if (!alt_store || !m->capture_mouse_armed) return true;
+            int btn = (int)ev.button.button;      /* SDL: 1 L, 2 M, 3 R, 4/5 side */
+            if (btn >= 1 && btn <= 5) {
+                launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
+                                               m->capture_slot, 512 + btn);
+                launcher_model_cancel_capture(m);
+            }
+            return true;
+        }
+    }
     if (ev.type != SDL_EVENT_KEY_DOWN) return true;   // swallow non-key input while capturing
     if (m->capturing) {
         // N64's input.cfg keeps two alternate binds per input, so a keyboard
@@ -6481,7 +6500,10 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
         // (capture_slot is always 0 for them).
         const SystemProfile* prof = (const SystemProfile*)m->profile;
-        if (prof && prof->controller.binds_per_input >= 2)
+        if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
+            launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
+                                           m->capture_slot, (int)LNG_EVSCAN(ev));
+        else if (prof && prof->controller.binds_per_input >= 2)
             launcher_binds_set_field(m, m->cfg_player + 1, m->capture_btn, m->capture_slot,
                                      RUI_N64_FIELD_KEY, (int)LNG_EVSCAN(ev));
         else
@@ -6716,6 +6738,22 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_pads, LNG_MAX_PADS, m->has_gyro_controls ? 1 : 0);
 
         ImGui_ImplOpenGL3_NewFrame();
+        /* Suspend ImGui's GAMEPAD navigation while a bind capture is open.
+         *
+         * The SDL backend POLLS gamepad state in NewFrame (see
+         * ImGui_ImplSDL3_UpdateGamepads) rather than reading the SDL event
+         * queue, so swallowing pad events in try_capture cannot stop the pad
+         * from driving the menu: press a button to bind it and the focus
+         * jumps instead. Clearing the flag for the frame is the only thing
+         * that actually suppresses it. Keyboard nav stays on so Esc, arrows
+         * and Enter still work while listening. */
+        {
+            ImGuiIO& nav_io = ImGui::GetIO();
+            if (m->capturing || m->hk_capturing || m->camera_capturing)
+                nav_io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+            else
+                nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+        }
         LNG_ImplSDL_NewFrame();
         if (force_dpi) {   // Windows has no native point/pixel split — inject it
             ImGuiIO& io = ImGui::GetIO();

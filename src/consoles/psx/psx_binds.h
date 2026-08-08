@@ -37,6 +37,12 @@ int rui_psx_binds_get(const char* path, int player, int b);
 // Rebind + persist.
 void rui_psx_binds_set(const char* path, int player, int b, int scancode);
 
+// Slot-aware variants: slot 0 is the primary bind, slot 1 the alternate.
+// Either slot asserts the input at runtime. Mouse buttons are representable
+// as pseudo-scancodes (Mouse1..Mouse5), matching psx_keybinds.c.
+int  rui_psx_binds_get_slot(const char* path, int player, int b, int slot);
+void rui_psx_binds_set_slot(const char* path, int player, int b, int slot, int scancode);
+
 // Reset one player to the shared default keyboard map + persist.
 void rui_psx_binds_reset(const char* path, int player);
 

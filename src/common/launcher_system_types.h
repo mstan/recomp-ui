@@ -40,7 +40,7 @@ typedef struct { const char* label; int code; } ButtonDef;
 // text; `button_count` is how many LEADING entries of ControllerSpec.buttons[]
 // the rebind page shows in that mode (a Genesis 3-button pad has no X/Y/Z/Mode
 // rows). A profile that leaves ControllerSpec.modes NULL keeps the legacy
-// PSX-shaped selector (Hybrid/Analog/D-Pad, gated by allow_hybrid) with the
+// PSX-shaped selector (Analog/D-Pad) with the
 // full button set in every mode — PSX itself is untouched by this concept.
 typedef struct { int mode; const char* label; int button_count; } PadModeDef;
 

@@ -284,7 +284,6 @@ typedef struct {
     // ---- controller pad-mode caps (PlayStation-style analog/digital) ----
     bool     pad_mode_supported;    // false => no selector/art swap; generic pad.tga
     bool     pad_mode_selectable;   // false => selector hidden, mode forced to locked_pad_mode
-    bool     allow_hybrid;          // false => Hybrid option hidden
     int      locked_pad_mode;       // forced mode when !pad_mode_selectable
     bool     lock_device;           // true => hide the player controller cards entirely
 
@@ -419,6 +418,10 @@ typedef struct {
     // ControllerSpec sets has_pad_binds (Genesis; the engine stores a gamepad
     // button/axis bind per logical button alongside the keyboard scancode).
     bool      capture_pad;
+    // A mouse button may be BOUND on stores that keep alternates (PSX).
+    // The click that opened the capture must not bind itself, so a
+    // button-UP has to arrive before a DOWN is accepted as a bind.
+    bool      capture_mouse_armed;
     bool      camera_capturing;  // capturing an enabled Voxel camera key
     int       capture_camera;    // LNG_CAMERA_* index
     bool      hk_capturing;      // capturing a system hotkey
@@ -615,9 +618,10 @@ void launcher_model_apply_msu1_patch(LauncherModel* m);
 void launcher_model_skip_msu1_patch(LauncherModel* m);
 
 // ---- controllers ----
-// PSX-style pad mode: 0=Hybrid, 1=Analog, 2=D-Pad. Gated: no-op when
-// !pad_mode_selectable (mode is locked); snaps away from Hybrid when
-// !allow_hybrid.
+// PSX-style pad mode: 1=Analog, 2=D-Pad. Gated: no-op when
+// !pad_mode_selectable (mode is locked). Mode 0 (Hybrid) is NOT selectable —
+// it is a mod-only mode requested at runtime by a trusted game plugin — so a
+// stale persisted 0 snaps to Analog.
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
@@ -686,6 +690,9 @@ void launcher_model_begin_capture(LauncherModel* m, int b);
 // launcher_model_begin_capture() is slot 0. Only consoles whose bind bridge
 // stores two slots per input (N64) show slot-1 chips.
 void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot);
+// Write one bind slot (0 primary, 1 alternate) for stores that keep two.
+void launcher_binds_set_button_slot(LauncherModel* m, int player, int b,
+                                    int slot, int scancode);
 // Begin capturing the GAMEPAD bind (button or axis) for button `b` instead of
 // a keyboard scancode. Only meaningful on has_pad_binds consoles (Genesis) —
 // the UI never offers it elsewhere; a stray call is harmless (Esc cancels).

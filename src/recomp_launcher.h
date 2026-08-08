@@ -593,7 +593,6 @@ typedef struct RecompLauncherCGameInfo {
     // analog/digital art are never shown (the generic pad.tga is used).
     int            pad_mode_supported;    // 0 = no pad-mode UI at all; 1 = show the selector + swapping art
     int            pad_mode_selectable;   // 0 = hide selector, force locked_pad_mode (game.lock_mode)
-    int            allow_hybrid;          // 0 = hide the Hybrid option
     int            locked_pad_mode;       // forced mode when !pad_mode_selectable
     int            lock_device;           // 1 = hide the player controller cards entirely (fixed pad)
     // Aspect ratios offered. bit0 = 4:3 (implied/always), bit1 = 16:9, bit2 = 21:9.

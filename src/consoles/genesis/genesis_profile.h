@@ -127,10 +127,9 @@ static inline void launcher_profile_apply_genesis(RecompLauncherCGameInfo* gi) {
     gi->rom_noun = "ROM";
     // 3-Button/6-Button pad-mode selector (per player, engine PadType values).
     // The custom mode list lives on the SystemProfile row; these ABI flags
-    // just switch the selector on. allow_hybrid is a PSX-only concept.
+    // just switch the selector on.
     gi->pad_mode_supported  = 1;
     gi->pad_mode_selectable = 1;
-    gi->allow_hybrid        = 0;
     // Widescreen defaults ON at the console level (every shipped Genesis
     // recomp exposes the experimental 16:9 path); a per-game host overrides
     // to 0 when its layout isn't widescreen-capable (g_game_layout.ws_capable).
