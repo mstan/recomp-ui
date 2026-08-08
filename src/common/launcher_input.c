@@ -57,6 +57,35 @@ void launcher_input_shutdown(void) {
     for (int i = 0; i < LNG_MAX_PADS; ++i) close_open(&s_open[i]);
 }
 
+int launcher_input_gamepad_at_rest(uint32_t id) {
+    OpenPad* pad = find_open(id);
+    if (!pad || !pad->handle) return 1;  // no handle → don't block capture
+    // Stick rest band; well below the capture commit threshold (20000).
+    const int kRest = 8000;
+#if defined(LNG_SDL3)
+    for (int b = 0; b < (int)SDL_GAMEPAD_BUTTON_COUNT; ++b) {
+        if (SDL_GetGamepadButton(pad->handle, (SDL_GamepadButton)b))
+            return 0;
+    }
+    for (int a = 0; a < (int)SDL_GAMEPAD_AXIS_COUNT; ++a) {
+        const int v = (int)SDL_GetGamepadAxis(pad->handle, (SDL_GamepadAxis)a);
+        if (v <= -kRest || v >= kRest) return 0;
+    }
+#else
+    for (int b = 0; b < (int)SDL_CONTROLLER_BUTTON_MAX; ++b) {
+        if (SDL_GameControllerGetButton(
+                pad->handle, (SDL_GameControllerButton)b))
+            return 0;
+    }
+    for (int a = 0; a < (int)SDL_CONTROLLER_AXIS_MAX; ++a) {
+        const int v = (int)SDL_GameControllerGetAxis(
+            pad->handle, (SDL_GameControllerAxis)a);
+        if (v <= -kRest || v >= kRest) return 0;
+    }
+#endif
+    return 1;
+}
+
 int launcher_input_poll(LauncherPad* out, int max, int enable_gyro) {
     int n = 0;
     if (!out || max <= 0) return 0;

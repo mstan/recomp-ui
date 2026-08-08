@@ -36,19 +36,30 @@ static const ButtonDef kPsxPadButtons[] = {
 };
 #define LNG_PSX_PAD_BUTTON_COUNT ((int)(sizeof(kPsxPadButtons) / sizeof(kPsxPadButtons[0])))
 
+// Gamepad Bindings panel / Map All order: column-major (top→bottom, then
+// next column). Indices into kPsxPadButtons.
+//   Col1: D-pad + L-Stick    Col2: Face + R-Stick    Col3: Shoulders / Start
+static const int kPsxGamepadBindOrder[LNG_PSX_PAD_BUTTON_COUNT] = {
+    0, 1, 2, 3, 16, 17, 18, 19,   // Up Down Left Right / LS*
+    6, 5, 7, 4, 20, 21, 22, 23,   // Cross Circle Square Triangle / RS*
+    8, 9, 10, 11, 14, 15, 12, 13, // L1 L2 R1 R2 Start Select L3 R3
+};
+#define LNG_PSX_GAMEPAD_BIND_COLS 3
+#define LNG_PSX_GAMEPAD_BIND_ROWS 8
+
 // ---- panel composition --------------------------------------------------------
 // PSX only: adds the standalone "save" panel (WIDE, memory-card block-grid
 // UI) below the game/controller row. SNES keeps kPanelsDashboardCommon
 // unchanged — its SRAM row stays folded into the GAME card exactly as today.
 static const char* const kPanelsDashboardPsx[] = { "game", "controller", "save", NULL };
-static const char* const kPanelsSettingsPsx[]   = { "video", "audio", "system", "hotkeys", NULL };
+static const char* const kPanelsSettingsPsx[]   =
+    { "video", "audio", "input", "system", "hotkeys", NULL };
 
 // ---- ROM (disc) file-picker filter ----------------------------------------------
-// Prefer .cue (multitrack-safe). .iso is accepted and normalized to .bin/.cue
-// by prepare_disc / generate. Steam's .car is a raw disc image and can be
-// selected directly. Bare track images follow the formats with their own TOC.
+// Cue sheets only (Redump-style). Track .bin files sit beside the .cue; bare
+// .iso/.bin/.img are not offered in the picker — generate/boot need a TOC.
 static const char* const kPsxDiscPatterns[] = {
-    "*.cue", "*.iso", "*.pbp", "*.chd", "*.img", "*.bin", "*.car"
+    "*.cue",
 };
 #define LNG_PSX_DISC_PATTERN_COUNT \
     ((int)(sizeof(kPsxDiscPatterns) / sizeof(kPsxDiscPatterns[0])))
@@ -62,7 +73,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* controller */ {
         kPsxPadButtons, LNG_PSX_PAD_BUTTON_COUNT,     // real PSX pad vocabulary (Triangle/Circle/Cross/Square/L1-2/R1-2/L3/R3)
         "pad.tga", "pad_analog.tga", "pad_digital.tga",
-        /* max_players */ 5, /* PSX + multitap ceiling; game num_players may be lower */
+        /* max_players */ 8, /* dual multitap ceiling; game num_players may be lower */
         /* has_pad_mode */ 1,
     },
     // MEMCARD is PSX's real target shape (2 slots): the standalone "save" panel
@@ -97,7 +108,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* screen_kind_names */ NULL,   /* legacy Raw/CRT/Composite/Trinitron set */
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kPsxDiscPatterns, LNG_PSX_DISC_PATTERN_COUNT,
-                              "PlayStation disc (.cue preferred; .iso/.bin/.img/.car/.pbp/.chd)" },
+                              "PlayStation disc (.cue)" },
     /* renderer_labels   */ NULL,
     /* hide_audio_freq   */ 0,
     /* brand             */ "brand_psx.tga",

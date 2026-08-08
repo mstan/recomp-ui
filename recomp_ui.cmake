@@ -151,6 +151,7 @@ function(recomp_target_launcher_ui TGT)
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
+        ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX gamepad input.ini per-GUID bridge
         ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (kb+pad tables)
         ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge

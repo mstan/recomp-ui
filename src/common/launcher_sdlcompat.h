@@ -31,6 +31,7 @@
 #define SDL_EVENT_MOUSE_BUTTON_UP       SDL_MOUSEBUTTONUP
 #define SDL_EVENT_MOUSE_WHEEL           SDL_MOUSEWHEEL
 #define SDL_EVENT_GAMEPAD_BUTTON_DOWN   SDL_CONTROLLERBUTTONDOWN
+#define SDL_EVENT_GAMEPAD_BUTTON_UP     SDL_CONTROLLERBUTTONUP
 #define SDL_EVENT_GAMEPAD_AXIS_MOTION   SDL_CONTROLLERAXISMOTION
 #define SDL_EVENT_JOYSTICK_BUTTON_DOWN  SDL_JOYBUTTONDOWN
 #define SDL_EVENT_JOYSTICK_AXIS_MOTION  SDL_JOYAXISMOTION
@@ -41,9 +42,11 @@
 #define LNG_EVMOD(ev)    ((ev).key.keysym.mod)
 // gamepad button event field: SDL3 ev.gbutton.button == SDL2 ev.cbutton.button
 #define LNG_EVGBTN(ev)   ((ev).cbutton.button)
+#define LNG_EVGBTNWHICH(ev) ((ev).cbutton.which)
 // gamepad axis event fields: SDL3 ev.gaxis.{axis,value} == SDL2 ev.caxis.{axis,value}
 #define LNG_EVGAXIS(ev)     ((ev).caxis.axis)
 #define LNG_EVGAXISVAL(ev)  ((ev).caxis.value)
+#define LNG_EVGAXISWHICH(ev) ((ev).caxis.which)
 // raw joystick events (jbutton/jaxis field names are the same in SDL2/SDL3)
 #define LNG_EVJBTN(ev)      ((ev).jbutton.button)
 #define LNG_EVJBTNWHICH(ev) ((ev).jbutton.which)
@@ -69,8 +72,10 @@ typedef SDL_GameControllerButton  LNG_GamepadButton;
 #define LNG_EVSCAN(ev)   ((ev).key.scancode)
 #define LNG_EVMOD(ev)    ((ev).key.mod)
 #define LNG_EVGBTN(ev)   ((ev).gbutton.button)
+#define LNG_EVGBTNWHICH(ev) ((ev).gbutton.which)
 #define LNG_EVGAXIS(ev)     ((ev).gaxis.axis)
 #define LNG_EVGAXISVAL(ev)  ((ev).gaxis.value)
+#define LNG_EVGAXISWHICH(ev) ((ev).gaxis.which)
 #define LNG_EVJBTN(ev)      ((ev).jbutton.button)
 #define LNG_EVJBTNWHICH(ev) ((ev).jbutton.which)
 #define LNG_EVJAXIS(ev)     ((ev).jaxis.axis)

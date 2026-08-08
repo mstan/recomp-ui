@@ -5,8 +5,10 @@
 //   Linux — posix_spawn of zenity or kdialog (avoids tinyfd's popen/vfork,
 //           which SIGSEGVs from the multithreaded SDL UI thread)
 // The ImGui backend supplies an in-launcher browser when Linux has neither
-// zenity nor kdialog. Never fall through to tinyfd there: its "missing
-// software" console/xmessage fallback is not a usable file picker.
+// zenity nor kdialog, when the native dialog fails to spawn, and for the
+// first-run setup wizard on Linux (native dialogs often open behind the
+// modal). Never fall through to tinyfd there: its "missing software"
+// console/xmessage fallback is not a usable file picker.
 //
 // Deliberately SDL-version agnostic: it does not depend on SDL3's
 // SDL_ShowOpenFileDialog, so it works identically on SDL2 and SDL3.
@@ -48,6 +50,15 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap);
 // `out_path` on success.
 bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
                         const char* desc, char* out_path, size_t out_cap);
+
+// Like launcher_pick_file, but returns a tri-state so UIs can fall back to an
+// in-app browser when the native dialog cannot run:
+//   1  — path selected (out_path filled)
+//   0  — dialog ran; user cancelled (or closed without a path)
+//  -1  — no usable native backend / spawn failure (try another UI)
+int launcher_try_pick_file(const char* title, const char* const* patterns,
+                           int num_patterns, const char* desc,
+                           char* out_path, size_t out_cap);
 
 // Open the OS "save file" dialog — for choosing a DESTINATION path that need
 // not already exist (e.g. picking where to write a freshly formatted PS1

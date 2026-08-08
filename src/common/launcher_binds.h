@@ -16,6 +16,7 @@
 #define LAUNCHER_NG_BINDS_H
 
 #include "launcher_model.h"
+#include "launcher_input.h"   // LauncherPad for prepare_psx_launch
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,16 +63,50 @@ int launcher_binds_wants_pad_capture(const LauncherModel* m, int player);
 #define LNG_PADBIND_BUTTON 1   // `code` = SDL_GameControllerButton
 #define LNG_PADBIND_AXIS   2   // `code` = SDL_GameControllerAxis, `axis_dir` = +1/-1
 
-// A player button's GAMEPAD bind was captured (has_pad_binds consoles only —
-// Genesis). kind/code/axis_dir use the LNG_PADBIND_* encoding above.
-// Persists through the console's native bridge and refreshes the model's
-// pad_binds display string. No-op on consoles without a pad-bind store.
+// A player button's GAMEPAD bind was captured (Genesis has_pad_binds, or PSX
+// Gamepad Bindings panel keyed by the player's selected gamepad GUID).
+// kind/code/axis_dir use the LNG_PADBIND_* encoding above. Persists through
+// the console's native bridge and refreshes the model's pad_binds display
+// string. No-op on consoles without a pad-bind store.
 void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
                                    int kind, int code, int axis_dir);
 
 // Reset one player's keyboard bindings to defaults and persist.
 // (N64: resets the whole device TABLE the player's source selects.)
 void launcher_binds_reset_player(LauncherModel* m, int player);
+
+// ---- PSX gamepad registry (input.ini [gamepads] + [mapping.<guid>]) --------
+// Save Profile: persist this player's selected gamepad name, custom-name flag,
+// deadzone, and button mappings into input.ini.
+void launcher_binds_save_psx_gamepad(LauncherModel* m, int player /*1-based*/);
+// Rename the selected gamepad (custom display name for the GUID).
+void launcher_binds_rename_psx_gamepad(LauncherModel* m, int player /*1-based*/,
+                                       const char* name);
+// Apply a GUID profile's saved deadzone (+ display name) onto the player slot.
+void launcher_binds_apply_psx_pad_profile(LauncherModel* m, int player /*0-based*/);
+// Remove that player's selected GUID from input.ini; caller should also switch
+// the input source to Keyboard.
+void launcher_binds_delete_psx_gamepad(LauncherModel* m, int player /*1-based*/);
+// On LAUNCH: for every PSX player with a gamepad source, persist default (or
+// current) mappings + registry name so the pad is remembered and works in-game
+// even if the user never opened Map/Save. Resolves a bare "Gamepad" (no GUID)
+// via `pads` when possible.
+void launcher_binds_prepare_psx_launch(LauncherModel* m,
+                                       const LauncherPad* pads, int pad_count);
+// Hydrate player_pad_name from the registry when settings restored a GUID.
+void launcher_binds_hydrate_psx_pad_names(LauncherModel* m);
+// Per-frame: match player GUIDs to live pads (refresh name/id), learn names
+// into the [gamepads] registry, and resolve a bare gamepad source (no GUID)
+// onto a specific live/saved pad. Never leaves the label as generic "Gamepad"
+// when a concrete device can be named.
+void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
+                                         const LauncherPad* pads, int pad_count);
+// Enumerate previously saved PSX gamepads (for the Input source dropdown).
+int launcher_binds_psx_known_count(void);
+int launcher_binds_psx_known_at(int index, char* guid, int guid_cap,
+                                char* name, int name_cap);
+// 1 if the GUID has a user-chosen display name (Rename Gamepad).
+int launcher_binds_psx_name_is_custom(const char* guid);
 
 // A system hotkey was rebound. `keycode` is an SDL_Keycode, `kmod` the SDL
 // modifier mask; pass keycode==0 to UNBIND. Persists to config.ini [KeyMap]

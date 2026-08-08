@@ -117,6 +117,10 @@ typedef struct {
     char region[8];    // e.g. "NTSC-U"; "" => unknown/unread
     bool iso_ok;        // ISO9660/system header sanity check passed
     int  verdict;       // 0 none, 1 ok, 2 warn, 3 bad
+    int  track_count;   // mounted TOC track count (0 if unknown)
+    int  netplay_ok;    // 1 = OK for online; 0 = TOC/cue policy failed
+    char disc_fp[65];   // TOC fingerprint for lobby peer matching
+    char netplay_detail[160];
 } VerifyResult;
 
 typedef struct {
@@ -194,6 +198,16 @@ typedef struct {
                                     char* err_msg, size_t err_cap,
                                     RecompLauncherCPrepareProgressFn on_progress,
                                     void* progress_ctx);
+    int (*pgo_optimize_with_progress_cb)(const char* rom_path,
+                                         char* out_exe_path, size_t out_cap,
+                                         char* err_msg, size_t err_cap,
+                                         RecompLauncherCPrepareProgressFn on_progress,
+                                         void* progress_ctx);
+    int (*fmv_timing_optimize_with_progress_cb)(const char* rom_path,
+                                                char* out_exe_path, size_t out_cap,
+                                                char* err_msg, size_t err_cap,
+                                                RecompLauncherCPrepareProgressFn on_progress,
+                                                void* progress_ctx);
     const char* prepare_disc_label;   // borrowed; NULL => default button text
     const char* prepare_disc_note;    // borrowed; NULL => default help
     const char* prepare_section_title;   // borrowed; NULL => "Convert raw dump…"
@@ -201,6 +215,10 @@ typedef struct {
     const char* prepare_success_status;  // borrowed; NULL => "Disc ready."
     const char* rebuild_busy_status;     // borrowed; NULL => "Building game…"
     const char* rebuild_success_status;  // borrowed; NULL => "Build complete."
+    const char* pgo_busy_status;         // borrowed; NULL => "Optimizing FMV…"
+    const char* pgo_success_status;      // borrowed; NULL => "FMV optimize complete."
+    const char* fmv_timing_busy_status;  // borrowed; NULL => "Applying FMV timing…"
+    const char* fmv_timing_success_status; // borrowed; NULL => "FMV timing applied."
     bool        prepare_use_selected_rom; // button uses current ROM (no 2nd picker)
     bool        rebuild_after_prepare;
     bool        relaunch_after_rebuild;
@@ -210,6 +228,8 @@ typedef struct {
     int (*ensure_toolchain_with_progress_cb)(
         int download, const char* zip_path, char* err_msg, size_t err_cap,
         RecompLauncherCPrepareProgressFn on_progress, void* progress_ctx);
+    int (*toolchain_update_available_cb)(char* local_ver, size_t local_cap,
+                                         char* remote_ver, size_t remote_cap);
     bool        setup_prepare_satisfied; // prepare (+ rebuild if chained) succeeded
     char        relaunch_exe[512];       // set when rebuild requests relaunch
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
@@ -251,6 +271,8 @@ typedef struct {
     bool has_sharp_filter;
     bool has_affine_filter;
     bool netplay_supported;
+    /* Host opted into first-run wizard + Generate & rebuild (GameInfo). */
+    bool setup_wizard_supported;
     const RecompLauncherCNetplayCallbacks* netplay;
     const RecompLauncherCModProvider* mods;
     int       mod_selected;
@@ -270,6 +292,9 @@ typedef struct {
     // Number of players the GAME actually supports. Mega Man X is 1-player, so
     // the launcher must not show a dead Player 2 row. Games that support 2
     // report 2 and the second row appears. Driven by data, never hardcoded.
+    // Netplay host Max Players and lobby ceilings use this full capability.
+    // Dashboard controller cards use launcher_model_visible_player_count()
+    // (PSX multitap may hide seats 5+).
     int         player_count;
 
     // ---- ROM verification ----
@@ -348,14 +373,30 @@ typedef struct {
     LngAction action;
     int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
+    bool      pgo_confirm_open;      // SYSTEM → VIDEO → Optimize FMV confirm
+    bool      fmv_timing_confirm_open; // SYSTEM → VIDEO → Apply FMV Timing confirm
     bool      setup_wizard_open;     // first-run BIOS/ROM setup (blocking)
     int       setup_page;            // 0 = toolchain, 1 = BIOS/ROM/generate
     bool      setup_tc_auto;         // download portable toolchain (default true)
     bool      setup_tc_ready;        // toolchain resolved / installed
+    bool      setup_tc_update_available; // remote latest newer than local
+    bool      setup_tc_update_skipped;   // user skipped update this session
+    char      setup_tc_local_ver[64];
+    char      setup_tc_remote_ver[64];
     char      setup_tc_zip[512];     // offline cmake-clang-v1 zip when !auto
     bool      setup_bios_ok;         // last bios_verify_cb result (or path-only ok)
     bool      setup_bios_warn;
+    bool      setup_bios_needs_regen; // valid dump but not linked in this binary
     char      setup_bios_detail[256];
+    /* Confirm before persisting a BIOS switch that requires Generate & rebuild. */
+    bool      bios_confirm_open;
+    char      bios_pending_path[512]; // "" = OpenBIOS; absolute otherwise
+    /* Staged BIOS switch: sidecars updated for the generate CLI, but reverted
+     * if prepare/rebuild fails so a failed job does not stick the new pick. */
+    bool      bios_switch_uncommitted;
+    char      bios_revert_path[512];
+    /* Play blocked because saved BIOS is not linked — offer Generate / OpenBIOS. */
+    bool      bios_play_modal_open;
     bool      setup_preparing;       // prepare/rebuild/toolchain job in flight
     float     setup_prepare_pulse;   // 0..1 animation phase while preparing
     float     setup_prepare_fraction; // 0..1 real progress, or <0 for pulse-only
@@ -392,12 +433,18 @@ typedef struct {
     /* When false (default), host picks delay from max peer RTT at match start.
      * When true, netplay_lobby_input_delay is used as-is. */
     bool      netplay_manual_input_delay;
+    /* Invent runway P (rollback). Engine clamps 2..16. */
+    int       netplay_lobby_input_prediction;
+    /* When false (default), host picks P from RTT at match start (rollback). */
+    bool      netplay_manual_input_prediction;
     /* STUN / host external_ip cache for LAN lobby Public IP field. */
     char      netplay_public_ip[64];
     bool      netplay_public_ip_resolved;
-    /* Kept for host ABI / match_caps defaults (no longer exposed in Lobby Settings). */
+    /* Lobby UDP SFU (online default). Not exposed in Lobby Settings; LAN clears. */
     bool      netplay_force_input_relay;
     bool      netplay_force_turn;
+    /* True = rollback invent path (lobby default). UI exposes “Disable Rollback”. */
+    bool      netplay_rollback;
     /* Host Lobby: desired max seats (2..min(8, game player_count)). */
     int       netplay_host_max_players;
     /* Active room seat ceiling after create/join (0 = use game player_count). */
@@ -415,10 +462,17 @@ typedef struct {
                                  // 1 only for consoles with two bind slots per
                                  // input — N64's input.cfg format)
     // When capturing, whether the GAMEPAD bind (button/axis) is being captured
-    // instead of the keyboard scancode — only reachable on consoles whose
-    // ControllerSpec sets has_pad_binds (Genesis; the engine stores a gamepad
-    // button/axis bind per logical button alongside the keyboard scancode).
+    // instead of the keyboard scancode — Genesis has_pad_binds, and PSX's
+    // Gamepad Bindings panel (per selected GUID).
     bool      capture_pad;
+    // PSX Gamepad Bindings: sequential Map All Bindings walk (column-major
+    // order in kPsxGamepadBindOrder). map_all_step indexes that order array.
+    // map_all_wait_release ignores further presses until the whole pad is at
+    // rest (all buttons up, all axes near center) so a held stick/button
+    // cannot auto-bind the next slot on every AXIS_MOTION.
+    bool      map_all_active;
+    bool      map_all_wait_release;
+    int       map_all_step;
     bool      camera_capturing;  // capturing an enabled Voxel camera key
     int       capture_camera;    // LNG_CAMERA_* index
     bool      hk_capturing;      // capturing a system hotkey
@@ -539,6 +593,22 @@ const char* launcher_model_language_label(const LauncherModel* m);
 void launcher_model_cycle_deadzone_pct(LauncherModel* m);      // 0..50 step 5, wraps; mirrors both players
 const char* launcher_model_deadzone_pct_label(const LauncherModel* m);  // "37%"
 void launcher_model_set_bios_path(LauncherModel* m, const char* path);
+/* Request a BIOS change.
+ * - OpenBIOS (empty path): always applies immediately when allowed — never
+ *   requires Generate & rebuild.
+ * - Retail already linked in this binary: hot-swap immediately.
+ * - Retail valid but not linked yet: confirm Generate & rebuild. */
+void launcher_model_request_bios_path(LauncherModel* m, const char* path);
+/* Confirm accept: save pending BIOS and kick Generate & rebuild (no wizard). */
+void launcher_model_bios_confirm_accept(LauncherModel* m);
+void launcher_model_bios_confirm_cancel(LauncherModel* m);
+/* Play clicked while setup_bios_needs_regen (or !ok with a saved path). */
+void launcher_model_bios_play_prompt(LauncherModel* m);
+void launcher_model_bios_play_use_openbios(LauncherModel* m);
+void launcher_model_bios_play_generate(LauncherModel* m);
+void launcher_model_bios_play_cancel(LauncherModel* m);
+/* True when ROM/disc looks ready but BIOS needs Generate & rebuild. */
+bool launcher_model_bios_blocks_play(const LauncherModel* m);
 
 // ---- SRAM save management (Import/Clear; both back up to "<sram>.bak" first) ----
 void launcher_model_import_sram(LauncherModel* m, const char* src);
@@ -554,6 +624,19 @@ void launcher_model_toggle_memcard(LauncherModel* m, int slot);
 // any host project's runtime headers), then adopt it as the slot's path. A
 // no-op (path left untouched) if the format write fails.
 void launcher_model_new_memcard(LauncherModel* m, int slot, const char* path);
+
+// ---- PSX multitap (3+ player seats on the controller dashboard) ---------
+// Available when the active profile is PSX and player_count >= 3. When off,
+// visible_player_count clamps to 2 (native dual ports); netplay still uses
+// full player_count / slot_count.
+int  launcher_model_multitap_available(const LauncherModel* m);
+int  launcher_model_multitap_enabled(const LauncherModel* m);
+void launcher_model_toggle_multitap(LauncherModel* m);
+int  launcher_model_visible_player_count(const LauncherModel* m);
+/* DualShock-on-tap hack UI (PSX, player_count >= 3). */
+int  launcher_model_multitap_analog_available(const LauncherModel* m);
+int  launcher_model_multitap_analog_enabled(const LauncherModel* m);
+void launcher_model_toggle_multitap_analog(LauncherModel* m);
 
 // ---- N64 Transfer Pak slots (tpak_slots only; no-op guarded by slot range) ----
 // Adopt a GB cartridge ROM for one port's Transfer Pak. Re-runs the host's
@@ -653,6 +736,9 @@ void launcher_model_set_gyro_sensitivity(LauncherModel* m, float value);
 bool launcher_model_can_finish_setup(const LauncherModel* m);
 // True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
 bool launcher_model_can_launch(const LauncherModel* m);
+// True when the mounted disc is OK for online (TOC/cue policy + content).
+// Non-disc games (verify.mode!=1) always return true when netplay is supported.
+bool launcher_model_netplay_disc_ok(const LauncherModel* m);
 // Re-run bios_verify_cb against m->s.bios_path. Empty path means "bundled
 // BIOS" — OK unless the host verifier refuses "".
 void launcher_model_refresh_bios_status(LauncherModel* m);
@@ -662,11 +748,21 @@ void launcher_model_refresh_bios_status(LauncherModel* m);
 void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
 // Kick rebuild_with_progress alone (same busy UI as prepare).
 void launcher_model_start_rebuild(LauncherModel* m);
+// Confirm + kick pgo_optimize_with_progress (instrument → train → use rebuild).
+void launcher_model_request_pgo_optimize(LauncherModel* m);
+void launcher_model_pgo_confirm_accept(LauncherModel* m);
+void launcher_model_pgo_confirm_cancel(LauncherModel* m);
+void launcher_model_request_fmv_timing_optimize(LauncherModel* m);
+void launcher_model_fmv_timing_confirm_accept(LauncherModel* m);
+void launcher_model_fmv_timing_confirm_cancel(LauncherModel* m);
 // Kick ensure_toolchain_with_progress (download and/or offline zip). On success
 // advances setup_page to the BIOS/ROM/generate step.
 void launcher_model_start_ensure_toolchain(LauncherModel* m);
-// True when Next on the toolchain page can run (auto, zip path, or already ready).
+// True when Next on the toolchain page can run (auto, zip path, already ready,
+// or an update is available with auto-download / zip selected).
 bool launcher_model_can_advance_toolchain(const LauncherModel* m);
+// Keep the current pack for this session and leave toolchain page 0.
+void launcher_model_skip_toolchain_update(LauncherModel* m);
 // Poll prepare/rebuild/toolchain job; call once per frame while setup_preparing.
 void launcher_model_poll_prepare_disc(LauncherModel* m);
 // Dismiss the wizard once can_finish_setup is true (keeps dashboard).
@@ -687,9 +783,13 @@ void launcher_model_begin_capture(LauncherModel* m, int b);
 // stores two slots per input (N64) show slot-1 chips.
 void launcher_model_begin_capture_slot(LauncherModel* m, int b, int slot);
 // Begin capturing the GAMEPAD bind (button or axis) for button `b` instead of
-// a keyboard scancode. Only meaningful on has_pad_binds consoles (Genesis) —
-// the UI never offers it elsewhere; a stray call is harmless (Esc cancels).
+// a keyboard scancode. Used by Genesis has_pad_binds and the PSX Gamepad
+// Bindings panel. Esc cancels.
 void launcher_model_begin_pad_capture(LauncherModel* m, int b);
+// PSX: start Map All Bindings (walk kPsxGamepadBindOrder, one capture each).
+void launcher_model_begin_map_all(LauncherModel* m);
+// After a successful pad capture during Map All: advance or finish.
+void launcher_model_map_all_advance(LauncherModel* m);
 void launcher_model_cancel_capture(LauncherModel* m);
 // ---- hotkey capture ----
 void launcher_model_begin_hk_capture(LauncherModel* m, LngHotkey h);

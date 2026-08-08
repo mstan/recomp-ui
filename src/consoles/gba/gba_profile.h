@@ -79,7 +79,7 @@ static const SystemProfile kSystemProfileGba = {
     /* controller */ {
         kGbaPadButtons, LNG_GBA_PAD_BUTTON_COUNT,
         "pad_gba.tga", NULL, NULL,     // handheld art; no analog/digital pair
-        /* max_players */ 1, /* has_pad_mode */ 0,
+        /* max_players */ 1, /* has_pad_mode */ 0, /* link netplay is lobby-only */
     },
     // One battery save per cartridge: the runtime presents EEPROM/flash/SRAM
     // uniformly as a single .sav next to the ROM (or game.toml [save].path).
@@ -124,7 +124,7 @@ static inline void launcher_profile_apply_gba(RecompLauncherCGameInfo* gi) {
     gi->theme    = "gba";              // indigo LCD theme, no CRT scanlines
     gi->platform = "GAME BOY ADVANCE";
     gi->rom_noun = "ROM";
-    gi->num_players = 1;               // handheld: one player (no link cable yet)
+    gi->num_players = 1;               // one pad card; LAN lobby seats via netplay callbacks
     // GBA settings surface: integer window scale + linear filter (base rows),
     // LCD screen-model cycle, fullscreen-on-launch, and the BIOS path picker
     // (gbarecomp is LLE-BIOS by default — a real BIOS image is required).
