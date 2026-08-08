@@ -5,6 +5,7 @@
 #include "keybinds.h"             // engine keyboard-binding store
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
+#include "consoles/psx/psx_pad_binds.h" // PSX gamepad input.ini per-GUID bridge
 #include "consoles/n64/n64_binds.h"   // N64-native input.cfg bridge (kb+pad tables)
 #include "consoles/nes/nes_binds.h"   // NES-native keybind bridge (nesrecomp keybinds.c format)
 #include "consoles/genesis/genesis_binds.h"   // Genesis-native bridge (settings.ini [input.pN])
@@ -86,6 +87,35 @@ static const char* keybinds_file_path(void) {
              ? g_launcher_keybinds_path : "keybinds.ini";
 }
 
+// input.ini lives next to keybinds.ini (same exe dir the runtime uses).
+static const char* psx_input_ini_path(void) {
+    static char buf[1024];
+    const char* kb = keybinds_file_path();
+    const char* slash = strrchr(kb, '/');
+#ifdef _WIN32
+    const char* bslash = strrchr(kb, '\\');
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
+    if (!slash) {
+        snprintf(buf, sizeof(buf), "input.ini");
+        return buf;
+    }
+    size_t dir_len = (size_t)(slash - kb + 1);
+    if (dir_len >= sizeof(buf)) dir_len = sizeof(buf) - 1;
+    memcpy(buf, kb, dir_len);
+    buf[dir_len] = '\0';
+    strncat(buf, "input.ini", sizeof(buf) - strlen(buf) - 1);
+    return buf;
+}
+
+static const char* psx_player_guid(const LauncherModel* m, int player /*1-based*/) {
+    if (!m || player < 1 || player > LNG_MAX_PLAYERS) return "";
+    return m->s.player_gamepad_guid[player - 1];
+}
+
+/* Defined below; load() hydrates names after init. */
+void launcher_binds_hydrate_psx_pad_names(LauncherModel* m);
+
 // ---- N64-native input.cfg bridge --------------------------------------------
 // Lives in consoles/n64/n64_binds.c. The N64 runners persist bindings in
 // their own input.cfg format — TWO device-type tables (keyboard, controller —
@@ -148,12 +178,15 @@ static const char* genesis_binds_file_path(void) {
 static const char* kHotkeyKey[LNG_HK_COUNT] = {
     "Fullscreen", "Reset", "Pause", "PauseDimmed", "Turbo",
     "WindowBigger", "WindowSmaller", "VolumeUp", "VolumeDown",
-    "DisplayPerf", "ToggleRenderer"
+    "DisplayPerf", "ToggleRenderer",
+    "SolarBrighter", "SolarDimmer", "SolarLive"
 };
 // Built-in defaults (shown when config.ini has no line; "" = unbound).
 static const char* kHotkeyDef[LNG_HK_COUNT] = {
     "Alt+Return", "Ctrl+R", "Shift+P", "P", "Tab",
-    "", "", "", "", "F", "R"
+    /* WindowBigger/Smaller unbound; VolumeUp/Down = numpad +/- (MotK runtime). */
+    "", "", "Keypad +", "Keypad -", "F", "R",
+    "", "", ""
 };
 
 static void copy_str(char* d, size_t cap, const char* s) {
@@ -189,10 +222,15 @@ static void genesis_pad_label(int kind, int code, int axis_dir, char* out, size_
 static void reload_player_display(LauncherModel* m, int player) {
     if (is_psx_profile(m)) {
         if (player < 1 || player > LNG_MAX_PLAYERS) return;
-        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b)
+        const char* guid = psx_player_guid(m, player);
+        for (int b = 0; b < LNG_PSX_PAD_BUTTON_COUNT; ++b) {
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_psx_binds_get(
                          keybinds_file_path(), player - 1, b)));
+            rui_psx_pad_binds_label(psx_input_ini_path(), guid, b,
+                                    m->pad_binds[player - 1][b],
+                                    (int)sizeof(m->pad_binds[player - 1][b]));
+        }
         return;
     }
     if (is_nes_profile(m)) {
@@ -243,6 +281,16 @@ static void reload_player_display(LauncherModel* m, int player) {
     for (int b = 0; b < n; ++b) {
         SDL_Scancode sc = recompui_keybinds_get_button(player, kb_index[b]);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]), scancode_label(sc));
+    }
+}
+
+void launcher_binds_refresh_camera(LauncherModel* m) {
+    if (!m || !is_nes_profile(m)) return;
+    for (int action = 0; action < LNG_CAMERA_BIND_COUNT; ++action) {
+        copy_str(
+            m->camera_binds[action], sizeof(m->camera_binds[action]),
+            scancode_label((SDL_Scancode)rui_nes_camera_bind_get(
+                keybinds_file_path(), action)));
     }
 }
 
@@ -416,6 +464,8 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
     g_launcher_keybinds_path = keybinds_path_in;
     if (is_psx_profile(m)) {
         rui_psx_binds_init(keybinds_file_path());   // load/generate psx_keybinds.c-format keybinds.ini
+        rui_psx_pad_binds_init(psx_input_ini_path()); // gamepad maps (input.ini)
+        launcher_binds_hydrate_psx_pad_names(m);
     } else if (is_n64_profile(m)) {
         rui_n64_binds_init(n64_binds_file_path());      // load input.cfg (defaults if absent; never seeds the file)
     } else if (is_nes_profile(m)) {
@@ -434,6 +484,7 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
     launcher_binds_refresh(m);
+    launcher_binds_refresh_camera(m);
     reload_hotkey_display(m);
 }
 
@@ -452,6 +503,21 @@ int launcher_binds_wants_pad_capture(const LauncherModel* m, int player) {
 // Called by launcher_model_toggle_zapper_* on every flip.
 void launcher_binds_set_zapper(int mouse_enabled, int crosshair) {
     rui_nes_zapper_set(keybinds_file_path(), mouse_enabled, crosshair);
+}
+
+void launcher_binds_set_camera(LauncherModel* m, int action, int scancode) {
+    if (!m || !is_nes_profile(m) ||
+        action < 0 || action >= LNG_CAMERA_BIND_COUNT)
+        return;
+    rui_nes_camera_bind_set(keybinds_file_path(), action, scancode);
+    copy_str(m->camera_binds[action], sizeof(m->camera_binds[action]),
+             scancode_label((SDL_Scancode)scancode));
+}
+
+void launcher_binds_reset_camera(LauncherModel* m) {
+    if (!m || !is_nes_profile(m)) return;
+    rui_nes_camera_bind_reset(keybinds_file_path());
+    launcher_binds_refresh_camera(m);
 }
 
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {
@@ -514,15 +580,299 @@ void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
 
 void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
                                    int kind, int code, int axis_dir) {
-    if (player < 1 || player > 2) return;
-    // Gamepad binds only exist on the Genesis bridge today (has_pad_binds
-    // consoles). Every other profile's store is scancode-only — no-op there
-    // (the UI never offers the control outside has_pad_binds).
+    if (player < 1 || player > LNG_MAX_PLAYERS) return;
+    if (is_psx_profile(m)) {
+        if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
+        const char* guid = psx_player_guid(m, player);
+        if (!guid[0]) return;
+        rui_psx_pad_binds_set(psx_input_ini_path(), guid, b, kind, code, axis_dir);
+        // Keep the pad registered (name/deadzone unchanged unless first create).
+        rui_psx_pad_binds_remember(psx_input_ini_path(), guid,
+                                   m->player_pad_name[player - 1], -1);
+        rui_psx_pad_binds_label(psx_input_ini_path(), guid, b,
+                                m->pad_binds[player - 1][b],
+                                (int)sizeof(m->pad_binds[player - 1][b]));
+        return;
+    }
+    // Genesis: has_pad_binds console (key + pad pair per logical button).
     if (!is_genesis_profile(m)) return;
+    if (player > 2) return;
     if (b < 0 || b >= LNG_GENESIS_PAD_BUTTON_COUNT) return;
     rui_genesis_binds_set_pad(genesis_binds_file_path(), player - 1, b, kind, code, axis_dir);
     genesis_pad_label(kind, code, axis_dir,
                       m->pad_binds[player - 1][b], sizeof(m->pad_binds[player - 1][b]));
+}
+
+static int psx_guid_claimed_by_other(const LauncherModel* m, int self,
+                                     const char* guid) {
+    if (!m || !guid || !guid[0]) return 0;
+    for (int o = 0; o < LNG_MAX_PLAYERS; ++o) {
+        if (o == self) continue;
+        if (m->s.player_src[o] == 2 && m->s.player_gamepad_guid[o][0] &&
+            !strcmp(m->s.player_gamepad_guid[o], guid))
+            return 1;
+    }
+    return 0;
+}
+
+static void psx_fallback_pad_label(const char* guid, char* out, size_t cap) {
+    if (!out || !cap) return;
+    if (guid && guid[0]) {
+        size_t n = strlen(guid);
+        if (n >= 8)
+            snprintf(out, cap, "Controller …%s", guid + n - 8);
+        else
+            snprintf(out, cap, "Controller %s", guid);
+        return;
+    }
+    copy_str(out, cap, "Controller");
+}
+
+void launcher_binds_hydrate_psx_pad_names(LauncherModel* m) {
+    if (!m || !is_psx_profile(m)) return;
+    const char* path = psx_input_ini_path();
+    for (int p = 0; p < LNG_MAX_PLAYERS; ++p) {
+        if (m->s.player_src[p] != 2) continue;
+        const char* guid = m->s.player_gamepad_guid[p];
+        if (!guid[0]) continue;
+        if (m->player_pad_name[p][0] &&
+            strcmp(m->player_pad_name[p], "Gamepad") != 0)
+            continue;
+        rui_psx_pad_binds_name(path, guid, m->player_pad_name[p],
+                               (int)sizeof(m->player_pad_name[p]));
+        if (!m->player_pad_name[p][0] ||
+            !strcmp(m->player_pad_name[p], "Gamepad"))
+            psx_fallback_pad_label(guid, m->player_pad_name[p],
+                                   sizeof(m->player_pad_name[p]));
+    }
+}
+
+void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
+                                         const LauncherPad* pads, int pad_count) {
+    if (!m || !is_psx_profile(m)) return;
+    const char* path = psx_input_ini_path();
+    const int nplayers = launcher_model_visible_player_count(m);
+
+    for (int p = 0; p < nplayers; ++p) {
+        if (m->s.player_src[p] != 2) continue;
+
+        // Legacy device="gamepad" with no GUID: pin to a concrete pad.
+        if (!m->s.player_gamepad_guid[p][0]) {
+            int chosen = -1;
+            if (pads && pad_count > 0) {
+                for (int i = 0; i < pad_count; ++i) {
+                    if (!pads[i].guid[0]) continue;
+                    if (psx_guid_claimed_by_other(m, p, pads[i].guid)) continue;
+                    chosen = i;
+                    break;
+                }
+                if (chosen < 0) chosen = 0;
+                launcher_model_set_source(m, p, 2, pads[chosen].id,
+                                          pads[chosen].name, pads[chosen].guid);
+            } else {
+                const int known = rui_psx_pad_binds_known_count(path);
+                for (int i = 0; i < known; ++i) {
+                    char guid[40] = {}, name[64] = {};
+                    if (!rui_psx_pad_binds_known_at(path, i, guid, (int)sizeof(guid),
+                                                    name, (int)sizeof(name)))
+                        continue;
+                    if (psx_guid_claimed_by_other(m, p, guid)) continue;
+                    if (!name[0] || !strcmp(name, "Gamepad"))
+                        psx_fallback_pad_label(guid, name, sizeof(name));
+                    launcher_model_set_source(m, p, 2, 0, name, guid);
+                    break;
+                }
+            }
+        }
+
+        const char* guid = m->s.player_gamepad_guid[p];
+        if (!guid[0]) continue;
+
+        // Prefer the live SDL name when this GUID is connected.
+        int live = -1;
+        if (pads) {
+            for (int i = 0; i < pad_count; ++i) {
+                if (pads[i].guid[0] && !strcmp(pads[i].guid, guid)) {
+                    live = i;
+                    break;
+                }
+            }
+        }
+        const int custom = rui_psx_pad_binds_name_is_custom(path, guid);
+        if (live >= 0) {
+            m->player_pad_id[p] = pads[live].id;
+            if (custom) {
+                // Keep the user's rename in the model / dropdown.
+                char reg[64] = {};
+                rui_psx_pad_binds_name(path, guid, reg, (int)sizeof(reg));
+                if (reg[0])
+                    copy_str(m->player_pad_name[p],
+                             sizeof(m->player_pad_name[p]), reg);
+            } else if (pads[live].name[0] &&
+                       strcmp(pads[live].name, "Gamepad") != 0) {
+                const int name_changed =
+                    strcmp(m->player_pad_name[p], pads[live].name) != 0;
+                copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]),
+                         pads[live].name);
+                if (name_changed)
+                    rui_psx_pad_binds_remember(path, guid, pads[live].name, -1);
+            }
+            continue;
+        }
+
+        // Disconnected: registry name, else a non-generic fallback.
+        char reg[64] = {};
+        rui_psx_pad_binds_name(path, guid, reg, (int)sizeof(reg));
+        if (reg[0] && strcmp(reg, "Gamepad") != 0)
+            copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]), reg);
+        else if (!m->player_pad_name[p][0] ||
+                 !strcmp(m->player_pad_name[p], "Gamepad"))
+            psx_fallback_pad_label(guid, m->player_pad_name[p],
+                                   sizeof(m->player_pad_name[p]));
+        m->player_pad_id[p] = 0;
+    }
+}
+
+void launcher_binds_apply_psx_pad_profile(LauncherModel* m, int player) {
+    if (!m || !is_psx_profile(m)) return;
+    player = (player < 0) ? 0 : (player >= LNG_MAX_PLAYERS ? LNG_MAX_PLAYERS - 1
+                                                           : player);
+    if (m->s.player_src[player] != 2) return;
+    const char* guid = m->s.player_gamepad_guid[player];
+    if (!guid[0]) return;
+    const char* path = psx_input_ini_path();
+    char name[64] = {};
+    rui_psx_pad_binds_name(path, guid, name, (int)sizeof(name));
+    if (name[0] && strcmp(name, "Gamepad") != 0)
+        copy_str(m->player_pad_name[player], sizeof(m->player_pad_name[player]),
+                 name);
+    m->s.deadzone[player] = rui_psx_pad_binds_deadzone(path, guid);
+    reload_player_display(m, player + 1);
+}
+
+void launcher_binds_rename_psx_gamepad(LauncherModel* m, int player,
+                                       const char* name) {
+    if (!m || !is_psx_profile(m) || !name || !name[0]) return;
+    if (player < 1 || player > LNG_MAX_PLAYERS) return;
+    const int p = player - 1;
+    const char* guid = m->s.player_gamepad_guid[p];
+    if (!guid[0]) return;
+    rui_psx_pad_binds_rename(psx_input_ini_path(), guid, name);
+    copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]), name);
+}
+
+void launcher_binds_save_psx_gamepad(LauncherModel* m, int player) {
+    if (!m || !is_psx_profile(m)) return;
+    if (player < 1 || player > LNG_MAX_PLAYERS) return;
+    const int p = player - 1;
+    if (m->s.player_src[p] != 2) return;
+    const char* guid = m->s.player_gamepad_guid[p];
+    if (!guid[0]) return;
+    const char* path = psx_input_ini_path();
+    char name[64];
+    if (m->player_pad_name[p][0] && strcmp(m->player_pad_name[p], "Gamepad") != 0)
+        copy_str(name, sizeof(name), m->player_pad_name[p]);
+    else
+        psx_fallback_pad_label(guid, name, sizeof(name));
+    const int custom = rui_psx_pad_binds_name_is_custom(path, guid);
+    int dz = m->s.deadzone[p];
+    if (dz < 0) dz = 0;
+    if (dz > 100) dz = 100;
+    rui_psx_pad_binds_save_profile(path, guid, name, custom, dz);
+    copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]), name);
+    reload_player_display(m, player);
+}
+
+void launcher_binds_delete_psx_gamepad(LauncherModel* m, int player) {
+    if (!m || !is_psx_profile(m)) return;
+    if (player < 1 || player > LNG_MAX_PLAYERS) return;
+    const char* guid = psx_player_guid(m, player);
+    if (!guid[0]) return;
+    rui_psx_pad_binds_delete(psx_input_ini_path(), guid);
+    // Clear any other players that pointed at the same GUID.
+    for (int p = 0; p < LNG_MAX_PLAYERS; ++p) {
+        if (m->s.player_src[p] == 2 &&
+            m->s.player_gamepad_guid[p][0] &&
+            !strcmp(m->s.player_gamepad_guid[p], guid)) {
+            launcher_model_set_source(m, p, 1, 0, NULL, NULL);
+        }
+    }
+    launcher_binds_refresh(m);
+}
+
+void launcher_binds_prepare_psx_launch(LauncherModel* m,
+                                       const LauncherPad* pads, int pad_count) {
+    if (!m || !is_psx_profile(m)) return;
+    const char* path = psx_input_ini_path();
+    for (int p = 0; p < LNG_MAX_PLAYERS; ++p) {
+        if (m->s.player_src[p] != 2) continue;
+        // Bare "Gamepad" (legacy auto): pin to a live pad when available so
+        // settings.toml stores a real GUID and input.ini gets a mapping.
+        if (!m->s.player_gamepad_guid[p][0] && pads && pad_count > 0) {
+            // Prefer a pad not already claimed by an earlier player.
+            int chosen = -1;
+            for (int i = 0; i < pad_count; ++i) {
+                int claimed = 0;
+                for (int o = 0; o < p; ++o) {
+                    if (m->s.player_src[o] == 2 &&
+                        m->s.player_gamepad_guid[o][0] &&
+                        !strcmp(m->s.player_gamepad_guid[o], pads[i].guid)) {
+                        claimed = 1;
+                        break;
+                    }
+                }
+                if (!claimed) { chosen = i; break; }
+            }
+            if (chosen < 0) chosen = 0;
+            launcher_model_set_source(m, p, 2, pads[chosen].id,
+                                      pads[chosen].name, pads[chosen].guid);
+        }
+        const char* guid = m->s.player_gamepad_guid[p];
+        if (!guid[0]) continue;
+        char name[64];
+        const int custom = rui_psx_pad_binds_name_is_custom(path, guid);
+        if (custom) {
+            rui_psx_pad_binds_name(path, guid, name, (int)sizeof(name));
+            if (!name[0])
+                psx_fallback_pad_label(guid, name, sizeof(name));
+        } else if (m->player_pad_name[p][0] &&
+                   strcmp(m->player_pad_name[p], "Gamepad") != 0) {
+            copy_str(name, sizeof(name), m->player_pad_name[p]);
+        } else {
+            psx_fallback_pad_label(guid, name, sizeof(name));
+        }
+        if (!custom && pads) {
+            for (int i = 0; i < pad_count; ++i) {
+                if (pads[i].guid[0] && !strcmp(pads[i].guid, guid) &&
+                    pads[i].name[0]) {
+                    copy_str(name, sizeof(name), pads[i].name);
+                    copy_str(m->player_pad_name[p],
+                             sizeof(m->player_pad_name[p]), name);
+                    m->player_pad_id[p] = pads[i].id;
+                    break;
+                }
+            }
+        }
+        int dz = m->s.deadzone[p];
+        if (dz < 0) dz = 0;
+        if (dz > 100) dz = 100;
+        rui_psx_pad_binds_save_profile(path, guid, name, custom, dz);
+    }
+}
+
+int launcher_binds_psx_known_count(void) {
+    return rui_psx_pad_binds_known_count(psx_input_ini_path());
+}
+
+int launcher_binds_psx_known_at(int index, char* guid, int guid_cap,
+                                char* name, int name_cap) {
+    return rui_psx_pad_binds_known_at(psx_input_ini_path(), index,
+                                      guid, guid_cap, name, name_cap);
+}
+
+int launcher_binds_psx_name_is_custom(const char* guid) {
+    if (!guid || !guid[0]) return 0;
+    return rui_psx_pad_binds_name_is_custom(psx_input_ini_path(), guid);
 }
 
 void launcher_binds_reset_player(LauncherModel* m, int player) {
@@ -535,7 +885,13 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
     }
     if (is_psx_profile(m)) {
         if (player < 1 || player > LNG_MAX_PLAYERS) return;
-        rui_psx_binds_reset(keybinds_file_path(), player - 1);
+        // Configure's Gamepad Bindings panel resets the selected gamepad's
+        // input.ini map. Keyboard keybinds.ini is left alone (not shown there).
+        const char* guid = psx_player_guid(m, player);
+        if (guid[0])
+            rui_psx_pad_binds_reset(psx_input_ini_path(), guid);
+        else
+            rui_psx_binds_reset(keybinds_file_path(), player - 1);
         reload_player_display(m, player);
         return;
     }

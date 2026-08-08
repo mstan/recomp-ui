@@ -20,6 +20,14 @@ struct RecompRuntimeUi {
     RecompRuntimeUiItem *owned_items;
     const char **owned_view_choices;
     int *owned_view_values;
+    /*
+     * Text-editing state. Owned by the presentation backend (the ImGui one
+     * drives an InputText), because the edit lifecycle -- caret, selection,
+     * commit-on-Enter -- is the widget's business, not the model's. The core
+     * keeps it here only so the host can query wants_text_input.
+     */
+    int editing_text;
+    char edit_buffer[128];
 };
 
 int recomp_runtime_ui_item_enabled(const RecompRuntimeUi *ui,
@@ -35,6 +43,14 @@ void recomp_runtime_ui_adjust_current(RecompRuntimeUi *ui, int direction,
                                       int activate, int repeat);
 void recomp_runtime_ui_enter_section(RecompRuntimeUi *ui, size_t section);
 void recomp_runtime_ui_leave_section(RecompRuntimeUi *ui);
+/* Reads a TEXT item's current value; writes "" when unavailable. */
+void recomp_runtime_ui_current_text(RecompRuntimeUi *ui,
+                                    const RecompRuntimeUiItem *item, char *buf,
+                                    size_t buf_size);
+/* Commits an edited TEXT value; returns non-zero when accepted. */
+int recomp_runtime_ui_commit_text(RecompRuntimeUi *ui,
+                                  const RecompRuntimeUiItem *item,
+                                  const char *value);
 
 #ifdef __cplusplus
 }

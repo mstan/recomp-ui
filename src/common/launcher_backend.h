@@ -17,7 +17,7 @@ extern "C" {
 #endif
 
 // Runs the launcher to completion. Returns the chosen LngAction
-// (LNG_ACTION_LAUNCH or LNG_ACTION_QUIT). Reads/writes m in place.
+// (LNG_ACTION_LAUNCH, LNG_ACTION_QUIT, or LNG_ACTION_RELAUNCH).
 LngAction launcher_backend_run(LauncherPlatform* p,
                                LauncherModel* m,
                                const LauncherTheme* th);

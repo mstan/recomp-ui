@@ -8,6 +8,18 @@
 extern "C" {
 #endif
 
+/*
+ * Feature probe for hosts pinned to a submodule that may predate TEXT items.
+ * A host calling recomp_runtime_ui_wants_text_input() unconditionally would
+ * fail to link against an older pin, so guard on this:
+ *
+ *     #if defined(RECOMP_RUNTIME_UI_HAS_TEXT)
+ *         if (recomp_runtime_ui_wants_text_input(ui)) return true;
+ *     #endif
+ */
+#define RECOMP_RUNTIME_UI_HAS_TEXT 1
+#define RECOMP_RUNTIME_UI_HAS_PRESENTATION_FLAGS 1
+
 typedef struct RecompRuntimeUi RecompRuntimeUi;
 
 typedef enum RecompRuntimeUiItemType {
@@ -15,6 +27,17 @@ typedef enum RecompRuntimeUiItemType {
     RECOMP_RUNTIME_UI_INT,
     RECOMP_RUNTIME_UI_CHOICE,
     RECOMP_RUNTIME_UI_ACTION,
+    /*
+     * Free-form string, edited in place. Uses get_text/set_text instead of
+     * get_value/set_value. Some settings simply are not a number or a choice --
+     * a postal code, a player name, a server address -- and stepping such a
+     * value with -/+ is unusable once its range is more than a few dozen wide.
+     *
+     * While one of these is being edited the host must stop treating arrows /
+     * Return / Escape as menu navigation; see
+     * recomp_runtime_ui_wants_text_input().
+     */
+    RECOMP_RUNTIME_UI_TEXT,
 } RecompRuntimeUiItemType;
 
 typedef enum RecompRuntimeUiInput {
@@ -83,6 +106,16 @@ typedef struct RecompRuntimeUiCallbacks {
     int (*is_enabled)(void *context, const RecompRuntimeUiItem *item);
     void (*save)(void *context);
     void (*visibility_changed)(void *context, int open);
+    /*
+     * RECOMP_RUNTIME_UI_TEXT items only. get_text fills buf with a
+     * NUL-terminated value and returns non-zero; set_text commits an edited
+     * value and returns non-zero if it was accepted (a rejected value leaves
+     * the row showing whatever get_text reports).
+     */
+    int (*get_text)(void *context, const RecompRuntimeUiItem *item, char *buf,
+                    size_t buf_size);
+    int (*set_text)(void *context, const RecompRuntimeUiItem *item,
+                    const char *value);
 } RecompRuntimeUiCallbacks;
 
 typedef struct RecompRuntimeUiConfig {
@@ -102,7 +135,19 @@ typedef struct RecompRuntimeUiConfig {
     /* Optional platform/input vocabulary for the footer. */
     const char *accept_label;
     const char *back_label;
+
+    /*
+     * Opt-in presentation policy. The default remains the desktop/TV layout;
+     * hosts running on a physically small, high-density touch display can
+     * request larger hit targets and a near-full-screen surface without
+     * coupling the shared UI to a particular operating system.
+     */
+    uint32_t presentation_flags;
 } RecompRuntimeUiConfig;
+
+enum {
+    RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY = UINT32_C(1) << 0,
+};
 
 typedef uint64_t RecompRuntimeUiStandardFeatures;
 enum {
@@ -156,6 +201,14 @@ void recomp_runtime_ui_close(RecompRuntimeUi *ui);
 int recomp_runtime_ui_handle_input(RecompRuntimeUi *ui,
                                    RecompRuntimeUiInput input,
                                    int pressed, int repeat);
+
+/*
+ * Non-zero while a RECOMP_RUNTIME_UI_TEXT row has keyboard focus. The host must
+ * then stop mapping arrows / Return / Escape to menu navigation and let its
+ * ImGui backend consume them, or typing would move the selection instead of
+ * entering characters. The keys should still be withheld from the game.
+ */
+int recomp_runtime_ui_wants_text_input(const RecompRuntimeUi *ui);
 
 /*
  * Composites the menu over a little-endian SDL_PIXELFORMAT_ARGB8888/BGRA frame.

@@ -2,7 +2,7 @@
 
 A shared, **console-agnostic launcher and in-game settings UI** for static-
 recompilation game ports. One Dear ImGui launcher core serves every recomp
-ecosystem — SNES, PSX, N64, Genesis, NES, and beyond — while a small runtime
+ecosystem — SNES, PSX, N64, Nintendo DS, Genesis, NES, and beyond — while a small runtime
 overlay API lets the same hosts expose live settings after boot.
 
 It is the reusable extraction of the SNES-recomp "launcher_ng" launcher,
@@ -56,7 +56,7 @@ git submodule add https://github.com/mstan/recomp-ui.git recomp-ui
 ```cmake
 include(${CMAKE_SOURCE_DIR}/recomp-ui/recomp_ui.cmake)
 recomp_target_launcher_ui(my-game-runtime
-    CONSOLE psx                                  # required: psx/snes/n64/nes/...
+    CONSOLE psx                                  # required: psx/snes/nds/n64/nes/...
     BOXART ${CMAKE_SOURCE_DIR}/art/boxart.tga   # optional: game box art
     PAD    ${CMAKE_SOURCE_DIR}/art/pad.tga       # optional: per-console controller image
     BRAND  ${CMAKE_SOURCE_DIR}/art/brand.tga)    # optional: per-console top-left mark
@@ -65,10 +65,13 @@ recomp_target_launcher_ui(my-game-runtime
 `recomp_ui.cmake` is fully self-contained: it bundles Dear ImGui, crc32/sha256/
 keybinds, tinyfiledialogs, an IPS applier, and a PS1 memcard formatter, and
 stages its fonts/images next to your exe. No network / FetchContent — builds
-offline. It defines `RECOMP_LAUNCHER` on the target and uses SDL3 + OpenGL by
-default. SNESRecomp consumers select the SDL2 compatibility path with
-`-DSNESRECOMP_SDL_BACKEND=SDL2`; generic hosts that do not set that variable
-can select their platform backend directly with `RECOMP_UI_SDL3`.
+offline. It defines `RECOMP_LAUNCHER` on the target and links OpenGL. The
+standalone recomp-ui project defaults to SDL3; a generic project that directly
+includes `recomp_ui.cmake` defaults to the SDL2 compatibility backend unless it
+sets `RECOMP_UI_SDL3=ON` or supplies the ecosystem-level
+`SNESRECOMP_SDL_BACKEND=SDL3` selection. See
+[Build configuration reference](#build-configuration-reference) for precedence
+and the definitions produced on the target.
 
 `CONSOLE` is required and selects the runtime asset manifest for that target:
 `psx`, `snes`, `n64`, `nes`, `gba`, `genesis`, `gb`, or `gbc`. Common fonts
@@ -77,14 +80,18 @@ cartridge art comes only from the selected console family. `CONSOLE all` is
 reserved for targets that intentionally switch between multiple console
 profiles, such as recomp-ui's standalone preview.
 
-The schema-driven Mods view is developer opt-in and inert by default. Enable it
-with `-DRECOMP_UI_ENABLE_MODS=ON` and provide a non-null
-`RecompLauncherCGameInfo.mods` provider; both gates are required. The provider
-ABI remains available in the public header so toggling the build option does not
-change the game-info struct layout. The launcher never enables mods on its own.
-Netplay launches (hosted lobby, LAN, and direct) never call `commit()`; they use
-optional `commit_netplay()` when provided, otherwise skip mods so matches stay
-vanilla.
+The schema-driven Mods view is developer opt-in. Configure the consuming build
+with `-DRECOMP_UI_ENABLE_MODS=ON`, then provide a non-null
+`RecompLauncherCGameInfo.mods` provider. These are separate gates: the CMake
+option enables the frontend, while the provider supplies the actual catalog and
+behavior. See [Mods frontend](#mods-frontend) for the complete integration.
+
+Multi-display systems can provide `GameInfo.display_layout_labels`; recomp-ui
+then exposes a dedicated Display → Screen layout cycle backed by
+`Settings.display_layout`. This remains independent of aspect or widescreen
+features. The Nintendo DS profile uses it for stacked versus separate windows,
+keeps Player 1's ordinary buttons controller-configurable, and leaves the
+bottom-screen pointer/touch mapping to the host.
 
 ### 3. Call it from your `main()`
 
@@ -111,6 +118,182 @@ The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-
 settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
 for console-specific verification the launcher re-runs on change — e.g. PSX disc
 identification (`disc_verify`) and memory-card inspection (`memcard_inspect`).
+
+## Mods frontend
+
+recomp-ui provides a generic, schema-driven **frontend** for mods. It displays
+features and their boolean/choice/integer options, installs local archives,
+manages installed versions, shows structured diagnostics, and asks the host to
+commit the staged selection before launch.
+
+It deliberately does **not** define a mod file format, parse packages, resolve
+dependencies, patch a ROM/disc, execute package code, or decide which mods a
+game supports. Those jobs remain with the host's mod manager. A PSX host may use
+`.psxmod`; another ecosystem can advertise `.gbamod` or another archive type
+through the same UI ABI.
+
+### The three gates
+
+A Mods button appears only when all three integration layers are present:
+
+1. The target calls `recomp_target_launcher_ui(...)`, which compiles the
+   launcher into that target and defines `RECOMP_LAUNCHER`.
+2. The build is configured with `RECOMP_UI_ENABLE_MODS=ON`. The helper turns
+   this CMake cache value into the private target definition
+   `RECOMP_UI_ENABLE_MODS=1`.
+3. The host sets `RecompLauncherCGameInfo.mods` to a live
+   `RecompLauncherCModProvider` before calling
+   `recomp_launcher_run_window()`.
+
+If the CMake option is off, recomp-ui deliberately discards the provider while
+initializing its model. If the option is on but `game.mods` is `NULL`, the
+launcher has no catalog to show and omits the Mods button. This is why enabling
+the flag in recomp-ui's standalone harness does not produce a sample catalog:
+the harness does not fabricate a package manager.
+
+Enable the frontend during the **configure** step:
+
+```sh
+cmake -S . -B build -DRECOMP_UI_ENABLE_MODS:BOOL=ON
+cmake --build build
+```
+
+For a consuming game, those commands point at the game's source and build
+directories, not necessarily the recomp-ui submodule itself:
+
+```sh
+cmake -S path/to/game -B path/to/build \
+  -DRECOMP_UI_ENABLE_MODS:BOOL=ON
+cmake --build path/to/build
+```
+
+`-D...=ON` belongs on `cmake -S/-B`, not on `cmake --build`. Reconfiguring an
+existing build directory with the explicit value updates its cache and causes
+CMake to rebuild affected launcher sources; a clean rebuild is not normally
+required. Inspect the stored value with:
+
+```sh
+cmake -LA -N build | grep RECOMP_UI_ENABLE_MODS
+```
+
+PowerShell equivalent:
+
+```powershell
+cmake -LA -N build | Select-String RECOMP_UI_ENABLE_MODS
+```
+
+If a host wants Mods enabled by default without overriding an explicit user
+choice, set the cache default **before** including `recomp_ui.cmake`:
+
+```cmake
+if(NOT DEFINED RECOMP_UI_ENABLE_MODS)
+    set(RECOMP_UI_ENABLE_MODS ON CACHE BOOL
+        "Enable this game's Mods launcher view")
+endif()
+
+include("${RECOMP_UI_ROOT}/recomp_ui.cmake")
+recomp_target_launcher_ui(my-game-runtime CONSOLE psx)
+```
+
+The option is build-tree-wide: every target passed to
+`recomp_target_launcher_ui()` in that CMake build receives the same value. Use
+separate build directories if one produced executable must expose Mods and
+another must compile with the frontend disabled.
+
+### Supplying the provider
+
+Zero-initialize a `RecompLauncherCModProvider`, populate its callbacks, keep it
+alive for the entire launcher call, and assign it to the game info:
+
+```c
+RecompLauncherCModProvider mods = {0};
+mods.ctx = &my_mod_manager;
+mods.package_count = my_package_count;
+mods.package_get = my_package_get;
+mods.feature_count = my_feature_count;
+mods.feature_get = my_feature_get;
+mods.feature_option_get = my_feature_option_get;
+mods.feature_choice_get = my_feature_choice_get;
+mods.feature_enable = my_feature_enable;
+mods.feature_set_option = my_feature_set_option;
+mods.commit = my_mod_commit;
+mods.last_error = my_mod_last_error;
+
+RecompLauncherCGameInfo game = {0};
+launcher_profile_apply("psx", &game);
+game.mods = &mods;
+```
+
+The complete append-only ABI is
+[`RecompLauncherCModProvider`](src/recomp_launcher.h). New integrations should
+implement its feature-oriented callback group as the primary player-facing
+surface and the package callbacks as the secondary installation/version/removal
+surface:
+
+- `feature_count` / `feature_get` enumerate independently toggleable features.
+- `feature_option_get` and `feature_choice_get` describe validated typed
+  controls; `feature_enable` and `feature_set_option` stage mutations.
+- `package_count` / `package_get`, version callbacks, `select_version`,
+  `install_archive`, and `remove_package` drive package maintenance.
+- `option_get`, `choice_get`, `set_enabled`, and `set_option` retain the legacy
+  package-only surface for providers that have not adopted independent
+  features.
+- `diagnostic_count` / `diagnostic_get` attach information, warnings, and
+  errors to a package or feature.
+- `archive_extension` and `archive_description` replace the default
+  `.psxmod` file-picker vocabulary for other ecosystems.
+- `last_error` supplies the visible reason after any callback returns failure.
+
+The launcher selects the feature-first view only when the complete core feature
+group (`feature_count`, `feature_get`, `feature_option_get`, `feature_enable`,
+and `feature_set_option`) is present. A package-only provider remains supported;
+an accidentally partial feature implementation falls back to that package
+view, so implement the core group together.
+
+All query structs contain fixed-size character buffers. recomp-ui copies their
+contents and does not retain provider-owned string pointers, so a successful
+mutation may safely rebuild or rescan the host catalog before the next query.
+Mutation callbacks return `1` on success and `0` on failure.
+
+### Commit and netplay behavior
+
+Normal edits are staged through the provider. When the player presses **PLAY**,
+recomp-ui calls `commit(ctx, selected_image_path)` before returning launch
+success. A failed commit keeps the launcher open and displays `last_error`; the
+host can perform final target verification, dependency resolution, collision
+checks, persistence, and plan construction there.
+
+Hosted-lobby, LAN, and direct netplay launches never call the normal `commit()`.
+If supplied, `commit_netplay()` should clear any in-session mod plan without
+changing the user's persisted offline selection. If it is `NULL`, recomp-ui
+skips mod commit entirely. This keeps network matches vanilla unless a host
+later defines and implements a synchronized mod contract.
+
+The provider ABI stays present in `recomp_launcher.h` even when
+`RECOMP_UI_ENABLE_MODS=OFF`, so the option does not change
+`RecompLauncherCGameInfo` layout. The generated macro is private to the target
+passed to `recomp_target_launcher_ui()`; it is a frontend exposure switch, not
+a build flag for a separately compiled package-manager library.
+
+### PSXRecomp integration
+
+PSXRecomp supplies the provider through
+`mod_runtime_launcher_provider()` and sets `game.mods` for its launcher. Its
+`PSX_RECOMP_UI` option controls whether the entire recomp-ui launcher is built;
+`RECOMP_UI_ENABLE_MODS` controls the Mods surface inside that launcher:
+
+```sh
+cmake -S path/to/psx-game -B build \
+  -DPSX_RECOMP_UI:BOOL=ON \
+  -DRECOMP_UI_ENABLE_MODS:BOOL=ON
+cmake --build build
+```
+
+Current PSXRecomp versions default `RECOMP_UI_ENABLE_MODS` to `ON` for a fresh
+game build cache while still honoring an explicit `OFF`. An older build
+directory may retain the former recomp-ui default (`OFF`); reconfigure it with
+the explicit `-DRECOMP_UI_ENABLE_MODS:BOOL=ON` command above. PSXRecomp emits a
+CMake warning when it detects this Mods-less cached state.
 
 ### In-game settings overlay
 
@@ -158,6 +341,9 @@ menu.items = rows;
 menu.item_count = sizeof(rows) / sizeof(rows[0]);
 menu.callbacks = callbacks;
 menu.theme = "n64"; /* same id used by launcher_profile_apply() */
+/* Optional for a physically small, high-density touchscreen. */
+menu.presentation_flags =
+    RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY;
 RecompRuntimeUi *ui = recomp_runtime_ui_create(&menu);
 ```
 
@@ -233,6 +419,108 @@ snesrecomp `docs/RECOMP_NET.md` → "Soft-return rematch checklist".
 - **Footer** — PLAY, skip-launcher-on-boot (+ confirm modal), gamepad navigation.
 
 ---
+
+## Build configuration reference
+
+There are three different kinds of configuration in a recomp-ui integration:
+
+- **CMake cache variables** select one implementation for the build tree.
+- **Arguments to `recomp_target_launcher_ui()`** configure one target and its
+  staged assets.
+- **Preprocessor definitions** are generated by the helper. Consumers should
+  set the corresponding CMake option instead of injecting these definitions
+  manually.
+
+### CMake cache variables
+
+| Variable | Type and default | Effect |
+|---|---|---|
+| `RECOMP_UI_ENABLE_MODS` | `BOOL`, `OFF` | Exposes a non-null host mod provider to the launcher model and defines `RECOMP_UI_ENABLE_MODS=0/1` on every integrated target. It does not create a provider or a catalog. |
+| `RECOMP_UI_SDL3` | `BOOL`, `OFF` for a generic include | Selects `launcher_platform_sdl3.c` plus Dear ImGui's SDL3 backend and defines `LNG_SDL3=1`. `OFF` selects the SDL2 compatibility sources. Ignored as an independent choice when `SNESRECOMP_SDL_BACKEND` is defined. |
+| `SNESRECOMP_SDL_BACKEND` | `STRING`, `SDL3` in recomp-ui's standalone project | Ecosystem-level backend selector. Valid values are `SDL3` and `SDL2`; when defined before `recomp_ui.cmake`, it takes precedence and forces `RECOMP_UI_SDL3` to match. |
+| `RECOMP_UI_ROOT` | `PATH`, directory containing `recomp_ui.cmake` | Lets a host use a checkout outside `${CMAKE_SOURCE_DIR}/recomp-ui`. Set it before `include()`. |
+| `BUILD_TESTING` | Standard CTest `BOOL`, `ON` for the standalone project | Builds recomp-ui's model, asset-staging, and runtime-UI tests. It matters when recomp-ui is the top-level project; consuming games normally own their test policy. |
+
+All of these are configure-time values. CMake caches them in the build
+directory, so switching branches or updating the submodule does not reset an
+old selection. Pass an explicit `-Dname=value` to change it, use a new build
+directory, or remove the single cache entry with `cmake -Uname -S ... -B ...`
+when you intentionally want the project's default to run again.
+
+### SDL backend examples and precedence
+
+Standalone recomp-ui build, SDL3 and Mods frontend:
+
+```sh
+cmake -G Ninja -S . -B build \
+  -DSNESRECOMP_SDL_BACKEND=SDL3 \
+  -DRECOMP_UI_ENABLE_MODS=ON
+cmake --build build
+```
+
+Standalone SDL2 compatibility build:
+
+```sh
+cmake -G Ninja -S . -B build-sdl2 \
+  -DSNESRECOMP_SDL_BACKEND=SDL2
+cmake --build build-sdl2
+```
+
+Generic consuming host that does not define `SNESRECOMP_SDL_BACKEND`:
+
+```sh
+cmake -S path/to/game -B build -DRECOMP_UI_SDL3:BOOL=ON
+```
+
+When `SNESRECOMP_SDL_BACKEND` exists, it wins over
+`RECOMP_UI_SDL3`. This lets an ecosystem choose SDL once for the game, runtime,
+and launcher instead of allowing the UI submodule to drift to another ABI.
+The host still owns finding and linking the matching SDL target; the integration
+helper adds recomp-ui's platform/backend sources but intentionally does not
+guess how the host obtained SDL.
+
+### Per-target helper arguments
+
+```cmake
+recomp_target_launcher_ui(game-target
+    CONSOLE psx
+    BOXART "${CMAKE_SOURCE_DIR}/art/boxart.tga"
+    BOXART_NAME "my-game-boxart.tga"
+    PAD "${CMAKE_SOURCE_DIR}/art/pad.tga"
+    BRAND "${CMAKE_SOURCE_DIR}/art/brand.tga")
+```
+
+| Argument | Meaning |
+|---|---|
+| `CONSOLE <id>` | Required asset family: `psx`, `snes`, `n64`, `nes`, `gba`, `genesis`, `gb`, or `gbc`. `all` is reserved for an intentional multi-profile target such as the standalone preview. |
+| `BOXART <path>` | Optional per-game TGA copied next to the executable. |
+| `BOXART_NAME <name>` | Optional destination basename when several targets share one output directory. Pair it with `GameInfo.boxart_path`. |
+| `PAD <path>` | Optional controller-art override staged as `assets/img/pad.tga`. |
+| `BRAND <path>` | Optional top-left brand override staged as `assets/img/brand_mark.tga`. |
+| `HOST_IMGUI` + `IMGUI_DIR <path>` | Reuse Dear ImGui already compiled by the host, avoiding duplicate core/backend symbols. `IMGUI_DIR` must contain `imgui.h` and the backend headers. |
+
+`RECOMP_UI_HOST_IMGUI=ON` plus `RECOMP_UI_HOST_IMGUI_INCLUDE=<path>` remains
+available as a global compatibility route for existing hosts. New integrations
+should prefer the per-target `HOST_IMGUI IMGUI_DIR ...` arguments.
+
+### Definitions added to the target
+
+`recomp_target_launcher_ui(target ...)` adds definitions with `PRIVATE`
+visibility:
+
+| Definition | When | Meaning |
+|---|---|---|
+| `RECOMP_LAUNCHER` | Always | Lets host source in the same target compile its launcher call sites. |
+| `RECOMP_UI_ENABLE_MODS=0` or `1` | Always | Mirrors the CMake Mods option consistently across C and C++ launcher sources. |
+| `SDL_MAIN_HANDLED` | Always | Keeps the host's real `main()` as the entry point instead of SDL redirecting it. |
+| `LNG_SDL3=1` | SDL3 selected | Chooses SDL3 types, events, and Dear ImGui platform glue. Absence means SDL2. |
+| `LNG_GLES2=1`, `IMGUI_IMPL_OPENGL_ES2=1` | Android | Selects the GLES2 renderer path. |
+
+Because the definitions are `PRIVATE`, they do not propagate to libraries that
+link the game target. The public provider ABI does not need
+`RECOMP_UI_ENABLE_MODS`; a separately built mod manager can always implement
+`RecompLauncherCModProvider`. Only the target containing recomp-ui and the
+launcher call needs the generated frontend definition.
 
 ## Build & self-test
 

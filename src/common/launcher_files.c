@@ -164,6 +164,18 @@ static int linux_pick_open_zenity(const char* title, const char* const* patterns
     else
         snprintf(filter_arg, sizeof(filter_arg), "--file-filter=%s", pats);
 
+    /* When the caller supplies patterns (e.g. PSX *.cue only), do not offer
+     * "All files" — that undoes the filter in the native dialog. */
+    if (patterns && num_patterns > 0) {
+        char* argv[] = {
+            "zenity",
+            "--file-selection",
+            title_arg,
+            filter_arg,
+            NULL
+        };
+        return linux_spawn_capture(argv, out, out_cap);
+    }
     char* argv[] = {
         "zenity",
         "--file-selection",
@@ -215,6 +227,18 @@ static int linux_pick_save_zenity(const char* title, const char* const* patterns
     else
         snprintf(filter_arg, sizeof(filter_arg), "--file-filter=%s", pats);
 
+    if (patterns && num_patterns > 0) {
+        char* argv[] = {
+            "zenity",
+            "--file-selection",
+            "--save",
+            "--confirm-overwrite",
+            title_arg,
+            filter_arg,
+            NULL
+        };
+        return linux_spawn_capture(argv, out, out_cap);
+    }
     char* argv[] = {
         "zenity",
         "--file-selection",
@@ -349,10 +373,25 @@ static int linux_pick_folder(const char* title, char* out, size_t out_cap) {
 }
 #endif /* __linux__ */
 
+bool launcher_native_file_picker_available(void) {
+#if defined(__linux__)
+    return linux_have_cmd("zenity") || linux_have_cmd("kdialog");
+#else
+    return true;
+#endif
+}
+
 bool launcher_pick_rom(char* out_path, size_t out_cap) {
     if (!out_path || out_cap == 0) return false;
     out_path[0] = '\0';
 
+#if defined(__linux__)
+    {
+        const int r = linux_pick_open("Select game file", NULL, 0, NULL,
+                                      out_path, out_cap);
+        return r == 1;
+    }
+#else
     // No filter: this fallback runs only when the active console's profile
     // supplied no rom_filter, and it cannot know what that console accepts.
     // Offering "All files" is honest; naming one system's extensions here is
@@ -367,6 +406,7 @@ bool launcher_pick_rom(char* out_path, size_t out_cap) {
 
     snprintf(out_path, out_cap, "%s", sel);
     return true;
+#endif
 }
 
 bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
@@ -377,6 +417,7 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
     {
         const int r = linux_pick_folder(title, out_path, out_cap);
         if (r >= 0) return r == 1; /* ok or cancel — never fall through to tinyfd */
+        return false;
     }
 #endif
 
@@ -386,19 +427,16 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
     return true;
 }
 
-bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
-                        const char* desc, char* out_path, size_t out_cap) {
-    if (!out_path || out_cap == 0) return false;
+int launcher_try_pick_file(const char* title, const char* const* patterns,
+                           int num_patterns, const char* desc,
+                           char* out_path, size_t out_cap) {
+    if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
 #if defined(__linux__)
-    {
-        const int r = linux_pick_open(title, patterns, num_patterns, desc,
-                                      out_path, out_cap);
-        if (r >= 0) return r == 1; /* ok or cancel — never fall through to tinyfd */
-    }
-#endif
-
+    return linux_pick_open(title, patterns, num_patterns, desc, out_path,
+                           out_cap);
+#else
     const char* sel = tinyfd_openFileDialog(
         title ? title : "Select file",
         "",
@@ -406,9 +444,17 @@ bool launcher_pick_file(const char* title, const char* const* patterns, int num_
         num_patterns > 0 ? patterns : NULL,
         desc,
         0);
-    if (!sel || !sel[0]) return false;
+    if (!sel || !sel[0]) return 0;
     snprintf(out_path, out_cap, "%s", sel);
-    return true;
+    return 1;
+#endif
+}
+
+bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
+                        const char* desc, char* out_path, size_t out_cap) {
+    const int r = launcher_try_pick_file(title, patterns, num_patterns, desc,
+                                         out_path, out_cap);
+    return r == 1;
 }
 
 bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
@@ -421,6 +467,7 @@ bool launcher_pick_save_file(const char* title, const char* const* patterns, int
         const int r = linux_pick_save(title, patterns, num_patterns, desc,
                                       out_path, out_cap);
         if (r >= 0) return r == 1; /* ok or cancel — never fall through to tinyfd */
+        return false;
     }
 #endif
 

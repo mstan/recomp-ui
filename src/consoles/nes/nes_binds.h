@@ -49,6 +49,14 @@ void rui_nes_binds_reset(const char* path, int player);
 void rui_nes_zapper_get(const char* path, int* mouse_enabled, int* crosshair);
 void rui_nes_zapper_set(const char* path, int mouse_enabled, int crosshair);
 
+/* Optional Voxel/3D camera bindings ([camera]). These are global presentation
+ * controls, not NES controller bits, and are shown only while an enabled mod
+ * feature advertises camera_controls. Indices are LNG_CAMERA_* from
+ * launcher_model.h. Missing keys are seeded surgically with numpad defaults. */
+int  rui_nes_camera_bind_get(const char* path, int action);
+void rui_nes_camera_bind_set(const char* path, int action, int scancode);
+void rui_nes_camera_bind_reset(const char* path);
+
 #ifdef __cplusplus
 }
 #endif

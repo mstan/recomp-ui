@@ -4,7 +4,11 @@
 //   Windows / macOS — tinyfiledialogs (GetOpenFileName / osascript)
 //   Linux — posix_spawn of zenity or kdialog (avoids tinyfd's popen/vfork,
 //           which SIGSEGVs from the multithreaded SDL UI thread)
-// Falls back to tinyfd on Linux only if neither zenity nor kdialog is installed.
+// The ImGui backend supplies an in-launcher browser when Linux has neither
+// zenity nor kdialog, when the native dialog fails to spawn, and for the
+// first-run setup wizard on Linux (native dialogs often open behind the
+// modal). Never fall through to tinyfd there: its "missing software"
+// console/xmessage fallback is not a usable file picker.
 //
 // Deliberately SDL-version agnostic: it does not depend on SDL3's
 // SDL_ShowOpenFileDialog, so it works identically on SDL2 and SDL3.
@@ -31,6 +35,11 @@ extern "C" {
 // console's profile (SystemProfile.rom_filter), never here.
 bool launcher_pick_rom(char* out_path, size_t out_cap);
 
+// Whether a blocking native picker is available. This is always true on
+// Windows/macOS. On Linux it reports zenity/kdialog availability so a GUI
+// backend can use its own in-app browser when neither is installed.
+bool launcher_native_file_picker_available(void);
+
 // Open the OS "choose a folder" dialog (for the MSU-1 music folder). Returns
 // true and fills `out_path` on success.
 bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap);
@@ -41,6 +50,15 @@ bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap);
 // `out_path` on success.
 bool launcher_pick_file(const char* title, const char* const* patterns, int num_patterns,
                         const char* desc, char* out_path, size_t out_cap);
+
+// Like launcher_pick_file, but returns a tri-state so UIs can fall back to an
+// in-app browser when the native dialog cannot run:
+//   1  — path selected (out_path filled)
+//   0  — dialog ran; user cancelled (or closed without a path)
+//  -1  — no usable native backend / spawn failure (try another UI)
+int launcher_try_pick_file(const char* title, const char* const* patterns,
+                           int num_patterns, const char* desc,
+                           char* out_path, size_t out_cap);
 
 // Open the OS "save file" dialog — for choosing a DESTINATION path that need
 // not already exist (e.g. picking where to write a freshly formatted PS1

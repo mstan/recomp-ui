@@ -90,10 +90,13 @@ typedef bool (*VerifyProbeFn)(const LauncherModel* m, VerifyResult* out);
 typedef struct { int mode; /* 0 rom-hash, 1 disc-verdict */ VerifyProbeFn probe; } VerifySpec;
 
 // ---- Hotkeys module: a bitmask over LngHotkey (launcher_model.h) --------------
-// LNG_HK_COUNT is 11 today; ALL bits set = every catalog hotkey opted in.
-// SNES uses this (full legacy catalog, byte-identical to the original single
-// hardcoded panel); PSX opts into a tailored subset instead — see its row.
+// The first 11 entries are the universal catalog. Capability-specific rows
+// (currently the three solar controls) are added by the panel at draw time, so
+// SNES and other non-solar systems keep their byte-identical legacy catalog.
 #define LNG_HOTKEYS_ALL 0x7FFu
+#define LNG_HOTKEYS_SOLAR ((uint32_t)((1u << LNG_HK_SOLAR_BRIGHTER) | \
+                                      (1u << LNG_HK_SOLAR_DIMMER) | \
+                                      (1u << LNG_HK_SOLAR_LIVE)))
 
 // ---- ROM file-picker filter --------------------------------------------------
 // The native "Change ROM" dialog's extension filter, per console — so a GBA

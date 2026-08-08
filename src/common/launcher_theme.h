@@ -133,6 +133,28 @@ static inline LauncherTheme launcher_theme_gba(void) {
     return t;
 }
 
+// "Nintendo DS" theme. The dual-LCD handheld uses neutral graphite/silver
+// chrome with a cool cyan interaction accent and a soft cobalt secondary.
+// It is flat and scanline-free: the screens are LCD panels, not a CRT.
+static inline LauncherTheme launcher_theme_nds(void) {
+    LauncherTheme t = launcher_theme_default();
+    t.background      = lng_rgba(0.035f, 0.043f, 0.055f, 1.0f); // #090B0E
+    t.background2     = lng_rgba(0.059f, 0.071f, 0.086f, 1.0f); // #0F1216
+    t.panel           = lng_rgba(0.075f, 0.086f, 0.102f, 1.0f); // #13161A
+    t.panel_hovered   = lng_rgba(0.114f, 0.133f, 0.157f, 1.0f); // #1D2228
+    t.control         = lng_rgba(0.094f, 0.110f, 0.129f, 1.0f); // #181C21
+    t.control_hovered = lng_rgba(0.133f, 0.165f, 0.192f, 1.0f); // #222A31
+    t.border          = lng_rgba(0.204f, 0.235f, 0.267f, 1.0f); // #343C44
+    t.accent          = lng_rgba(0.078f, 0.788f, 0.886f, 1.0f); // #14C9E2
+    t.accent_dim      = lng_rgba(0.047f, 0.553f, 0.667f, 1.0f); // #0C8DAA
+    t.accent_text     = lng_rgba(0.020f, 0.043f, 0.055f, 1.0f);
+    t.accent2         = lng_rgba(0.329f, 0.573f, 0.929f, 1.0f); // #5492ED
+    t.text            = lng_rgba(0.925f, 0.941f, 0.957f, 1.0f);
+    t.text_muted      = lng_rgba(0.557f, 0.596f, 0.639f, 1.0f);
+    t.scanlines       = 0;
+    return t;
+}
+
 // "Nintendo 64" theme. The 64-bit cartridge era, but a decade past the CRT
 // arcade look of the default: a neutral graphite ground (the charcoal N64
 // console plastic, deliberately NOT the blue/violet of the others), ONE
@@ -269,6 +291,10 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'b' || name[1] == 'B') &&
         (name[2] == 'a' || name[2] == 'A'))
         return launcher_theme_gba();
+    if (name && (name[0] == 'n' || name[0] == 'N') &&
+        (name[1] == 'd' || name[1] == 'D') &&
+        (name[2] == 's' || name[2] == 'S'))
+        return launcher_theme_nds();
     if (name && (name[0] == 'n' || name[0] == 'N') && name[1] == '6' && name[2] == '4')
         return launcher_theme_n64();
     if (name && (name[0] == 'n' || name[0] == 'N') &&

@@ -42,6 +42,16 @@ An N64 host therefore gets the clean graphite/red/blue N64 theme with no CRT
 scanlines; SNES uses its console theme; handheld themes remain flat rather than
 pretending to be a CRT.
 
+Physically small, high-density touch devices are an explicit host opt-in rather
+than an operating-system guess. Set
+`RecompRuntimeUiConfig.presentation_flags` to include
+`RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY`. The ImGui presentation then
+uses almost the full drawable, scales rows and spacing from the short display
+axis, widens the section rail and scroll grab, replaces desktop key hints with
+touch copy, and gives stepped values and Resume phone-sized hit targets. A zero
+flag retains the desktop/TV geometry byte-for-byte, including on platforms that
+also happen to support touch.
+
 The vendored SDL_Renderer2 backend is the official backend from the matching
 Dear ImGui `v1.91.9b` release. It requires SDL 2.0.17 or newer. A host using an
 SDL logical presentation size must temporarily render the ImGui frame at the

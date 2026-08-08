@@ -40,6 +40,11 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
 #endif
     SDL_SetHintWithPriority("SDL_JOYSTICK_HIDAPI_PS5", "1",
                             SDL_HINT_DEFAULT);
+    // Bluetooth DualSense controllers start in basic-report mode. Requesting
+    // enhanced reports exposes their motion sensors through SDL's standard
+    // game-controller sensor API; USB controllers already use this mode.
+    SDL_SetHintWithPriority("SDL_JOYSTICK_HIDAPI_PS5_RUMBLE", "1",
+                            SDL_HINT_DEFAULT);
 #ifdef LNG_GLES2
     // The host links ANGLE's libGLESv2/libEGL; SDL must create the context
     // through that same ES library (via EGL), or the directly-linked ANGLE

@@ -34,6 +34,7 @@
 #include "consoles/nes/nes_profile.h"
 #include "consoles/genesis/genesis_profile.h"
 #include "consoles/gb/gb_profile.h"
+#include "consoles/nds/nds_profile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +74,7 @@ static inline const SystemProfile* launcher_system_by_id(const char* name) {
     if (launcher_console_is_genesis(name)) return &kSystemProfileGenesis;
     if (launcher_console_is_gbc(name))  return &kSystemProfileGbc;
     if (launcher_console_is_gb(name))   return &kSystemProfileGb;
+    if (launcher_console_is_nds(name))  return &kSystemProfileNds;
     if (lps_streq_ci(name, "smsgg") || lps_streq_ci(name, "sms") || lps_streq_ci(name, "gg"))
         return &kSystemProfile_smsgg;
     if (lps_streq_ci(name, "vb") || lps_streq_ci(name, "virtualboy")) return &kSystemProfile_vb;
@@ -103,6 +105,7 @@ static inline const SystemProfile* launcher_system_infer(const RecompLauncherCGa
         if (lps_streq_ci(gi->platform, "NINTENDO"))          return &kSystemProfileNes;
         if (lps_streq_ci(gi->platform, "GAME BOY COLOR"))    return &kSystemProfileGbc;
         if (lps_streq_ci(gi->platform, "GAME BOY"))          return &kSystemProfileGb;
+        if (lps_streq_ci(gi->platform, "NINTENDO DS"))       return &kSystemProfileNds;
         if (lps_streq_ci(gi->platform, "MASTER SYSTEM"))     return &kSystemProfile_smsgg;
         if (lps_streq_ci(gi->platform, "VIRTUAL BOY"))       return &kSystemProfile_vb;
     }

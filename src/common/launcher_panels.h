@@ -1,10 +1,10 @@
 // launcher_panels.h — the launcher's PANEL system (composition unit).
 //
-// Every card the launcher draws — GAME, CONTROLLER, DISPLAY, AUDIO, SYSTEM
-// (BIOS), HOTKEYS, the CONTROLLER-view rebind page — is a registered
-// LauncherPanel: a stable id, which view it belongs to, a slot hint for
-// layout, an `available` predicate (per-GAME gating), and a `draw` function
-// (the card body; the caller has already opened the card chrome).
+// Every card the launcher draws — GAME, CONTROLLER, DISPLAY, AUDIO, INPUT
+// (multitap), SYSTEM (BIOS), HOTKEYS, the CONTROLLER-view rebind page — is a
+// registered LauncherPanel: a stable id, which view it belongs to, a slot
+// hint for layout, an `available` predicate (per-GAME gating), and a `draw`
+// function (the card body; the caller has already opened the card chrome).
 //
 // The launcher does NOT hardcode which panels a console gets: each
 // SystemProfile (launcher_system.h) lists panel ids in
@@ -29,7 +29,7 @@ extern "C" {
 
 typedef enum {
     LNG_SLOT_MAIN = 0,   // primary column (dashboard: art-led GAME; settings: DISPLAY)
-    LNG_SLOT_SIDE,       // secondary column (dashboard: CONTROLLER; settings: AUDIO, then SYSTEM stacked below it)
+    LNG_SLOT_SIDE,       // secondary column (dashboard: CONTROLLER; settings: AUDIO, then INPUT/SYSTEM/… stacked below)
     LNG_SLOT_WIDE,       // spans the full width (HOTKEYS, CONTROLLER-view page)
 } LngPanelSlot;
 

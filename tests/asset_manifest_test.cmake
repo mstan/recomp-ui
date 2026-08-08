@@ -39,6 +39,9 @@ assert_console_asset_names(
 assert_console_asset_names(
     snes
     "pad.tga")
+assert_console_asset_names(
+    nds
+    "brand_nds.tga;pad_nds.tga")
 
 _recomp_ui_resolve_console_assets(_gb_assets gb)
 _recomp_ui_resolve_console_assets(_gbc_assets gbc)
@@ -48,9 +51,9 @@ endif()
 
 _recomp_ui_resolve_console_assets(_all_assets all)
 list(LENGTH _all_assets _all_count)
-if(NOT _all_count EQUAL 22)
+if(NOT _all_count EQUAL 24)
     message(FATAL_ERROR
-        "The explicit all-console manifest should contain 22 assets, got ${_all_count}")
+        "The explicit all-console manifest should contain 24 assets, got ${_all_count}")
 endif()
 
 message(STATUS "recomp-ui console asset manifests are scoped and complete")

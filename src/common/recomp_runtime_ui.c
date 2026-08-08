@@ -89,6 +89,9 @@ void recomp_runtime_ui_open(RecompRuntimeUi *ui) {
 }
 
 void recomp_runtime_ui_close(RecompRuntimeUi *ui) {
+    /* Abandon any in-progress edit, so reopening never resumes a stale buffer
+     * and wants_text_input cannot stay stuck on with the menu shut. */
+    if (ui) ui->editing_text = 0;
     visibility(ui, 0);
 }
 
@@ -129,6 +132,14 @@ void recomp_runtime_ui_adjust_current(RecompRuntimeUi *ui, int direction,
             accepted_action(ui);
         return;
     }
+    if (item->type == RECOMP_RUNTIME_UI_TEXT) {
+        /* Activation opens the editor; the backend drives it from there. */
+        if (!activate || repeat) return;
+        recomp_runtime_ui_current_text(ui, item, ui->edit_buffer,
+                                       sizeof(ui->edit_buffer));
+        ui->editing_text = 1;
+        return;
+    }
     if (!ui->config.callbacks.set_value) return;
     int value = 0;
     if (!recomp_runtime_ui_current_value(ui, item, &value)) return;
@@ -159,6 +170,33 @@ void recomp_runtime_ui_adjust_current(RecompRuntimeUi *ui, int direction,
     if (next != value && ui->config.callbacks.set_value(
             ui->config.callbacks.context, item, next))
         accepted_change(ui, "Saved");
+}
+
+void recomp_runtime_ui_current_text(RecompRuntimeUi *ui,
+                                    const RecompRuntimeUiItem *item, char *buf,
+                                    size_t buf_size) {
+    if (!buf || buf_size == 0) return;
+    buf[0] = '\0';
+    if (!ui || !item || !ui->config.callbacks.get_text) return;
+    if (!ui->config.callbacks.get_text(ui->config.callbacks.context, item, buf,
+                                       buf_size))
+        buf[0] = '\0';
+    buf[buf_size - 1] = '\0';
+}
+
+int recomp_runtime_ui_commit_text(RecompRuntimeUi *ui,
+                                  const RecompRuntimeUiItem *item,
+                                  const char *value) {
+    if (!ui || !item || !value || !ui->config.callbacks.set_text) return 0;
+    if (!ui->config.callbacks.set_text(ui->config.callbacks.context, item,
+                                       value))
+        return 0;
+    accepted_change(ui, "Saved");
+    return 1;
+}
+
+int recomp_runtime_ui_wants_text_input(const RecompRuntimeUi *ui) {
+    return (ui && ui->open && ui->editing_text) ? 1 : 0;
 }
 
 void recomp_runtime_ui_enter_section(RecompRuntimeUi *ui, size_t section) {

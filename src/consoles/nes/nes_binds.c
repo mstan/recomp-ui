@@ -26,7 +26,7 @@ static const SDL_Scancode kNesDefaultsP1[LNG_NES_PAD_BUTTON_COUNT] = {
     /* Up */ SDL_SCANCODE_UP, /* Down */ SDL_SCANCODE_DOWN,
     /* Left */ SDL_SCANCODE_LEFT, /* Right */ SDL_SCANCODE_RIGHT,
     /* A */ SDL_SCANCODE_Z, /* B */ SDL_SCANCODE_X,
-    /* Start */ SDL_SCANCODE_RETURN, /* Select */ SDL_SCANCODE_TAB,
+    /* Start */ SDL_SCANCODE_RETURN, /* Select */ SDL_SCANCODE_BACKSLASH,
 };
 static const SDL_Scancode kNesDefaultsP2[LNG_NES_PAD_BUTTON_COUNT] = {
     /* Up */ SDL_SCANCODE_W, /* Down */ SDL_SCANCODE_S,
@@ -35,7 +35,23 @@ static const SDL_Scancode kNesDefaultsP2[LNG_NES_PAD_BUTTON_COUNT] = {
     /* Start */ SDL_SCANCODE_BACKSLASH, /* Select */ SDL_SCANCODE_RSHIFT,
 };
 
+static const char* kNesCameraKeyName[LNG_CAMERA_BIND_COUNT] = {
+    "look_up", "look_down", "look_left", "look_right",
+    "roll_left", "roll_right", "zoom_in", "zoom_out",
+    "sprite_smaller", "sprite_larger", "reset", "toggle",
+};
+static const SDL_Scancode kNesCameraDefaults[LNG_CAMERA_BIND_COUNT] = {
+    SDL_SCANCODE_KP_8, SDL_SCANCODE_KP_2,
+    SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6,
+    SDL_SCANCODE_KP_7, SDL_SCANCODE_KP_9,
+    SDL_SCANCODE_KP_PLUS, SDL_SCANCODE_KP_MINUS,
+    SDL_SCANCODE_KP_1, SDL_SCANCODE_KP_3,
+    SDL_SCANCODE_KP_5, SDL_SCANCODE_KP_0,
+};
+
 static SDL_Scancode s_nes_binds[2][LNG_NES_PAD_BUTTON_COUNT];
+static SDL_Scancode s_nes_camera_binds[LNG_CAMERA_BIND_COUNT];
+static int s_nes_camera_seen[LNG_CAMERA_BIND_COUNT];
 static int s_nes_binds_init = 0;
 // Zapper switches ([zapper] mouse/crosshair). Runner defaults: both ON (the
 // mouse IS the light gun on a PC; consumers are gated on g_zapper_enabled,
@@ -102,6 +118,12 @@ static void nes_kb_write_defaults(const char* path) {
     fprintf(f, "mouse = %s\n", s_nes_zapper_mouse ? "true" : "false");
     fprintf(f, "# Show a crosshair at the aim point (and hide the OS cursor).\n");
     fprintf(f, "crosshair = %s\n\n", s_nes_zapper_crosshair ? "true" : "false");
+    fprintf(f, "[camera]\n");
+    fprintf(f, "# Optional Voxel/3D camera keys. Gamepad look defaults to the right stick.\n");
+    for (int i = 0; i < LNG_CAMERA_BIND_COUNT; ++i)
+        fprintf(f, "%s = %s\n", kNesCameraKeyName[i],
+                nes_kb_scancode_to_name(s_nes_camera_binds[i]));
+    fprintf(f, "\n");
     fprintf(f, "# Gamepad bindings (SDL game-controller button names).\n");
     fprintf(f, "# Values may list multiple buttons separated by commas, e.g. \"a, b\".\n");
     fprintf(f, "# Valid names: a b x y back start guide leftshoulder rightshoulder\n");
@@ -132,6 +154,7 @@ static void nes_kb_load_ini(const char* path) {
     if (!f) return;
     int player = -1;   // -1 none, 0 p1, 1 p2
     int in_zapper = 0;
+    int in_camera = 0;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         size_t n = strlen(line);
@@ -143,14 +166,15 @@ static void nes_kb_load_ini(const char* path) {
             char* end = strchr(s, ']');
             if (end) *end = '\0';
             const char* section = s + 1;
-            player = -1; in_zapper = 0;
+            player = -1; in_zapper = 0; in_camera = 0;
             if (!strcmp(section, "player1")) player = 0;
             else if (!strcmp(section, "player2")) player = 1;
             else if (!strcmp(section, "zapper")) in_zapper = 1;
+            else if (!strcmp(section, "camera")) in_camera = 1;
             continue;
         }
         char* eq = strchr(s, '=');
-        if (!eq || (player < 0 && !in_zapper)) continue;
+        if (!eq || (player < 0 && !in_zapper && !in_camera)) continue;
         *eq = '\0';
         char* key = s; char* val = eq + 1;
         size_t kl = strlen(key); while (kl > 0 && isspace((unsigned char)key[kl-1])) key[--kl] = '\0';
@@ -166,6 +190,17 @@ static void nes_kb_load_ini(const char* path) {
             else if (!strcmp(key, "crosshair")) s_nes_zapper_crosshair = bval;
             continue;
         }
+        if (in_camera) {
+            for (int i = 0; i < LNG_CAMERA_BIND_COUNT; ++i) {
+                if (!strcmp(key, kNesCameraKeyName[i])) {
+                    s_nes_camera_binds[i] =
+                        nes_kb_name_to_scancode(val);
+                    s_nes_camera_seen[i] = 1;
+                    break;
+                }
+            }
+            continue;
+        }
         for (int b = 0; b < LNG_NES_PAD_BUTTON_COUNT; ++b) {
             if (!strcmp(key, kNesKbKeyName[b])) {
                 s_nes_binds[player][b] = nes_kb_name_to_scancode(val);
@@ -179,12 +214,23 @@ static void nes_kb_load_ini(const char* path) {
 void rui_nes_binds_init(const char* path) {
     memcpy(s_nes_binds[0], kNesDefaultsP1, sizeof(kNesDefaultsP1));
     memcpy(s_nes_binds[1], kNesDefaultsP2, sizeof(kNesDefaultsP2));
+    memcpy(s_nes_camera_binds, kNesCameraDefaults,
+           sizeof(s_nes_camera_binds));
+    memset(s_nes_camera_seen, 0, sizeof(s_nes_camera_seen));
     s_nes_zapper_mouse = 1;
     s_nes_zapper_crosshair = 1;
     FILE* test = fopen(path, "r");
     if (test) {
         fclose(test);
         nes_kb_load_ini(path);
+        /* Existing installs predate [camera]. Add only missing entries so
+         * user-defined keys and every unrelated section remain untouched. */
+        for (int i = 0; i < LNG_CAMERA_BIND_COUNT; ++i) {
+            if (!s_nes_camera_seen[i])
+                launcher_ini_kv_write(
+                    path, "camera", kNesCameraKeyName[i],
+                    nes_kb_scancode_to_name(s_nes_camera_binds[i]));
+        }
     } else {
         nes_kb_write_defaults(path);
     }
@@ -231,4 +277,30 @@ void rui_nes_zapper_set(const char* path, int mouse_enabled, int crosshair) {
     s_nes_zapper_crosshair = crosshair ? 1 : 0;
     launcher_ini_kv_write(path, "zapper", "mouse",     s_nes_zapper_mouse ? "true" : "false");
     launcher_ini_kv_write(path, "zapper", "crosshair", s_nes_zapper_crosshair ? "true" : "false");
+}
+
+int rui_nes_camera_bind_get(const char* path, int action) {
+    if (!s_nes_binds_init) rui_nes_binds_init(path);
+    if (action < 0 || action >= LNG_CAMERA_BIND_COUNT)
+        return SDL_SCANCODE_UNKNOWN;
+    return (int)s_nes_camera_binds[action];
+}
+
+void rui_nes_camera_bind_set(const char* path, int action, int scancode) {
+    if (!s_nes_binds_init) rui_nes_binds_init(path);
+    if (action < 0 || action >= LNG_CAMERA_BIND_COUNT) return;
+    s_nes_camera_binds[action] = (SDL_Scancode)scancode;
+    launcher_ini_kv_write(
+        path, "camera", kNesCameraKeyName[action],
+        nes_kb_scancode_to_name((SDL_Scancode)scancode));
+}
+
+void rui_nes_camera_bind_reset(const char* path) {
+    if (!s_nes_binds_init) rui_nes_binds_init(path);
+    memcpy(s_nes_camera_binds, kNesCameraDefaults,
+           sizeof(s_nes_camera_binds));
+    for (int i = 0; i < LNG_CAMERA_BIND_COUNT; ++i)
+        launcher_ini_kv_write(
+            path, "camera", kNesCameraKeyName[i],
+            nes_kb_scancode_to_name(s_nes_camera_binds[i]));
 }

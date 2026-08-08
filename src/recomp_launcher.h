@@ -35,6 +35,10 @@ extern "C" {
 #define RECOMP_LAUNCHER_MAX_PLAYERS 8
 /* Host may #ifdef this when reading player_gamepad_guid[] from settings. */
 #define RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID 1
+/* Host may #ifdef this when reading multitap_enabled from settings. */
+#define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
+/* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
+#define RECOMP_LAUNCHER_HAS_MULTITAP_ANALOG 1
 
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
@@ -82,10 +86,12 @@ typedef struct RecompLauncherCNetplayLaunch {
     int      max_slots; /* lobby seat ceiling (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) */
     /* Seated players at launch — delay-sync slot_count. 0 = unknown / use max_slots. */
     int      player_count;
-    /* Host match_caps: opt into lobby-server UDP input relay (0/1).
-     * 3+ defaults to host-as-relay unless this is set. */
+    /* Host match_caps: lobby UDP SFU star (0/1). Online WS start always
+     * opens the SFU; this flag stays for launch/diagnostics. LAN/direct
+     * keeps host-as-relay / P2P when unset. */
     int      force_input_relay;
-    /* Host match_caps: ICE relay-only / Force TURN for UDP (0/1). */
+    /* Host match_caps: Force TURN delay-floor hint (0/1). Online transport
+     * is always lobby SFU (§108) — this no longer selects ICE relay. */
     int      force_turn;
     /* Host match_caps: rollback invent/episode path (0/1; lobby default on). */
     int      rollback;
@@ -169,15 +175,15 @@ typedef struct RecompLauncherCNetplayCallbacks {
     /* Optional host waiting-room settings. input_delay is frames, clamped 2..20. */
     int  (*input_delay_get)(void* ctx);
     int  (*input_delay_set)(void* ctx, int delay_frames);
-    /* Optional: host opt-in to server UDP input relay (0/1).
-     * 3+ lobbies default to host-as-relay unless this is enabled. */
+    /* Optional: lobby UDP SFU preference (0/1). Online start always SFU;
+     * LAN/direct may clear this for host-as-relay. */
     int  (*force_input_relay_get)(void* ctx);
     int  (*force_input_relay_set)(void* ctx, int force);
     /* Optional: current room seat ceiling (2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS).
      * 0 when not in a lobby / unknown. Prefer this over game num_players. */
     int  (*lobby_max_slots)(void* ctx);
-    /* Optional: host Force TURN / ICE relay-only (0/1). Server lobbies only;
-     * published in match_caps.force_turn so every peer uses typ relay. */
+    /* Optional: host Force TURN delay-floor hint (0/1). Server lobbies only;
+     * published in match_caps.force_turn. Does not change online transport. */
     int  (*force_turn_get)(void* ctx);
     int  (*force_turn_set)(void* ctx, int force);
     /* Optional: host Rollback (0/1). Published in match_caps.rollback;
@@ -187,6 +193,10 @@ typedef struct RecompLauncherCNetplayCallbacks {
     /* Optional host invent runway (P), frames, clamped 2..16. Rollback only. */
     int  (*input_prediction_get)(void* ctx);
     int  (*input_prediction_set)(void* ctx, int prediction_frames);
+    /* Optional: DualShock-on-multitap-tap hack (0/1). Host publishes in
+     * match_caps.multitap_analog; peers apply at match start. */
+    int  (*multitap_analog_get)(void* ctx);
+    int  (*multitap_analog_set)(void* ctx, int enable);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------
@@ -196,6 +206,12 @@ typedef struct RecompLauncherCNetplayCallbacks {
  * rebuild their catalogs after any mutation without dangling UI pointers. */
 #define RECOMP_LAUNCHER_MOD_ID_MAX 96
 #define RECOMP_LAUNCHER_MOD_VALUE_MAX 128
+#define RECOMP_LAUNCHER_MOD_AUTHOR_LINK_MAX 8
+
+typedef struct RecompLauncherCModAuthorLink {
+    char name[64];
+    char url[256];
+} RecompLauncherCModAuthorLink;
 
 typedef enum RecompLauncherCModOptionType {
     RECOMP_MOD_OPTION_BOOLEAN = 0,
@@ -208,8 +224,12 @@ typedef struct RecompLauncherCModPackage {
     char version[32];
     char name[128];
     char author[96];
+    RecompLauncherCModAuthorLink author_links[RECOMP_LAUNCHER_MOD_AUTHOR_LINK_MAX];
+    int  author_link_count;
     char description[512];
     char license[64];
+    char source_name[128];
+    char source_url[256];
     char status[256];
     int  enabled;
     int  option_count;
@@ -227,12 +247,20 @@ typedef struct RecompLauncherCModFeature {
     char package_name[128];
     char name[128];
     char author[96];
+    RecompLauncherCModAuthorLink author_links[RECOMP_LAUNCHER_MOD_AUTHOR_LINK_MAX];
+    int  author_link_count;
     char description[512];
+    char source_name[128];
+    char source_url[256];
     char group[96];
     char status[256];
     int  enabled;
     int  option_count;
     int  has_error;
+    /* Feature exposes a live 3D camera. When enabled, the Controller page
+     * conditionally presents camera bindings and the Mods detail links there.
+     * Appended for ABI stability; zero keeps every existing feature unchanged. */
+    int  camera_controls;
 } RecompLauncherCModFeature;
 
 typedef struct RecompLauncherCModOption {
@@ -247,6 +275,11 @@ typedef struct RecompLauncherCModOption {
     int64_t max_value;
     int64_t step;
     int  choice_count;
+    /* Non-zero when another option in the same feature currently overrides
+     * this one (manifest key: disabled_by). The provider resolves it, so the
+     * UI only has to grey the control out -- it never cross-references
+     * options itself. Example: ticking "Instant" makes the speed box inert. */
+    int  disabled;
 } RecompLauncherCModOption;
 
 typedef struct RecompLauncherCModChoice {
@@ -446,6 +479,56 @@ struct RecompLauncherCSettings {
     // Multiplier applied by the host to a controller's angular-rate sensor.
     // 0 means unset and is seeded to 1.0 by the launcher model.
     float gyro_sensitivity;    // 0.25..4.00, 1.00 = game default
+
+    // ---- optional presentation enhancements (capability-gated) -----------
+    // Appended additively so zero-initialized existing consumers keep their
+    // current settings surface and behavior.
+    int sharp_filter;           // integer prescale + fractional linear finish
+    int affine_filter;          // selective game-authorized affine smoothing
+
+    // ---- cartridge light sensor (GameInfo.has_solar_sensor games) ---------
+    // Appended additively. A few GBA cartridges carry a photodiode the game
+    // reads as gameplay input -- Boktai's Gun del Sol charges from real
+    // sunlight -- so "how bright is it where the player is" is a launch
+    // setting, not an emulator preference.
+    //
+    // solar_zip is a POSTAL CODE, deliberately text: many are not numeric
+    // ("SW1A", "K1A"). Empty means the host must not consult any network.
+    char solar_zip[16];
+    char solar_country[8];      // Zippopotam-style code: us, ca, gb, de, ...
+    int  solar_source;          // 0 = live local weather, 1 = fixed level
+    int  solar_manual_step;     // 0..8, used when solar_source == 1
+    int  solar_full_sun;        // W/m^2 that reads as full sun; 0 = host default
+
+    // ---- multi-display layout --------------------------------------------
+    // Index into GameInfo.display_layout_labels. This is intentionally
+    // independent of aspect/widescreen: it describes physical host windows,
+    // not how a game's camera is rendered inside one of them.
+    int display_layout;
+    // ---- PSX geometry-precision settings (capability-gated by
+    // GameInfo.has_geometry_precision) — appended additively, same ABI
+    // convention as every block above. ----
+    // The PS1's GTE projects in 16.16 and then discards the fraction when it
+    // saturates screen coordinates to whole pixels, so a moving mesh shimmers;
+    // and the GPU interpolates UVs affinely, so large floor/wall textures swim.
+    // These are the two opt-in corrections. Both are visual only — the
+    // guest-visible GTE screen coordinates stay integer and fully faithful.
+    // 0 = off (the faithful default on a fresh config).
+    int  geometry_correction;    // bool: sub-pixel vertex precision
+    int  perspective_texturing;  // bool: perspective-correct UVs
+
+    // ---- PSX multitap (SCPH-1070) ----------------------------------------
+    // Appended additively. When a PSX game advertises num_players >= 3, the
+    // launcher can hide seats beyond the two native ports until multitap is
+    // on. 0 = off, 1 = on. Hosts should seed from settings (psxrecomp
+    // defaults ON when unset). Netplay lobbies with more than 2 seats always
+    // arm multitap in the runtime regardless of this flag.
+    int  multitap_enabled;
+
+    // Opt-in DualShock-on-multitap-tap hack (0 off, 1 on). Persisted to
+    // settings.toml and game.toml [controller] multitap_analog. Hosts may
+    // also publish it in match_caps for the session.
+    int  multitap_analog;
 };
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
@@ -456,13 +539,22 @@ typedef struct RecompLauncherCDiscVerify {
     char region[8];    // e.g. "NTSC-U"; "" = unknown
     int  iso_ok;       // ISO9660 / system header present
     int  verdict;      // 0 none, 1 ok, 2 warn, 3 bad
+    /* Appended for ABI: TOC / netplay mount gate (memset 0 = legacy host). */
+    int  track_count;      // mounted iso_track_count; 0 if TOC not opened
+    int  netplay_ok;       // 1 = mount satisfies game.toml [netplay] policy
+    char disc_fp[65];      // lowercase hex SHA-256 TOC fingerprint; "" if none
+    char netplay_detail[160];
 } RecompLauncherCDiscVerify;
 
 /* Host BIOS check for the first-run setup wizard (has_bios games). */
 typedef struct RecompLauncherCBiosVerify {
-    int  ok;           // 1 = usable BIOS present
+    int  ok;           // 1 = usable BIOS present (linked / ready to Play)
     int  warn;         // 1 = size/CRC soft mismatch (still ok to boot)
     char detail[160];  // short status for the UI
+    /* 1 = file looks valid but is not compiled into this binary — player must
+     * Generate & rebuild (or switch back to a linked BIOS like OpenBIOS).
+     * Appended for ABI compatibility; older hosts leave it 0 via memset. */
+    int  needs_regen;
 } RecompLauncherCBiosVerify;
 
 /* Optional progress callback for prepare_with_progress (worker thread).
@@ -664,6 +756,12 @@ typedef struct RecompLauncherCGameInfo {
     // keybinds.ini [zapper] section) alongside the pad UI.
     int  zapper;
 
+    // Cartridge light sensor: 1 adds a Solar sensor panel to Settings, where
+    // the player sets the location its brightness is read from. Games without
+    // the hardware pass 0 and the panel never composes, so every existing
+    // consumer is byte-for-byte unchanged.
+    int  has_solar_sensor;
+
     // Live aspect-driven view capability. When present, Display settings show
     // an Adaptive view toggle. Adaptive + fullscreen leaves the fixed aspect
     // control visible but disabled because the display chooses the live width.
@@ -681,9 +779,14 @@ typedef struct RecompLauncherCGameInfo {
     const char* resume_netplay_endpoint;
 
     /* ---- first-run setup wizard -------------------------------------------
-     * When needs_setup is 1, OR the launcher detects a missing ROM/disc (and
-     * missing BIOS when has_bios), a blocking setup modal opens before the
-     * dashboard. Cart-only games (has_bios=0) only prompt for a ROM.
+     * Opt-in product surface. When setup_wizard_supported is 0 (default), the
+     * launcher never opens the first-run modal and never shows Generate /
+     * rebuild — even if prepare_* callbacks are non-NULL. Hosts that ship a
+     * self-build flow set this to 1 and fill prepare/rebuild/toolchain fields.
+     *
+     * When supported AND (needs_setup is 1 OR the launcher detects a missing
+     * ROM/disc, and missing BIOS when has_bios), a blocking setup modal opens
+     * before the dashboard. Cart-only games (has_bios=0) only prompt for a ROM.
      *
      * bios_verify (optional): host checks BIOS size/CRC. Return 1 and fill
      * `out` (ok/warn/detail). Called with an empty path when the player has
@@ -693,7 +796,7 @@ typedef struct RecompLauncherCGameInfo {
      *
      * prepare_disc (optional): convert a raw dump into a playable image.
      * Blocking host callback; the UI shows a busy state while it runs.
-     * Return 1 and write the playable .cue/.bin/.iso path into out_disc_path.
+     * Return 1 and write the playable .cue/.bin/.img/.iso/.car path into out_disc_path.
      * prepare_disc_label / prepare_disc_note are button + help text (NULL =>
      * "Convert raw dump…" / default note).
      *
@@ -723,6 +826,18 @@ typedef struct RecompLauncherCGameInfo {
      * sensitivity slider. The launcher only edits Settings.gyro_sensitivity;
      * discovery, sensor selection, and axis mapping remain host-owned. */
     int has_gyro_controls;
+
+    /* Add independent checkboxes to Display settings. The host maps their
+     * committed Settings values onto renderer configuration. */
+    int has_sharp_filter;
+    int has_affine_filter;
+
+    /* ---- multi-display layout -------------------------------------------
+     * Optional host-defined Display row. Settings.display_layout cycles over
+     * these labels. Nintendo DS uses {"Stacked window","Separate windows"}.
+     * NULL/0 keeps every existing single-display launcher unchanged. */
+    const char* const* display_layout_labels;
+    int num_display_layouts;
 
     /* ---- prepare job UX (appended; disc convert / local codegen) ---------
      * prepare_use_selected_rom: 1 = the prepare button uses the already-
@@ -761,6 +876,27 @@ typedef struct RecompLauncherCGameInfo {
     const char* rebuild_busy_status;     /* NULL => "Building game…" */
     const char* rebuild_success_status;  /* NULL => "Build complete." */
 
+    /* ---- optional PGO optimize (MotK FMV; skip generate / setup wizard) ---
+     * pgo_optimize_with_progress: instrument → train (video) → PGO use rebuild
+     * on existing generated C. Same success/relaunch contract as rebuild. */
+    int (*pgo_optimize_with_progress)(const char* rom_path,
+                                      char* out_exe_path, size_t out_cap,
+                                      char* err_msg, size_t err_cap,
+                                      RecompLauncherCPrepareProgressFn on_progress,
+                                      void* progress_ctx);
+    const char* pgo_busy_status;         /* NULL => "Optimizing FMV…" */
+    const char* pgo_success_status;      /* NULL => "FMV optimize complete." */
+
+    /* ---- optional FMV timing opt (MotK VLC load-charge batch; regen+rebuild)
+     * Unlike PGO, this regenerates C from game.toml then rebuilds (no train). */
+    int (*fmv_timing_optimize_with_progress)(const char* rom_path,
+                                             char* out_exe_path, size_t out_cap,
+                                             char* err_msg, size_t err_cap,
+                                             RecompLauncherCPrepareProgressFn on_progress,
+                                             void* progress_ctx);
+    const char* fmv_timing_busy_status;     /* NULL => "Applying FMV timing…" */
+    const char* fmv_timing_success_status;  /* NULL => "FMV timing applied." */
+
     /* When 1, the setup modal hides "Continue to launcher" and requires
      * prepare (and rebuild when rebuild_after_prepare is set). Local codegen
      * first-run: Generate & rebuild, then relaunch — Quit is the only other exit. */
@@ -769,14 +905,41 @@ typedef struct RecompLauncherCGameInfo {
     /* ---- portable toolchain step (appended; local codegen hosts) ----------
      * When setup_needs_toolchain is 1, the first-run wizard shows a page to
      * download cmake-clang-v1 or pick an offline zip before BIOS/ROM/generate.
-     * toolchain_is_ready: optional quick check (non-NULL + returns 1 => skip
-     * page 0). ensure_toolchain_with_progress: download (download!=0) or install
-     * from zip_path (non-empty); download==0 and empty zip = resolve cache only. */
+     * toolchain_is_ready: optional quick check (usable local cmake/clang).
+     * ensure_toolchain_with_progress: download==0 zip/cache only; 1 = download
+     * if missing; 2 = force GitHub /releases/latest (update). Empty zip_path
+     * with download==0 resolves cache only. See toolchain_update_available
+     * (appended below) for remote newer-than-local prompts. */
     int setup_needs_toolchain;
     int (*toolchain_is_ready)(void);
     int (*ensure_toolchain_with_progress)(
         int download, const char* zip_path, char* err_msg, size_t err_cap,
         RecompLauncherCPrepareProgressFn on_progress, void* progress_ctx);
+    /* PSX geometry-precision controls (Settings.geometry_correction /
+     * perspective_texturing). 0 => no row drawn, so every console that leaves
+     * this unset keeps exactly today's settings surface. One flag still gates
+     * both settings because they are two halves of the same enhancement, but
+     * only perspective_texturing currently draws a control: geometry_correction
+     * is known to crack meshes at the coverage the runtime can achieve and is
+     * withdrawn from the UI while staying readable from game.toml/settings.toml
+     * (psxrecomp ENHANCEMENTS.md G1.8/G1.9). Appended for ABI stability. */
+    int  has_geometry_precision;
+
+    /* Master switch for the first-run setup wizard + Generate & rebuild UI.
+     * Appended for ABI stability; zero-init keeps every existing host dark. */
+    int  setup_wizard_supported;
+
+    /* Optional: return 1 when the installed cmake-clang-v1 pack is older than
+     * GitHub /releases/latest (fills local/remote version strings). Wizard
+     * keeps page 0 open to prompt Update / Skip. NULL => no update checks.
+     * Appended for ABI stability. */
+    int (*toolchain_update_available)(char* local_ver, size_t local_cap,
+                                      char* remote_ver, size_t remote_cap);
+
+    /* Optional: after toolchain_is_ready returns 0, a short note when the host
+     * removed a broken cache (failed clang/lld smoke test). NULL/empty => none.
+     * Appended for ABI stability. */
+    const char* (*toolchain_repair_note)(void);
 } RecompLauncherCGameInfo;
 
 /* recomp_launcher_run_window return codes */
