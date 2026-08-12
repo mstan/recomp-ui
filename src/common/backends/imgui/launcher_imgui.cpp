@@ -3260,6 +3260,18 @@ void draw_assist_tools(LauncherModel* m, const LauncherTheme& th) {
               "features. The game window should disclose when it is active.");
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, px(8)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
+    ImGui::TextUnformatted("FAST-FORWARD SPEED");
+    ImGui::PopStyleColor();
+    ImGui::TextColored(col(th.text_muted),
+                       "Target emulation speed while Fast-forward is held or latched.");
+    int speed = m->s.assist_fast_forward_multiplier;
+    ImGui::SetNextItemWidth(px(360));
+    if (ImGui::SliderInt("##assist_fast_forward_speed", &speed,
+                         m->assist_fast_forward_min,
+                         m->assist_fast_forward_max, "%dx"))
+        m->s.assist_fast_forward_multiplier = speed;
     if (m->settings_bindings) {
         ImGui::Dummy(ImVec2(0, px(8)));
         draw_assist_binding_editor(m, th, "assist_binds", 0, true);
@@ -5657,7 +5669,7 @@ static void mod_note_error(LauncherModel* m) {
 
 static bool mod_commit_launch(LauncherModel* m) {
     if (!m || !m->mods || !m->mods->commit ||
-        m->mods->commit(m->mods->ctx, launcher_model_rom_path(m))) {
+        m->mods->commit(m->mods->ctx, launcher_model_effective_rom_path(m))) {
         return true;
     }
     mod_note_error(m);
@@ -6488,9 +6500,58 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     ImGui::EndChild();
 }
 
+static void draw_rom_patch(LauncherModel* m, const LauncherTheme& th) {
+    if (!m || !m->rom_patch_supported) return;
+
+    if (ImGui::BeginChild("##rom_patch", ImVec2(0, px(170)),
+                          ImGuiChildFlags_Borders)) {
+        eyebrow("ROM PATCH");
+        bool enabled = m->s.rom_patch_enabled != 0;
+        if (ImGui::Checkbox("Enable ROM patch", &enabled))
+            launcher_model_toggle_rom_patch(m);
+
+        const float clear_w = px(70);
+        const float browse_w = px(95);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - browse_w - clear_w -
+                        px(8));
+        if (ImGui::Button("Browse...", ImVec2(browse_w, px(28)))) {
+            static const char* patterns[] = { "*.ips", "*.ips32", "*.bps" };
+            if (launcher_pick_file("Select ROM patch", patterns, 3,
+                                   "ROM patches", g_pick_buf,
+                                   sizeof(g_pick_buf))) {
+                launcher_model_set_rom_patch(m, g_pick_buf);
+            }
+        }
+        ImGui::SameLine(0, px(8));
+        ImGui::BeginDisabled(!m->s.rom_patch_path[0]);
+        if (ImGui::Button("Clear", ImVec2(clear_w, px(28))))
+            launcher_model_clear_rom_patch(m);
+        ImGui::EndDisabled();
+
+        const char* path = m->s.rom_patch_path[0]
+            ? m->s.rom_patch_path : "No patch selected";
+        char elided[384];
+        elide_left(path, ImGui::GetContentRegionAvail().x,
+                   elided, sizeof(elided));
+        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        if (ImGui::IsItemHovered() && m->s.rom_patch_path[0])
+            ImGui::SetTooltip("%s", m->s.rom_patch_path);
+        if (m->rom_patch_note && m->rom_patch_note[0])
+            ImGui::TextWrapped("%s", m->rom_patch_note);
+        if (m->rom_patch_status[0])
+            ImGui::TextColored(col(th.accent), "%s", m->rom_patch_status);
+    }
+    ImGui::EndChild();
+}
+
 void draw_mods(LauncherModel* m, const LauncherTheme& th) {
     const auto* mods = m ? m->mods : nullptr;
-    if (!mods) return;
+    if (!m || (!mods && !m->rom_patch_supported)) return;
+    if (m->rom_patch_supported) {
+        draw_rom_patch(m, th);
+        if (!mods) return;
+        ImGui::Dummy(ImVec2(0, px(8)));
+    }
     const bool feature_provider =
         mods->feature_count && mods->feature_get &&
         mods->feature_option_get && mods->feature_enable &&
@@ -6691,8 +6752,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         /* Prefer mismatch prompt over launch even if can_play races true. */
         if (bios_block)
             launcher_model_bios_play_prompt(m);
-        else if (mod_commit_launch(m))
+        else if (launcher_model_prepare_rom_patch(m) && mod_commit_launch(m))
             m->action = LNG_ACTION_LAUNCH;
+        else if (m->rom_patch_supported && m->s.rom_patch_enabled)
+            launcher_model_set_view(m, LNG_VIEW_MODS);
     } else if (!play_enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->has_bios && !m->setup_bios_ok) {
@@ -7658,7 +7721,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         const float right = ImGui::GetWindowContentRegionMax().x;
         const float y = hdr_top + px(6.0f);
         if (m->view == LNG_VIEW_DASHBOARD) {
-            const int count = 1 + (m->mods ? 1 : 0) +
+            const int count = 1 + ((m->mods || m->rom_patch_supported) ? 1 : 0) +
                               (m->has_assist_tools ? 1 : 0) +
                               ((m->credits_text && m->credits_text[0]) ? 1 : 0);
             const float w = px(110.0f);
@@ -7666,7 +7729,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
             ImGui::SetCursorPos(ImVec2(right - total, y));
             if (ImGui::Button("Settings", ImVec2(w, px(34))))
                 launcher_model_set_view(m, LNG_VIEW_SETTINGS);
-            if (m->mods) {
+            if (m->mods || m->rom_patch_supported) {
                 ImGui::SameLine(0, gap);
                 if (ImGui::Button("Mods", ImVec2(w, px(34))))
                     launcher_model_set_view(m, LNG_VIEW_MODS);

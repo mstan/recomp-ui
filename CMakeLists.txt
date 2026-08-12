@@ -62,6 +62,20 @@ recomp_target_launcher_ui(recomp-ui-launcher CONSOLE all)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(recomp-ui-ips-patch-test
+        tests/ips_patch_test.c
+        src/common/ips_patch.c
+        src/common/crc32.c)
+    target_include_directories(recomp-ui-ips-patch-test PRIVATE src/common)
+    add_test(NAME recomp-ui-ips-patch COMMAND $<TARGET_FILE:recomp-ui-ips-patch-test>)
+
+    add_executable(recomp-ui-rom-patch-tool
+        tools/rom_patch_tool.c
+        src/common/ips_patch.c
+        src/common/crc32.c
+        src/common/sha1.c)
+    target_include_directories(recomp-ui-rom-patch-tool PRIVATE src/common)
+
     add_test(
         NAME recomp-ui-asset-manifests
         COMMAND ${CMAKE_COMMAND}

@@ -65,7 +65,7 @@ int recomp_launcher_run_window(const char* window_title,
 
     if (act == LNG_ACTION_LAUNCH || act == LNG_ACTION_RELAUNCH) {
         launcher_model_commit(&model, io);   // edited settings back to the caller
-        const char* rom = launcher_model_rom_path(&model);
+        const char* rom = launcher_model_effective_rom_path(&model);
         if (out_rom_path && out_rom_path_len) {
             if (rom && rom[0])
                 snprintf(out_rom_path, out_rom_path_len, "%s", rom);
