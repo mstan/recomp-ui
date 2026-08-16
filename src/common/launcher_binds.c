@@ -214,6 +214,17 @@ static const char* scancode_label(SDL_Scancode sc) {
     return (n && n[0]) ? n : "(unbound)";
 }
 
+static int is_snes_profile(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->id && !strcmp(prof->id, "snes");
+}
+
+static void snes_gamepad_read_controls(int player, char out[LNG_SNES_PAD_BUTTON_COUNT][48]);
+static void snes_gamepad_label(const char* token, char* out, size_t cap);
+static int snes_gamepad_set_button(LauncherModel* m, int player, int b,
+                                   int kind, int code, int axis_dir);
+static void snes_gamepad_reset_player(int player);
+
 // Display label for a Genesis gamepad bind: SDL's own controller button/axis
 // names ("dpup", "a", "leftshoulder"; axes get a direction suffix, "leftx+").
 static void genesis_pad_label(int kind, int code, int axis_dir, char* out, size_t cap) {
@@ -297,6 +308,13 @@ static void reload_player_display(LauncherModel* m, int player) {
     for (int b = 0; b < n; ++b) {
         SDL_Scancode sc = recompui_keybinds_get_button(player, kb_index[b]);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]), scancode_label(sc));
+    }
+    if (is_snes_profile(m)) {
+        char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+        snes_gamepad_read_controls(player - 1, controls);
+        for (int b = 0; b < LNG_SNES_PAD_BUTTON_COUNT; ++b)
+            snes_gamepad_label(controls[b], m->pad_binds[player - 1][b],
+                               sizeof(m->pad_binds[player - 1][b]));
     }
 }
 
@@ -411,7 +429,7 @@ void launcher_ini_kv_write(const char* path, const char* section,
             }
         }
     }
-    char assign[128];
+    char assign[768];
     snprintf(assign, sizeof(assign), "%s = %s", key, value ? value : "");
 
     /* locate [section] body [start,end) */
@@ -457,6 +475,192 @@ void launcher_ini_kv_write(const char* path, const char* section,
 // Original config.ini [KeyMap] entry point, now a thin wrapper.
 static void keymap_write(const char* key, const char* value) {
     launcher_ini_kv_write(config_path(), "KeyMap", key, value);
+}
+
+// ---- SNES config.ini [GamepadMap] bridge -----------------------------------
+// Mega Man X already persists gamepad input through config.ini [GamepadMap].
+// The launcher presents SNES buttons in UI order, while the runtime's Controls
+// line is command order: Up,Down,Left,Right,Select,Start,A,B,X,Y,L,R.
+static const int kSnesUiToGamepadConfig[LNG_SNES_PAD_BUTTON_COUNT] = {
+    0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 5, 4
+};
+
+static const char* const kSnesGamepadDefaultControls[LNG_SNES_PAD_BUTTON_COUNT] = {
+    "DpadUp", "DpadDown", "DpadLeft", "DpadRight", "Back", "Start",
+    "B", "A", "Y", "X", "Lb", "Rb",
+};
+
+static const char* snes_gamepad_config_key(int player) {
+    return player == 1 ? "ControlsP2" : "Controls";
+}
+
+static char* trim_token(char* s) {
+    while (*s == ' ' || *s == '\t') ++s;
+    char* end = s + strlen(s);
+    while (end > s && (end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t'))
+        *--end = 0;
+    return s;
+}
+
+static int token_eq(const char* a, const char* b) {
+    return ieq(a, strlen(a), b);
+}
+
+static void snes_gamepad_read_config_order(int player,
+                                           char out[LNG_SNES_PAD_BUTTON_COUNT][48]) {
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i)
+        copy_str(out[i], sizeof(out[i]), kSnesGamepadDefaultControls[i]);
+
+    long len = 0;
+    char* text = read_whole(config_path(), &len);
+    if (!text) return;
+
+    const char* key = snes_gamepad_config_key(player);
+    int in_gamepad = 0;
+    char* save = NULL;
+    for (char* line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char* p = trim_token(line);
+        if (!*p || *p == '#') continue;
+        if (*p == '[') {
+            char* close = strchr(p, ']');
+            size_t sl = close ? (size_t)(close - p - 1) : strlen(p + 1);
+            in_gamepad = ieq(p + 1, sl, "GamepadMap");
+            continue;
+        }
+        if (!in_gamepad) continue;
+        char* eq = strchr(p, '=');
+        if (!eq) continue;
+        char* ke = eq;
+        while (ke > p && (ke[-1] == ' ' || ke[-1] == '\t')) --ke;
+        if (!ieq(p, (size_t)(ke - p), key)) continue;
+
+        char* value = eq + 1;
+        char* hash = strchr(value, '#');
+        if (hash) *hash = 0;
+        char* item_save = NULL;
+        int i = 0;
+        for (char* item = strtok_r(value, ",", &item_save);
+             item && i < LNG_SNES_PAD_BUTTON_COUNT;
+             item = strtok_r(NULL, ",", &item_save), ++i) {
+            copy_str(out[i], sizeof(out[i]), trim_token(item));
+        }
+        break;
+    }
+    free(text);
+}
+
+static void snes_gamepad_read_controls(int player,
+                                       char out[LNG_SNES_PAD_BUTTON_COUNT][48]) {
+    char config_order[LNG_SNES_PAD_BUTTON_COUNT][48];
+    snes_gamepad_read_config_order(player, config_order);
+    for (int b = 0; b < LNG_SNES_PAD_BUTTON_COUNT; ++b)
+        copy_str(out[b], sizeof(out[b]), config_order[kSnesUiToGamepadConfig[b]]);
+}
+
+static void snes_gamepad_write_config_order(int player,
+                                            char controls[LNG_SNES_PAD_BUTTON_COUNT][48]) {
+    char value[768] = {};
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i) {
+        if (i) strncat(value, ", ", sizeof(value) - strlen(value) - 1);
+        strncat(value, controls[i], sizeof(value) - strlen(value) - 1);
+    }
+    launcher_ini_kv_write(config_path(), "GamepadMap",
+                          snes_gamepad_config_key(player), value);
+}
+
+static void snes_gamepad_label(const char* token, char* out, size_t cap) {
+    if (!token || !token[0]) { copy_str(out, cap, "(unbound)"); return; }
+    if (token_eq(token, "DpadUp"))    { copy_str(out, cap, "D-Pad Up"); return; }
+    if (token_eq(token, "DpadDown"))  { copy_str(out, cap, "D-Pad Down"); return; }
+    if (token_eq(token, "DpadLeft"))  { copy_str(out, cap, "D-Pad Left"); return; }
+    if (token_eq(token, "DpadRight")) { copy_str(out, cap, "D-Pad Right"); return; }
+    if (token_eq(token, "Back"))      { copy_str(out, cap, "Back"); return; }
+    if (token_eq(token, "Guide"))     { copy_str(out, cap, "Guide"); return; }
+    if (token_eq(token, "Start"))     { copy_str(out, cap, "Start"); return; }
+    if (token_eq(token, "L1") || token_eq(token, "Lb")) { copy_str(out, cap, "L1"); return; }
+    if (token_eq(token, "R1") || token_eq(token, "Rb")) { copy_str(out, cap, "R1"); return; }
+    if (token_eq(token, "L2"))        { copy_str(out, cap, "L2"); return; }
+    if (token_eq(token, "R2"))        { copy_str(out, cap, "R2"); return; }
+    if (token_eq(token, "L3"))        { copy_str(out, cap, "L3"); return; }
+    if (token_eq(token, "R3"))        { copy_str(out, cap, "R3"); return; }
+    copy_str(out, cap, token);
+}
+
+static const char* snes_gamepad_token_for_capture(int kind, int code, int axis_dir) {
+    if (kind == LNG_PADBIND_BUTTON) {
+#if defined(LNG_SDL3)
+        switch ((SDL_GamepadButton)code) {
+        case SDL_GAMEPAD_BUTTON_SOUTH:          return "A";
+        case SDL_GAMEPAD_BUTTON_EAST:           return "B";
+        case SDL_GAMEPAD_BUTTON_WEST:           return "X";
+        case SDL_GAMEPAD_BUTTON_NORTH:          return "Y";
+        case SDL_GAMEPAD_BUTTON_BACK:           return "Back";
+        case SDL_GAMEPAD_BUTTON_GUIDE:          return "Guide";
+        case SDL_GAMEPAD_BUTTON_START:          return "Start";
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK:     return "L3";
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK:    return "R3";
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:  return "Lb";
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return "Rb";
+        case SDL_GAMEPAD_BUTTON_DPAD_UP:        return "DpadUp";
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:      return "DpadDown";
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:      return "DpadLeft";
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:     return "DpadRight";
+        default:                                return NULL;
+        }
+#else
+        switch ((SDL_GameControllerButton)code) {
+        case SDL_CONTROLLER_BUTTON_A:             return "A";
+        case SDL_CONTROLLER_BUTTON_B:             return "B";
+        case SDL_CONTROLLER_BUTTON_X:             return "X";
+        case SDL_CONTROLLER_BUTTON_Y:             return "Y";
+        case SDL_CONTROLLER_BUTTON_BACK:          return "Back";
+        case SDL_CONTROLLER_BUTTON_GUIDE:         return "Guide";
+        case SDL_CONTROLLER_BUTTON_START:         return "Start";
+        case SDL_CONTROLLER_BUTTON_LEFTSTICK:     return "L3";
+        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:    return "R3";
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return "Lb";
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return "Rb";
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:       return "DpadUp";
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     return "DpadDown";
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     return "DpadLeft";
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    return "DpadRight";
+        default:                                  return NULL;
+        }
+#endif
+    }
+    if (kind == LNG_PADBIND_AXIS && axis_dir >= 0) {
+#if defined(LNG_SDL3)
+        if (code == (int)SDL_GAMEPAD_AXIS_LEFT_TRIGGER) return "L2";
+        if (code == (int)SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) return "R2";
+#else
+        if (code == (int)SDL_CONTROLLER_AXIS_TRIGGERLEFT) return "L2";
+        if (code == (int)SDL_CONTROLLER_AXIS_TRIGGERRIGHT) return "R2";
+#endif
+    }
+    return NULL;
+}
+
+static int snes_gamepad_set_button(LauncherModel* m, int player, int b,
+                                   int kind, int code, int axis_dir) {
+    if (!m || player < 0 || player > 1 || b < 0 || b >= LNG_SNES_PAD_BUTTON_COUNT)
+        return 0;
+    const char* token = snes_gamepad_token_for_capture(kind, code, axis_dir);
+    if (!token) return 0;
+
+    char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+    snes_gamepad_read_config_order(player, controls);
+    copy_str(controls[kSnesUiToGamepadConfig[b]], sizeof(controls[0]), token);
+    snes_gamepad_write_config_order(player, controls);
+    snes_gamepad_label(token, m->pad_binds[player][b],
+                       sizeof(m->pad_binds[player][b]));
+    return 1;
+}
+
+static void snes_gamepad_reset_player(int player) {
+    char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i)
+        copy_str(controls[i], sizeof(controls[i]), kSnesGamepadDefaultControls[i]);
+    snes_gamepad_write_config_order(player, controls);
 }
 
 // Format SDL keycode + mods the way config.c's ParseKeyArray reads back.
@@ -618,6 +822,11 @@ void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
         rui_psx_pad_binds_label(psx_input_ini_path(), guid, b,
                                 m->pad_binds[player - 1][b],
                                 (int)sizeof(m->pad_binds[player - 1][b]));
+        return;
+    }
+    if (is_snes_profile(m)) {
+        if (player > 2) return;
+        (void)snes_gamepad_set_button(m, player - 1, b, kind, code, axis_dir);
         return;
     }
     // Genesis: has_pad_binds console (key + pad pair per logical button).
@@ -935,6 +1144,13 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
     if (is_gb_profile(m)) {
         if (player != 1) return;
         rui_gb_binds_reset(gb_binds_file_path());
+        reload_player_display(m, player);
+        return;
+    }
+    if (is_snes_profile(m)) {
+        recompui_keybinds_reset_player(player);
+        recompui_keybinds_save();
+        snes_gamepad_reset_player(player - 1);
         reload_player_display(m, player);
         return;
     }
