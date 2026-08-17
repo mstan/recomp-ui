@@ -125,6 +125,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* hide_audio_freq   */ 0,
     /* brand             */ "brand_psx.tga",
     /* wordmark_image    */ NULL,
+    /* native_fb_height  */ 256,   /* PAL 512x256; NTSC 240 rounds the same way */
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------
