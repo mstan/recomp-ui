@@ -20,6 +20,7 @@ int main(void) {
     assert(game.has_renderer == 1);
     assert(game.has_supersampling == 1);
     assert(game.has_screen_kind == 1);
+    assert(game.has_vsync == 1);
 
     return 0;
 }

@@ -7,6 +7,11 @@ static const char *const kFullscreenChoices[] = {
     "Windowed", "Borderless", "Exclusive"
 };
 static const char *const kTextureFilterChoices[] = { "Nearest", "Linear" };
+/* Order matches RECOMP_LAUNCHER_FMV_FILTER_* minus one (choice indices are
+ * 0-based), least -> most smoothing. */
+static const char *const kFmvFilterChoices[] = {
+    "Nearest", "Bilinear", "Sharp", "Bicubic"
+};
 
 static int has(RecompRuntimeUiStandardFeatures features,
                RecompRuntimeUiStandardFeatures feature) {
@@ -109,6 +114,10 @@ RecompRuntimeUi *recomp_runtime_ui_create_standard(
         add_item(items, &count, RECOMP_RUNTIME_UI_KEY_TEXTURE_FILTER, "Graphics",
                  "Texture filtering", "Choose nearest or linear sampling.",
                  RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, kTextureFilterChoices, 2, NULL);
+    if (has(f, RECOMP_RUNTIME_UI_STANDARD_FMV_FILTER))
+        add_item(items, &count, RECOMP_RUNTIME_UI_KEY_FMV_FILTER, "Graphics",
+                 "FMV filtering", "Choose how full-motion video is scaled up.",
+                 RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, kFmvFilterChoices, 4, NULL);
     if (has(f, RECOMP_RUNTIME_UI_STANDARD_RESOLUTION_SCALE))
         add_item(items, &count, RECOMP_RUNTIME_UI_KEY_RESOLUTION_SCALE, "Graphics",
                  "Resolution scale", "Set the internal rendering resolution.",

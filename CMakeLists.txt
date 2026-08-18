@@ -27,6 +27,12 @@ string(TOUPPER "${SNESRECOMP_SDL_BACKEND}" SNESRECOMP_SDL_BACKEND)
 if(SNESRECOMP_SDL_BACKEND STREQUAL "SDL3")
     find_package(SDL3 CONFIG REQUIRED)
     set(RUI_SDL_TARGET SDL3::SDL3)
+    # Any target that compiles a header off the launcher_platform.h chain needs
+    # these, or that header falls through to <SDL.h> -- the SDL2 include layout --
+    # and SDL_main's WinMain shim can rewrite standalone test entry points.
+    # recomp_target_launcher_ui() sets the launcher up; standalone targets that
+    # only link RUI_SDL_TARGET must be given the same contract explicitly.
+    set(RUI_SDL_DEFS LNG_SDL3=1 SDL_MAIN_HANDLED=1)
     if(TARGET SDL3::SDL3-shared)
         set(RUI_SDL_RUNTIME_TARGET SDL3::SDL3-shared)
     endif()
@@ -41,11 +47,12 @@ else()
     message(FATAL_ERROR "SNESRECOMP_SDL_BACKEND must be SDL3 or SDL2")
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/recomp_gl.cmake)
 if(WIN32)
     set(RUI_GL_LIBS opengl32)
 else()
-    find_package(OpenGL REQUIRED)
-    set(RUI_GL_LIBS OpenGL::GL ${CMAKE_DL_LIBS})
+    recomp_resolve_gl(RUI_GL_TARGET)
+    set(RUI_GL_LIBS ${RUI_GL_TARGET} ${CMAKE_DL_LIBS})
 endif()
 
 add_executable(recomp-ui-launcher src/proto_main.c)
@@ -62,6 +69,20 @@ recomp_target_launcher_ui(recomp-ui-launcher CONSOLE all)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(recomp-ui-ips-patch-test
+        tests/ips_patch_test.c
+        src/common/ips_patch.c
+        src/common/crc32.c)
+    target_include_directories(recomp-ui-ips-patch-test PRIVATE src/common)
+    add_test(NAME recomp-ui-ips-patch COMMAND $<TARGET_FILE:recomp-ui-ips-patch-test>)
+
+    add_executable(recomp-ui-rom-patch-tool
+        tools/rom_patch_tool.c
+        src/common/ips_patch.c
+        src/common/crc32.c
+        src/common/sha1.c)
+    target_include_directories(recomp-ui-rom-patch-tool PRIVATE src/common)
+
     add_test(
         NAME recomp-ui-asset-manifests
         COMMAND ${CMAKE_COMMAND}
@@ -115,10 +136,29 @@ if(BUILD_TESTING)
     target_include_directories(recomp-ui-psx-binds-test PRIVATE
         src src/common src/consoles/psx)
     target_link_libraries(recomp-ui-psx-binds-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-psx-binds-test PRIVATE ${RUI_SDL_DEFS})
     add_test(
         NAME recomp-ui-psx-binds
         COMMAND $<TARGET_FILE:recomp-ui-psx-binds-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-test.ini")
+
+    # Multi-disc roster: sibling autofill + per-slot binding. Includes
+    # launcher_model.c (not links it) to reach the static path rewriter, so the
+    # model's own deps are compiled in alongside.
+    add_executable(recomp-ui-launcher-discs-test
+        tests/launcher_discs_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-discs-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-discs-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-discs
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-discs-test>
+                "${CMAKE_CURRENT_BINARY_DIR}")
 
     add_executable(recomp-ui-psx-profile-test
         tests/psx_profile_test.c)

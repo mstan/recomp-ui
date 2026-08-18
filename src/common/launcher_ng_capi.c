@@ -51,6 +51,11 @@ int recomp_launcher_run_window(const char* window_title,
         return RECOMP_LAUNCHER_RESULT_UNAVAILABLE;
     }
 
+    /* Same icon the host's game window carries — see GameInfo.window_icon_path.
+     * Applied before the model is built so the window is never briefly shown
+     * under the placeholder icon. */
+    launcher_platform_set_icon(&plat, game ? game->window_icon_path : NULL);
+
     LauncherModel model;
     launcher_model_init(&model, io, game, initial_rom);
     launcher_binds_load(&model, game ? game->config_path : NULL,
@@ -65,7 +70,7 @@ int recomp_launcher_run_window(const char* window_title,
 
     if (act == LNG_ACTION_LAUNCH || act == LNG_ACTION_RELAUNCH) {
         launcher_model_commit(&model, io);   // edited settings back to the caller
-        const char* rom = launcher_model_rom_path(&model);
+        const char* rom = launcher_model_effective_rom_path(&model);
         if (out_rom_path && out_rom_path_len) {
             if (rom && rom[0])
                 snprintf(out_rom_path, out_rom_path_len, "%s", rom);

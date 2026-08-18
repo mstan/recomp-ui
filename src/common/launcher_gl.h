@@ -32,6 +32,19 @@ LauncherTexture launcher_texture_load_colorkey(const char* path, int tolerance);
 
 void launcher_texture_free(LauncherTexture* t);
 
+// Decode an image file to a tightly-packed RGBA8 buffer, WITHOUT touching GL.
+// For the one consumer that needs pixels rather than a texture: the window /
+// taskbar icon, which SDL wants as a surface. Returns NULL on failure; on
+// success *w and *h are the image size and the caller must release the buffer
+// with launcher_image_free().
+//
+// This lives here rather than in the caller because launcher_gl.c owns the
+// launcher's PRIVATE stb_image instance (STB_IMAGE_STATIC — see the comment
+// there): a second copy in another translation unit is exactly the symbol
+// collision that build was set up to avoid.
+unsigned char* launcher_image_load_rgba(const char* path, int* w, int* h);
+void           launcher_image_free(unsigned char* pixels);
+
 #ifdef __cplusplus
 }
 #endif

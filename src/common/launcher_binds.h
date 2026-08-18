@@ -4,8 +4,9 @@
 //   * player buttons  -> keybinds.ini  (SDL *scancode* names), via keybinds.c
 //     -- EXCEPT the PSX SystemProfile, which persists through psxrecomp's own
 //        24-button psx_keybinds.c format instead (see the PSX-native bridge
-//        below launcher_binds_load's declaration) so PSX rebinds actually
-//        reach the game. SNES (and every stub profile) is unaffected.
+//        below launcher_binds_load's declaration) so PSX rebinds actually reach
+//        the game. SNES keyboard binds still use keybinds.c, while SNES gamepad
+//        binds persist through config.ini [GamepadMap].
 //   * system hotkeys   -> config.ini [KeyMap] (SDL *keycode* names), surgical edit
 //
 // This is the module that makes remaps actually STICK. Kept separate from the
@@ -63,8 +64,9 @@ int launcher_binds_wants_pad_capture(const LauncherModel* m, int player);
 #define LNG_PADBIND_BUTTON 1   // `code` = SDL_GameControllerButton
 #define LNG_PADBIND_AXIS   2   // `code` = SDL_GameControllerAxis, `axis_dir` = +1/-1
 
-// A player button's GAMEPAD bind was captured (Genesis has_pad_binds, or PSX
-// Gamepad Bindings panel keyed by the player's selected gamepad GUID).
+// A player button's GAMEPAD bind was captured (SNES [GamepadMap], Genesis
+// has_pad_binds, or PSX Gamepad Bindings panel keyed by the player's selected
+// gamepad GUID).
 // kind/code/axis_dir use the LNG_PADBIND_* encoding above. Persists through
 // the console's native bridge and refreshes the model's pad_binds display
 // string. No-op on consoles without a pad-bind store.

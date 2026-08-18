@@ -45,6 +45,8 @@ static const SystemProfile kSystemProfileSnes = {
         kSnesPadButtons, LNG_SNES_PAD_BUTTON_COUNT,
         "pad.tga", NULL, NULL,
         /* max_players */ 2, /* has_pad_mode */ 0,
+        /* binds_per_input */ 1, /* modes */ NULL, /* mode_count */ 0,
+        /* has_pad_binds */ 1,
     },
     /* save */    { SAVE_SRAM, 1, NULL },
     /* video */   {

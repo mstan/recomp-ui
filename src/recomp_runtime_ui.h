@@ -70,6 +70,7 @@ enum {
 #define RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE    "graphics.integer_scale"
 #define RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER    "graphics.linear_filter"
 #define RECOMP_RUNTIME_UI_KEY_TEXTURE_FILTER   "graphics.texture_filter"
+#define RECOMP_RUNTIME_UI_KEY_FMV_FILTER       "graphics.fmv_filter"
 #define RECOMP_RUNTIME_UI_KEY_RESOLUTION_SCALE "graphics.resolution_scale"
 #define RECOMP_RUNTIME_UI_KEY_COLOR_CORRECTION "graphics.color_correction"
 #define RECOMP_RUNTIME_UI_KEY_LCD_GHOSTING     "graphics.lcd_ghosting"
@@ -167,6 +168,7 @@ enum {
     RECOMP_RUNTIME_UI_STANDARD_SAVE_STATE        = UINT64_C(1) << 13,
     RECOMP_RUNTIME_UI_STANDARD_LOAD_STATE        = UINT64_C(1) << 14,
     RECOMP_RUNTIME_UI_STANDARD_RESET             = UINT64_C(1) << 15,
+    RECOMP_RUNTIME_UI_STANDARD_FMV_FILTER        = UINT64_C(1) << 16,
 };
 
 typedef struct RecompRuntimeUiStandardConfig {

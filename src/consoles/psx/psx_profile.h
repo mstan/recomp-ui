@@ -66,10 +66,14 @@ static const char* const kPanelsSettingsPsx[]   =
     { "video", "audio", "input", "system", "hotkeys", NULL };
 
 // ---- ROM (disc) file-picker filter ----------------------------------------------
-// Cue sheets only (Redump-style). Track .bin files sit beside the .cue; bare
-// .iso/.bin/.img are not offered in the picker — generate/boot need a TOC.
+// Cue sheets (Redump-style) preferred — track .bin files sit beside the .cue.
+// Bare .bin is accepted for single-file dumps, and .car for official Steam
+// re-release payloads (extension-renamed raw images, e.g. Tomba! Special
+// Edition's t_data_u.car); the runtime mounts an owning .cue when one exists.
 static const char* const kPsxDiscPatterns[] = {
     "*.cue",
+    "*.bin",
+    "*.car",
 };
 #define LNG_PSX_DISC_PATTERN_COUNT \
     ((int)(sizeof(kPsxDiscPatterns) / sizeof(kPsxDiscPatterns[0])))
@@ -99,6 +103,7 @@ static const SystemProfile kSystemProfilePsx = {
         /*renderer*/1, /*supersampling*/1, /*screen_kind*/1, /*frame_interp*/1, /*aspect*/1,
         /*texture_filter*/1, /*antialiasing*/1, /*spu_hq*/1, /*skip_fmv*/1, /*turbo_loads*/1,
         /*bios*/1, /*deadzone*/1,
+        /*widescreen_cells*/0, /*fmv_filter*/1,
     },
     /* verify */  { 1, NULL },    // disc-verdict mode; probe==NULL -> synthesized verdict (see launcher_model.c)
     // PSX's real hotkey catalog: the everyday transport controls only. Omits
@@ -120,7 +125,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* screen_kind_names */ NULL,   /* legacy Raw/CRT/Composite/Trinitron set */
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kPsxDiscPatterns, LNG_PSX_DISC_PATTERN_COUNT,
-                              "PlayStation disc (.cue)" },
+                              "PlayStation disc (.cue/.bin/.car)" },
     /* renderer_labels   */ NULL,
     /* hide_audio_freq   */ 0,
     /* brand             */ "brand_psx.tga",
@@ -153,10 +158,14 @@ static inline void launcher_profile_apply_psx(RecompLauncherCGameInfo* gi) {
     // Full PS1 settings surface.
     gi->has_window_size = 1; gi->has_renderer = 1; gi->has_supersampling = 1;
     gi->has_antialiasing = 1; gi->has_texture_filter = 1; gi->has_screen_kind = 1;
+    gi->has_fmv_filter = 1;    /* MDEC decodes video at native res; how it is
+                                * scaled to the window is a player choice. */
     gi->has_frame_interp = 0; gi->has_spu_hq = 1; gi->has_skip_fmv = 0;
     gi->has_turbo_loads = 1; gi->has_bios = 1;
     gi->has_deadzone_pct = 1;
     gi->has_rewind_depth = RECOMP_UI_PSX_HAS_REWIND ? 1 : 0;
+    gi->has_vsync = 1;         /* psxrecomp paces frames itself, so driver
+                                * vsync is a latency-vs-tearing choice. */
 }
 
 #ifdef __cplusplus

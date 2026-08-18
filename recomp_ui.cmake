@@ -57,11 +57,23 @@ set(RUI_SRC    ${RECOMP_UI_ROOT}/src)
 set(RUI_IMGUI  ${RUI_SRC}/third_party/imgui)
 set(RUI_ASSETS ${RECOMP_UI_ROOT}/assets)
 include("${RECOMP_UI_ROOT}/cmake/recomp_ui_assets.cmake")
+include("${RECOMP_UI_ROOT}/cmake/recomp_gl.cmake")
 
 # The ImGui backend is C++; the host project() is often C-only. enable_language
 # must run at directory scope (not inside the function, which executes during
 # generation), so it lives here — safe/idempotent if CXX is already enabled.
 enable_language(CXX)
+
+set(RECOMP_UI_LANGUAGE "" CACHE STRING
+    "Default launcher UI language code. Empty keeps English.")
+
+function(recomp_target_launcher_language TGT LANGUAGE)
+    if("${LANGUAGE}" STREQUAL "")
+        return()
+    endif()
+    target_compile_definitions(${TGT} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:RECOMP_UI_LANGUAGE="${LANGUAGE}">)
+endfunction()
 
 function(recomp_target_launcher_ui TGT)
     # BOXART_NAME: destination basename for BOXART under assets/img/ (default
@@ -76,10 +88,12 @@ function(recomp_target_launcher_ui TGT)
     # that recomp-ui's own backend glue (launcher_imgui.cpp) compiles against.
     # Used by gb-recompiled, whose runtime already vendors + uses ImGui for its
     # in-game menu. Omit both to keep the default self-contained vendored ImGui.
+    # LANGUAGE: launcher UI language code for this target. Missing translation
+    # keys fall back to the source English string.
     cmake_parse_arguments(
         RUI
         "HOST_IMGUI"
-        "CONSOLE;BOXART;BOXART_NAME;PAD;BRAND;IMGUI_DIR"
+        "CONSOLE;BOXART;BOXART_NAME;PAD;BRAND;IMGUI_DIR;LANGUAGE"
         ""
         ${ARGN})
 
@@ -146,6 +160,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/recomp_runtime_settings.c # shared cross-ecosystem setting catalog
         ${RUI_SRC}/common/launcher_boot_timing.c  # PSX_LAUNCHER_BOOT_TIMING / LNG_BOOT_TIMING
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
+        ${RUI_SRC}/common/launcher_i18n.cpp
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
         # reached when the active SystemProfile opts into the capability
@@ -185,6 +200,11 @@ function(recomp_target_launcher_ui TGT)
         RECOMP_LAUNCHER           # un-gate the GUI launcher block in the host's main()
         RECOMP_UI_ENABLE_MODS=$<BOOL:${RECOMP_UI_ENABLE_MODS}>
         SDL_MAIN_HANDLED)         # our real main() is the entry point (no SDL_main redirect)
+    if(RUI_LANGUAGE)
+        recomp_target_launcher_language(${TGT} "${RUI_LANGUAGE}")
+    elseif(RECOMP_UI_LANGUAGE)
+        recomp_target_launcher_language(${TGT} "${RECOMP_UI_LANGUAGE}")
+    endif()
     if(ANDROID)
         target_compile_definitions(${TGT} PRIVATE
             LNG_GLES2=1
@@ -212,8 +232,10 @@ function(recomp_target_launcher_ui TGT)
         # ws2_32: launcher_udp_port.c exclusive UDP bind probes for host lobby.
         target_link_libraries(${TGT} PRIVATE opengl32 ws2_32)
     else()
-        find_package(OpenGL REQUIRED)
-        target_link_libraries(${TGT} PRIVATE OpenGL::GL ${CMAKE_DL_LIBS})
+        # OpenGL::GL is absent on GLVND hosts without legacy libGL/glx.h
+        # (Steam Deck) even though the package is found — see cmake/recomp_gl.cmake.
+        recomp_resolve_gl(RUI_GL_TARGET)
+        target_link_libraries(${TGT} PRIVATE ${RUI_GL_TARGET} ${CMAKE_DL_LIBS})
     endif()
 
     if(NOT MSVC)

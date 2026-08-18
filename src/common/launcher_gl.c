@@ -20,6 +20,21 @@
 #define STBI_ONLY_JPEG
 #include "third_party/stb_image.h"
 
+unsigned char* launcher_image_load_rgba(const char* path, int* w, int* h) {
+    int iw = 0, ih = 0, comp = 0;
+    if (!path || !path[0]) return NULL;
+    unsigned char* pixels = stbi_load(path, &iw, &ih, &comp, 4);   // force RGBA
+    if (!pixels) return NULL;
+    if (iw <= 0 || ih <= 0) { stbi_image_free(pixels); return NULL; }
+    if (w) *w = iw;
+    if (h) *h = ih;
+    return pixels;
+}
+
+void launcher_image_free(unsigned char* pixels) {
+    if (pixels) stbi_image_free(pixels);
+}
+
 // Shared upload path. `colorkey_tol` < 0 disables color-keying.
 static LauncherTexture load_impl(const char* path, int colorkey_tol) {
     LauncherTexture t = { 0, 0, 0 };

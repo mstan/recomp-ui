@@ -121,6 +121,25 @@ static void parse_mapping_line(char dest[][PSX_PAD_SRC_CAP], const char* key,
     copy_str(dest[b], PSX_PAD_SRC_CAP, s);
 }
 
+/* Undo mis-captures where Left (etc.) was stored as another cardinal's SDL
+ * name (SFA3 #3: left = dpup while up already owns dpup). */
+static int heal_dpad_cardinal_collisions(char dest[][PSX_PAD_SRC_CAP]) {
+    int changed = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (!dest[i][0] || !strcmp(dest[i], kPsxPadDefaults[i])) continue;
+        for (int j = 0; j < 4; ++j) {
+            if (i == j) continue;
+            if (!strcmp(dest[i], kPsxPadDefaults[j]) &&
+                !strcmp(dest[j], kPsxPadDefaults[j])) {
+                copy_str(dest[i], PSX_PAD_SRC_CAP, kPsxPadDefaults[i]);
+                changed = 1;
+                break;
+            }
+        }
+    }
+    return changed;
+}
+
 static void load_ini(const char* path) {
     seed_defaults_into(s_global);
     memset(s_maps, 0, sizeof(s_maps));
@@ -315,12 +334,17 @@ static void ensure_init(const char* path) {
     if (s_init && path && s_path[0] && !strcmp(s_path, path)) return;
     copy_str(s_path, sizeof(s_path), path ? path : "input.ini");
     load_ini(s_path);
+    int healed = heal_dpad_cardinal_collisions(s_global);
+    for (int i = 0; i < RUI_PSX_PAD_MAX_KNOWN; ++i) {
+        if (s_maps[i].used)
+            healed |= heal_dpad_cardinal_collisions(s_maps[i].src);
+    }
     FILE* test = fopen(s_path, "r");
     if (!test) {
         write_ini(s_path);
     } else {
         fclose(test);
-        if (!file_has_stick_keys(s_path))
+        if (healed || !file_has_stick_keys(s_path))
             write_ini(s_path);
     }
     s_init = 1;
