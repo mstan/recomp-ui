@@ -2737,7 +2737,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_skip_fmv) {
-        row_label("Skip FMVs", th);
+        row_label("Skip opening sequence", th);
         bool sk = m->s.auto_skip_fmv != 0;
         if (ImGui::Checkbox("##skipfmv", &sk)) launcher_model_toggle_skip_fmv(m);
     }
