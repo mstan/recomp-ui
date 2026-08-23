@@ -217,6 +217,7 @@ static void lm_bind_disc_selection(LauncherModel* m) {
 
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
+static void lm_normalize_bios_path(const char* path, char* out, size_t out_cap);
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 
@@ -1031,7 +1032,10 @@ int launcher_model_autofill_sibling_discs(LauncherModel* m) {
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
     m->rom_present = path && path[0] != '\0';
-    safe_copy(m->rom_full, sizeof(m->rom_full), m->rom_present ? path : "");
+    if (m->rom_present)
+        lm_normalize_bios_path(path, m->rom_full, sizeof(m->rom_full));
+    else
+        m->rom_full[0] = '\0';
     m->rom_sha1_hex[0] = '\0';
     m->rom_patch_prepared_path[0] = '\0';
     m->rom_patch_prepared_sha1[0] = '\0';
@@ -1127,17 +1131,27 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
 }
 
 // Disc-verdict (verify.mode==1 systems, e.g. PSX): run the SystemProfile's
-// VerifyProbeFn against the current ROM/disc path, or synthesize a sensible
-// placeholder verdict when the probe is NULL / declines (no host wired up
-// yet) so the disc-verdict UI always renders a real verdict block instead of
-// a "not recognized" dead end. No-op for verify.mode==0 systems (SNES) — the
-// CRC/SHA line above already covers them and m->verify stays zeroed.
+// VerifyProbeFn against the current ROM/disc path. A host verifier that
+// declines a path is a real failure: do not turn a missing/bad CUE into a
+// placeholder success, or the launcher will enable Play only for the game to
+// fail later with "Disc Image Not Found". The placeholder remains only for
+// profiles that have no verifier at all (legacy launcher behavior).
 static void run_verify(LauncherModel* m) {
     if (!m->profile || m->profile->verify.mode != 1) return;
     memset(&m->verify, 0, sizeof(m->verify));
+    if (!m->rom_present) {
+        m->verify.verdict = 0;
+        return;
+    }
+    if (strcmp(m->rom_size, "--") == 0) {
+        m->verify.verdict = 3;
+        safe_copy(m->verify.netplay_detail, sizeof(m->verify.netplay_detail),
+                  "The selected disc image could not be opened. Choose an existing .cue or .bin file.");
+        return;
+    }
     // Host disc-verify callback (REAL serial/region/ISO/verdict) takes
     // precedence — re-run here on every ROM/disc change.
-    if (m->disc_verify_cb && m->rom_present) {
+    if (m->disc_verify_cb) {
         RecompLauncherCDiscVerify dv; memset(&dv, 0, sizeof(dv));
         if (m->disc_verify_cb(m->rom_full, &dv)) {
             safe_copy(m->verify.serial, sizeof(m->verify.serial), dv.serial);
@@ -1151,6 +1165,10 @@ static void run_verify(LauncherModel* m) {
                       dv.netplay_detail);
             return;
         }
+        m->verify.verdict = 3;
+        safe_copy(m->verify.netplay_detail, sizeof(m->verify.netplay_detail),
+                  "The selected disc image could not be verified. Choose the matching .cue file.");
+        return;
     }
     VerifyProbeFn probe = m->profile->verify.probe;
     bool ok = probe && probe(m, &m->verify);
