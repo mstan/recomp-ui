@@ -5921,25 +5921,20 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 const int max_rtt = np_lobby_max_peer_rtt_ms(m, np);
                 /* Auto D: rollback uses §59 WAN-aware tiers; delay-sync uses
                  * the padded one-way formula. Manual keeps Lobby Settings.
-                 * Forced TURN: lobby ICE underestimates match-path load —
-                 * pad RTT before the tier table and floor D at 6. */
+                 *
+                 * No TURN penalty. force_turn is a delay-floor HINT that does
+                 * not change online transport (§108: online is always the
+                 * lobby SFU), and TURN is deployed co-located with that SFU —
+                 * so relaying through it costs a localhost hop, not a second
+                 * WAN leg. The old padding (RTT floored to 80ms, +40ms, then
+                 * D floored at 6) compensated for a cost that is not paid: it
+                 * inflated D on every relayed session, and since P = 4 + D it
+                 * inflated the invent runway with it. The measured peer RTT
+                 * already traverses the relay in use, so it needs no fudge. */
                 if (!m->netplay_manual_input_delay && np->input_delay_set) {
-                    bool force_turn = m->netplay_force_turn;
-                    if (np->force_turn_get)
-                        force_turn = np->force_turn_get(np->ctx) != 0;
-                    int rtt_for_d = max_rtt;
-                    if (use_rb && force_turn) {
-                        /* Relay jitter + pump asymmetry; soak §587 host
-                         * mid-match rtt_raw≈90 while lobby guest REPORT≈30. */
-                        if (rtt_for_d < 80)
-                            rtt_for_d = 80;
-                        rtt_for_d += 40;
-                    }
                     int delay = use_rb
-                        ? np_rb_delay_frames_from_rtt_ms(rtt_for_d)
+                        ? np_rb_delay_frames_from_rtt_ms(max_rtt)
                         : np_delay_frames_from_rtt_ms(max_rtt);
-                    if (use_rb && force_turn && delay < 6)
-                        delay = 6;
                     m->netplay_lobby_input_delay = delay;
                     (void)np->input_delay_set(np->ctx, delay);
                 }
