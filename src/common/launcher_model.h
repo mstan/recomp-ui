@@ -749,6 +749,8 @@ const char* launcher_model_rewind_interval_label(const LauncherModel* m);
 // Driver vsync at present time (gated on has_vsync): On -> Off -> Adaptive,
 // wraps. Stored in Settings.vsync as RECOMP_LAUNCHER_VSYNC_*.
 void launcher_model_cycle_vsync(LauncherModel* m);
+// Binary On/Off flip for the legacy-surface checkbox (Adaptive counts as On).
+void launcher_model_toggle_vsync(LauncherModel* m);
 const char* launcher_model_vsync_label(const LauncherModel* m);  // "On"/"Off"/"Adaptive"
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
