@@ -2393,6 +2393,7 @@ bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
     if (m->has_shader) return true;
     if (m->has_sharp_filter || m->has_affine_filter) return true;
+    if (m->has_frame_blend) return true;
     if (m->num_display_layouts > 0) return true;
     // NES legacy-surface additions (Integer scaling row, HD texture pack block)
     // add extra rows the fixed no_scroll band wasn't sized for.
@@ -2479,6 +2480,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             float t = ImGui::CalcTextSize("Affine background smoothing").x;
             if (t > cw) cw = t;
         }
+        if (m->has_frame_blend) {
+            float t = ImGui::CalcTextSize("Frame blending").x;
+            if (t > cw) cw = t;
+        }
         if (m->has_shader) {
             float t = ImGui::CalcTextSize("Shader").x;
             if (t > cw) cw = t;
@@ -2527,6 +2532,18 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             bool affine = m->s.affine_filter != 0;
             if (ImGui::Checkbox("##affine_filter", &affine))
                 launcher_model_toggle_affine_filter(m);
+        }
+        if (m->has_frame_blend) {
+            row_label("Frame blending", th, cw);
+            bool fb = m->s.frame_blend != 0;
+            if (ImGui::Checkbox("##frame_blend", &fb))
+                launcher_model_toggle_frame_blend(m);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip(
+                    "Average each frame with the previous one.\n"
+                    "Steadies alternate-frame flicker transparency\n"
+                    "(thrusters, explosions) as a CRT would; costs a\n"
+                    "little motion ghosting.");
         }
         draw_shader_row(m, th, cw);
         // HD texture packs (NES module, Mesen hires.txt format): one line —
@@ -2631,6 +2648,19 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         row_label("Linear filtering", th);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
+    }
+
+    if (m->has_frame_blend) {
+        row_label("Frame blending", th);
+        bool fb = m->s.frame_blend != 0;
+        if (ImGui::Checkbox("##frame_blend", &fb))
+            launcher_model_toggle_frame_blend(m);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip(
+                "Average each frame with the previous one.\n"
+                "Steadies alternate-frame flicker transparency\n"
+                "(thrusters, explosions) as a CRT would; costs a\n"
+                "little motion ghosting.");
     }
 
     if (m->has_antialiasing) {

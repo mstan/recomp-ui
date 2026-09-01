@@ -393,6 +393,7 @@ void launcher_model_init(LauncherModel* m,
         m->has_gyro_controls    = game->has_gyro_controls != 0;
         m->has_sharp_filter     = game->has_sharp_filter != 0;
         m->has_affine_filter    = game->has_affine_filter != 0;
+        m->has_frame_blend      = game->has_frame_blend != 0;
         m->has_shader           = game->has_shader != 0;
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
@@ -473,6 +474,8 @@ void launcher_model_init(LauncherModel* m,
         // first gains the three-state scaler control.
         if (m->s.linear_filter) m->s.sharp_filter = 0;
     }
+    if (m->has_frame_blend)
+        m->s.frame_blend = m->s.frame_blend ? 1 : 0;
     memset(&m->s.netplay_launch, 0, sizeof(m->s.netplay_launch));
     if (!m->s.netplay_player_name[0] && m->netplay && m->netplay->player_name) {
         safe_copy(m->s.netplay_player_name, sizeof(m->s.netplay_player_name),
@@ -1300,6 +1303,11 @@ const char* launcher_model_scaling_filter_label(const LauncherModel* m) {
 void launcher_model_toggle_affine_filter(LauncherModel* m) {
     if (!m || !m->has_affine_filter) return;
     m->s.affine_filter = !m->s.affine_filter;
+}
+
+void launcher_model_toggle_frame_blend(LauncherModel* m) {
+    if (!m || !m->has_frame_blend) return;
+    m->s.frame_blend = !m->s.frame_blend;
 }
 
 void launcher_model_toggle_widescreen(LauncherModel* m) {
