@@ -155,6 +155,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_files.c
         ${RUI_SRC}/common/launcher_debug.c
         ${RUI_SRC}/common/launcher_binds.c
+        ${RUI_SRC}/common/pad_binds.c          # per-GUID input.ini store (all consoles)
         ${RUI_SRC}/common/launcher_udp_port.c  # host-lobby UDP port probe / auto-pick
         ${RUI_SRC}/common/recomp_runtime_ui.c # renderer-agnostic in-game overlay
         ${RUI_SRC}/common/recomp_runtime_settings.c # shared cross-ecosystem setting catalog
@@ -166,7 +167,8 @@ function(recomp_target_launcher_ui TGT)
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
-        ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX gamepad input.ini per-GUID bridge
+        ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX button table over common/pad_binds.c
+        ${RUI_SRC}/consoles/snes/snes_pad_binds.c  # SNES button table over common/pad_binds.c
         ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (kb+pad tables)
         ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
