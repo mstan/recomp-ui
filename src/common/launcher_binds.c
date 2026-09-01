@@ -390,10 +390,18 @@ static void reload_hotkey_display(LauncherModel* m) {
 }
 
 // Does `line` (leading ws / optional '#') assign `key`? Mirrors config.c.
-static int line_is_key(const char* line, const char* key) {
+// allow_commented extends the match to "# Key = value" placeholder lines —
+// callers must prefer an ACTIVE line when one exists, because a prose comment
+// that merely BEGINS with "Key = ..." ("# Vsync = 0 paces the loop...") is
+// indistinguishable from a placeholder, and replacing it both destroys the
+// comment and leaves the real assignment below as a duplicate.
+static int line_is_key_ex(const char* line, const char* key, int allow_commented) {
     const char* i = line;
     while (*i == ' ' || *i == '\t') ++i;
-    if (*i == '#') { ++i; while (*i == ' ' || *i == '\t') ++i; }
+    if (*i == '#') {
+        if (!allow_commented) return 0;
+        ++i; while (*i == ' ' || *i == '\t') ++i;
+    }
     size_t kl = strlen(key);
     if (strncasecmp(i, key, kl) != 0) return 0;
     i += kl;
@@ -455,7 +463,11 @@ void launcher_ini_kv_write(const char* path, const char* section,
         lines[n++] = strdup(assign);
     } else {
         int hit = -1;
-        for (int i = ks; i < ke; ++i) if (line_is_key(lines[i], key)) { hit = i; break; }
+        for (int i = ks; i < ke; ++i)
+            if (line_is_key_ex(lines[i], key, 0)) { hit = i; break; }
+        if (hit < 0)   /* no active line: a "# Key = value" placeholder will do */
+            for (int i = ks; i < ke; ++i)
+                if (line_is_key_ex(lines[i], key, 1)) { hit = i; break; }
         if (hit >= 0) { free(lines[hit]); lines[hit] = strdup(assign); }
         else {
             int at = ke;

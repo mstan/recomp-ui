@@ -1381,6 +1381,16 @@ const char* launcher_model_vsync_label(const LauncherModel* m) {
     }
 }
 
+// Legacy-surface checkbox: On <-> Off only. Adaptive counts as On (checked)
+// and flips to Off — a legacy host maps this onto a boolean renderer flag,
+// so there is no third state to preserve.
+void launcher_model_toggle_vsync(LauncherModel* m) {
+    if (!m || !m->has_vsync) return;
+    m->s.vsync = (m->s.vsync == RECOMP_LAUNCHER_VSYNC_OFF)
+                     ? RECOMP_LAUNCHER_VSYNC_ON
+                     : RECOMP_LAUNCHER_VSYNC_OFF;
+}
+
 void launcher_model_toggle_skip_fmv(LauncherModel* m) {
     m->s.auto_skip_fmv = !m->s.auto_skip_fmv;
 }

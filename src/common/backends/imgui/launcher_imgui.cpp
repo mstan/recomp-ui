@@ -2281,8 +2281,13 @@ bool any_deep_display(const LauncherModel* m) {
            m->has_fmv_filter ||
            m->has_frame_interp || m->has_skip_fmv ||
            m->has_geometry_precision ||
-           m->has_rewind_depth || m->has_vsync;
-           /* has_turbo_loads is intentionally absent: it draws no row (below). */
+           m->has_rewind_depth;
+           /* has_turbo_loads is intentionally absent: it draws no row (below).
+            * has_vsync no longer forces the deep surface: the legacy branch
+            * draws its own VSync row (as an On/Off checkbox), so a console
+            * adding only vsync keeps its fixed-band card. Every console that
+            * wants the tri-state cycle (PSX) is already deep via has_renderer
+            * and friends. */
 }
 
 // Whether the DISPLAY card should grow to fit its content (AutoResizeY) rather
@@ -2295,7 +2300,7 @@ bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
     if (m->has_shader) return true;
     if (m->has_sharp_filter || m->has_affine_filter) return true;
-    if (m->has_frame_blend) return true;
+    if (m->has_frame_blend || m->has_vsync) return true;
     if (m->num_display_layouts > 0) return true;
     // NES legacy-surface additions (Integer scaling row, HD texture pack block)
     // add extra rows the fixed no_scroll band wasn't sized for.
@@ -2446,6 +2451,22 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                     "Steadies alternate-frame flicker transparency\n"
                     "(thrusters, explosions) as a CRT would; costs a\n"
                     "little motion ghosting.");
+        }
+        // On/Off checkbox rather than the deep surface's tri-state cycle:
+        // legacy-surface hosts map this onto a boolean renderer flag, so
+        // offering "Adaptive" here would promise what they cannot deliver.
+        if (m->has_vsync) {
+            row_label("VSync", th, cw);
+            bool vs = m->s.vsync != RECOMP_LAUNCHER_VSYNC_OFF;
+            if (ImGui::Checkbox("##vsync", &vs))
+                launcher_model_toggle_vsync(m);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip(
+                    "On: the swap waits for the panel — no tearing.\n"
+                    "Off: swap immediately — lowest display latency, may "
+                    "tear.\n\n"
+                    "The runtime still paces frames to the console's own "
+                    "rate either way, so Off does not run the game fast.");
         }
         draw_shader_row(m, th, cw);
         // HD texture packs (NES module, Mesen hires.txt format): one line —
