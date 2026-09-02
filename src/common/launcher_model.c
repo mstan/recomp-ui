@@ -217,6 +217,7 @@ static void lm_bind_disc_selection(LauncherModel* m) {
 
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
+static void lm_normalize_bios_path(const char* path, char* out, size_t out_cap);
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 
@@ -1031,7 +1032,10 @@ int launcher_model_autofill_sibling_discs(LauncherModel* m) {
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
     m->rom_present = path && path[0] != '\0';
-    safe_copy(m->rom_full, sizeof(m->rom_full), m->rom_present ? path : "");
+    if (m->rom_present)
+        lm_normalize_bios_path(path, m->rom_full, sizeof(m->rom_full));
+    else
+        m->rom_full[0] = '\0';
     m->rom_sha1_hex[0] = '\0';
     m->rom_patch_prepared_path[0] = '\0';
     m->rom_patch_prepared_sha1[0] = '\0';
@@ -1127,17 +1131,27 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
 }
 
 // Disc-verdict (verify.mode==1 systems, e.g. PSX): run the SystemProfile's
-// VerifyProbeFn against the current ROM/disc path, or synthesize a sensible
-// placeholder verdict when the probe is NULL / declines (no host wired up
-// yet) so the disc-verdict UI always renders a real verdict block instead of
-// a "not recognized" dead end. No-op for verify.mode==0 systems (SNES) — the
-// CRC/SHA line above already covers them and m->verify stays zeroed.
+// VerifyProbeFn against the current ROM/disc path. A host verifier that
+// declines a path is a real failure: do not turn a missing/bad CUE into a
+// placeholder success, or the launcher will enable Play only for the game to
+// fail later with "Disc Image Not Found". The placeholder remains only for
+// profiles that have no verifier at all (legacy launcher behavior).
 static void run_verify(LauncherModel* m) {
     if (!m->profile || m->profile->verify.mode != 1) return;
     memset(&m->verify, 0, sizeof(m->verify));
+    if (!m->rom_present) {
+        m->verify.verdict = 0;
+        return;
+    }
+    if (strcmp(m->rom_size, "--") == 0) {
+        m->verify.verdict = 3;
+        safe_copy(m->verify.netplay_detail, sizeof(m->verify.netplay_detail),
+                  "The selected disc image could not be opened. Choose an existing .cue or .bin file.");
+        return;
+    }
     // Host disc-verify callback (REAL serial/region/ISO/verdict) takes
     // precedence — re-run here on every ROM/disc change.
-    if (m->disc_verify_cb && m->rom_present) {
+    if (m->disc_verify_cb) {
         RecompLauncherCDiscVerify dv; memset(&dv, 0, sizeof(dv));
         if (m->disc_verify_cb(m->rom_full, &dv)) {
             safe_copy(m->verify.serial, sizeof(m->verify.serial), dv.serial);
@@ -1151,6 +1165,10 @@ static void run_verify(LauncherModel* m) {
                       dv.netplay_detail);
             return;
         }
+        m->verify.verdict = 3;
+        safe_copy(m->verify.netplay_detail, sizeof(m->verify.netplay_detail),
+                  "The selected disc image could not be verified. Choose the matching .cue file.");
+        return;
     }
     VerifyProbeFn probe = m->profile->verify.probe;
     bool ok = probe && probe(m, &m->verify);
@@ -1466,20 +1484,49 @@ const char* launcher_model_renderer_label(const LauncherModel* m) {
     return m->s.renderer ? "OpenGL" : "Software";
 }
 
+/* Internal-resolution ladder. The steps are chosen so that, on a console whose
+ * native frame is ~240-256 scanlines, each one is the smallest multiplier that
+ * REACHES a standard monitor height: 3x>=720, 5x>=1080, 6x>=1440, 9x>=2160,
+ * 16x>=4096. The runtime and the config loader have always accepted 1..16
+ * ([video] supersampling) and the GL backend renders it, but this cycle was
+ * capped at 4x -- so 1440p and above were unreachable from the launcher even
+ * though everything below it supported them. */
+static const int kSsaaLadder[] = { 1, 2, 3, 4, 5, 6, 8, 9, 12, 16 };
+#define LNG_SSAA_LADDER_COUNT ((int)(sizeof(kSsaaLadder) / sizeof(kSsaaLadder[0])))
+
 void launcher_model_cycle_supersampling(LauncherModel* m) {
-    int v = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
-    m->s.supersampling = (v % 4) + 1;
+    const int cur = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 16);
+    for (int i = 0; i < LNG_SSAA_LADDER_COUNT; i++) {
+        if (kSsaaLadder[i] > cur) { m->s.supersampling = kSsaaLadder[i]; return; }
+    }
+    m->s.supersampling = kSsaaLadder[0];   /* wrap */
 }
 
 const char* launcher_model_supersampling_label(const LauncherModel* m) {
     /* Settings SSAA: offline full SW/GL path; netplay dual-raster uses this
-     * for OpenGL present quality while SW authority stays 1×. */
-    static char buf[24];
-    int v = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
-    if (v <= 1)
-        snprintf(buf, sizeof(buf), "1x");
-    else
-        snprintf(buf, sizeof(buf), "%dx", v);
+     * for OpenGL present quality while SW authority stays 1×.
+     *
+     * Named after the output height it reaches, because that is what a player
+     * is actually choosing. Consoles that do not declare native_fb_height keep
+     * the bare multiplier. */
+    static char buf[32];
+    const int v = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 16);
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    const int nh = prof ? prof->native_fb_height : 0;
+    if (nh > 0 && v > 1) {
+        const int lines = nh * v;
+        const char* name = NULL;
+        if      (lines >= 4096) name = "8K";
+        else if (lines >= 2160) name = "4K";
+        else if (lines >= 1440) name = "1440p";
+        else if (lines >= 1080) name = "1080p";
+        else if (lines >= 720)  name = "720p";
+        if (name) {
+            snprintf(buf, sizeof(buf), "%dx (%s)", v, name);
+            return buf;
+        }
+    }
+    snprintf(buf, sizeof(buf), "%dx", v);
     return buf;
 }
 

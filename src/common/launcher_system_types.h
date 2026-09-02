@@ -145,6 +145,14 @@ typedef struct SystemProfile {
     // wordmark may be a third-party trademark); an absent file falls back to
     // the text, so this is inert unless a host drops the asset in.
     const char* wordmark_image;
+    // Native framebuffer height in scanlines, used ONLY to name the
+    // supersampling steps after the output resolution they reach
+    // ("6x (1440p)") instead of a bare multiplier. A player picks a monitor
+    // resolution, not an SSAA factor, and the multiplier that reaches 4K
+    // differs per console because the native frame does. 0 => unknown, and the
+    // label stays a plain "Nx". Appended so existing positional profile rows
+    // zero-fill it.
+    int native_fb_height;
 } SystemProfile;                                    // ONE ROW PER CONSOLE
 
 // ---- shared panel composition arrays (NULL-terminated) --------------------------
