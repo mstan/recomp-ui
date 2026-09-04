@@ -6685,7 +6685,12 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                         }
                     }
                 }
-                char xfer_err[160];
+                /* 256, matching the lobby client's own error buffer. At 160
+                 * the relay size refusal -- which names the mod, its size, the
+                 * cap and what to do instead -- lost its last sentence, so the
+                 * one line telling the player where to get the mod was the
+                 * part that got cut. */
+                char xfer_err[256];
                 if (np->mod_xfer_failed &&
                     np->mod_xfer_failed(np->ctx, xfer_err, sizeof(xfer_err)) &&
                     xfer_err[0]) {
