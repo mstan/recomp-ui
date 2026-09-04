@@ -5806,8 +5806,16 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
      * about save-state compatibility, not kernel-RAM details.
      * Orange OpenBIOS override only when a peer cannot run SCPH; host retail
-     * preference otherwise settles SCPH (even if a guest prefers OpenBIOS). */
-    {
+     * preference otherwise settles SCPH (even if a guest prefers OpenBIOS).
+     *
+     * PSX only. A BIOS choice exists on no other console this launcher serves,
+     * and the block below reads a MISSING offer as "prefers OpenBIOS" -- which
+     * on an SNES lobby, where nobody ever sends one, printed "Host has selected
+     * OpenBIOS for this session" over a Gundam Wing seat table. The notice is
+     * derived from PSX data; where that data cannot exist, so cannot the
+     * notice. */
+    const SystemProfile* bios_prof = (const SystemProfile*)m->profile;
+    if (bios_prof && bios_prof->id && std::strcmp(bios_prof->id, "psx") == 0) {
         int host_prefer_open = 0;
         int host_found = 0;
         int all_can_scph = 1;
