@@ -298,6 +298,30 @@ typedef struct RecompLauncherCNetplayCallbacks {
                            RecompLauncherCNetplayLobbyMod* out);
     int  (*lobby_mods_missing)(void* ctx);
     int  (*lobby_mods_download)(void* ctx);
+    /* Optional (append-only): would lobby_mods_download actually start a
+     * transfer right now? 1 yes, 0 no. Asked BEFORE the button is drawn, so a
+     * peer is never offered a download that cannot happen.
+     *
+     * This is a question about the current state, not about the build. The
+     * lobby server grants a mod-transfer channel only to a peer it REFUSED to
+     * seat (`pending_mod_lobby` is set on the need_mods rejection and cleared
+     * the moment the peer is seated), so a peer that is already sitting in the
+     * lobby has no channel even in a build that fully implements transfers —
+     * mod_xfer_start would come back `need_mods`. That is the case this panel
+     * shows when the host edits the plan mid-lobby.
+     *
+     * Absent (NULL) means "unknown": the button is drawn and the answer comes
+     * from lobby_mods_download's return, which is how it behaved before. */
+    int  (*lobby_mods_can_download)(void* ctx);
+    /* Optional (append-only): per-row transfer, so a peer can pull one package
+     * without re-fetching the ones it already has.
+     *   lobby_mods_download_one : start row `index`; 0 started, <0 not started
+     *   lobby_mods_progress_one : -1 idle, -2 failed, 0..100 in flight
+     * A row's button is drawn only when lobby_mods_can_download says yes AND
+     * the row is not installed, so neither call is a way to ask "is this
+     * possible" -- that question has its own callback above. */
+    int  (*lobby_mods_download_one)(void* ctx, int index);
+    int  (*lobby_mods_progress_one)(void* ctx, int index);
     /* Optional (append-only): seat self-service. A player may move ITSELF to
      * a free seat; taking a seat somebody occupies requires that player's
      * consent, so it is a request/approve exchange rather than a move.

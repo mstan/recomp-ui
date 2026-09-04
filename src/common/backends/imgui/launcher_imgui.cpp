@@ -175,6 +175,61 @@ namespace {
 // (Ported from launcher_ng's "Fix launcher DPI layout and text alignment".)
 float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
+
+/* A download glyph -- arrow into a tray -- drawn rather than glyphed because
+ * the launcher ships no icon font (see the font loader above: body + optional
+ * JP face, nothing pictographic). Sized from the row height so it lines up
+ * with the text beside it at any font size.
+ *
+ * Returns true on click. `enabled` false draws it dimmed and inert, which is
+ * how a row that is already installed, or already transferring, is shown. */
+bool download_icon_button(const char* id, float side, bool enabled,
+                          const LauncherTheme& th, const char* tooltip)
+{
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    bool clicked = false;
+
+    if (enabled) {
+        clicked = ImGui::InvisibleButton(id, ImVec2(side, side));
+    } else {
+        ImGui::Dummy(ImVec2(side, side));
+    }
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active_hover = enabled && hovered;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 c = ImVec2(p0.x + side * 0.5f, p0.y + side * 0.5f);
+    ImVec4 tint = enabled ? col(active_hover ? th.accent : th.text)
+                          : col(th.text_muted);
+    if (!enabled) tint.w *= 0.45f;
+    const ImU32 ink = ImGui::ColorConvertFloat4ToU32(tint);
+    const float t = (side * 0.09f) > 1.0f ? (side * 0.09f) : 1.0f; /* stroke */
+    const float a = side * 0.30f;                /* arrow half-height */
+    const float w = side * 0.24f;                /* arrowhead half-width */
+
+    if (active_hover) {
+        dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + side, p0.y + side),
+                          ImGui::ColorConvertFloat4ToU32(
+                              ImVec4(tint.x, tint.y, tint.z, 0.14f)),
+                          side * 0.2f);
+    }
+    /* shaft */
+    dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y + a * 0.35f), ink, t);
+    /* head */
+    dl->AddTriangleFilled(ImVec2(c.x - w, c.y + a * 0.05f),
+                          ImVec2(c.x + w, c.y + a * 0.05f),
+                          ImVec2(c.x, c.y + a * 0.62f), ink);
+    /* tray */
+    dl->AddLine(ImVec2(c.x - w * 1.35f, c.y + a * 0.80f),
+                ImVec2(c.x + w * 1.35f, c.y + a * 0.80f), ink, t);
+    dl->AddLine(ImVec2(c.x - w * 1.35f, c.y + a * 0.80f),
+                ImVec2(c.x - w * 1.35f, c.y + a * 0.42f), ink, t);
+    dl->AddLine(ImVec2(c.x + w * 1.35f, c.y + a * 0.80f),
+                ImVec2(c.x + w * 1.35f, c.y + a * 0.42f), ink, t);
+
+    if (hovered && tooltip && tooltip[0]) ImGui::SetTooltip("%s", tooltip);
+    return clicked;
+}
 // g_th moved to external linkage above the anonymous namespace (see note).
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
@@ -5378,6 +5433,26 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
     else if (std::strcmp(err, "game_mismatch") == 0)
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "This lobby is for a different game.");
+    else if (std::strcmp(err, "peer_needs_mods") == 0)
+        /* The host pressed Play while somebody in the room cannot run the
+         * plan. Not an error in the lobby -- the whole point of letting them
+         * sit here is that they can fix it -- so this says who is waiting on
+         * what rather than reporting a fault. */
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Cannot start yet: a player is missing mods this lobby "
+                      "uses. Open Mods to see who, or turn the mod off.");
+    else if (std::strcmp(err, "need_mods") == 0)
+        /* The server refused the seat because the host's plan names packages
+         * this peer does not have. Being refused is the correct outcome -- a
+         * peer missing a mod that patches guest memory cannot stay in sync --
+         * so this reads as a next step, not as a fault. */
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "This lobby needs mods you do not have. Open Mods to see "
+                      "which, install them, then join again.");
+    else if (std::strcmp(err, "mod_offer_too_large") == 0)
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Too many mods installed to announce to the lobby. "
+                      "Remove some and try again.");
     else
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Lobby error: %s", err);
@@ -6134,6 +6209,7 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         const auto* mods = m->mods;
         const int feature_count =
             mods->feature_count ? mods->feature_count(mods->ctx) : 0;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(520));
         if (is_host) {
             ImGui::TextColored(col(th.text_muted),
                                "Everyone in this lobby runs the mods you pick "
@@ -6143,6 +6219,7 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                                "The host picks this lobby's mods. You will run "
                                "this set when the match starts.");
         }
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
 
         /* GUEST: the plan is the host's published package list, which may
@@ -6155,12 +6232,35 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 np->lobby_mods_missing ? np->lobby_mods_missing(np->ctx) : 0;
             const int progress =
                 np->mod_xfer_progress ? np->mod_xfer_progress(np->ctx) : -1;
+            /* Asked once, before anything is drawn: a row's button and the
+             * paragraph below it must agree about whether a transfer is
+             * possible, and neither may find out by trying. */
+            const bool can_dl =
+                np->lobby_mods_can_download
+                    ? np->lobby_mods_can_download(np->ctx) != 0
+                    : true;   /* unknown: keep the old click-to-find-out */
+            /* Every paragraph in this panel wraps to the width of the list
+             * above it. Unwrapped, one long sentence sets the dialog's width
+             * and stretches it past the window. */
+            const float kModTextWrap = px(520);
+            /* One row per package: [status] name  version  — reason   [get]
+             * The download control is per row rather than one button for the
+             * whole plan, so a peer missing one package of five does not
+             * re-fetch four it already has, and so the control sits next to
+             * the thing it acts on. */
             if (ImGui::BeginChild("##lobby_plan_list", ImVec2(px(520), px(260)),
                                   ImGuiChildFlags_Borders)) {
+                const float icon = ImGui::GetTextLineHeight() + px(4);
                 for (int i = 0; i < plan_n; ++i) {
                     RecompLauncherCNetplayLobbyMod lm{};
                     if (!np->lobby_mods_get || !np->lobby_mods_get(np->ctx, i, &lm))
                         continue;
+                    const int row_prog = np->lobby_mods_progress_one
+                        ? np->lobby_mods_progress_one(np->ctx, i) : -1;
+                    const bool in_flight = row_prog >= 0 && row_prog < 100;
+                    const bool row_failed = row_prog == -2;
+
+                    ImGui::PushID(i);
                     if (lm.installed) {
                         ImGui::TextColored(col(th.good), "OK");
                     } else {
@@ -6169,14 +6269,70 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::SameLine();
                     ImGui::TextUnformatted(lm.name);
                     ImGui::SameLine();
+                    /* The note is shown whenever there is one, installed or
+                     * not: an installed row can still carry "host runs 1.0.1;
+                     * you have another version", which is not a blocker here
+                     * but is the first thing worth knowing if the match later
+                     * refuses to start. */
+                    const char* note = row_failed ? "download failed"
+                                     : lm.reason[0] ? lm.reason
+                                     : lm.installed ? ""
+                                                    : "not installed";
                     ImGui::TextColored(col(th.text_muted), "%s%s%s%s",
                                        lm.version,
-                                       lm.installed ? "" : "  — ",
-                                       lm.installed ? ""
-                                                    : (lm.reason[0]
-                                                           ? lm.reason
-                                                           : "not installed"),
+                                       note[0] ? "  — " : "",
+                                       note,
                                        lm.builtin ? "  [built-in]" : "");
+
+                    /* Right-align the control so the rows form a column
+                     * regardless of how long the names are. */
+                    if (!lm.installed) {
+                        const float right =
+                            ImGui::GetWindowContentRegionMax().x - icon;
+                        if (right > ImGui::GetCursorPosX()) {
+                            ImGui::SameLine();
+                            ImGui::SetCursorPosX(right);
+                        } else {
+                            ImGui::SameLine();
+                        }
+                        if (in_flight) {
+                            /* Occupies the same cell as the button, so the row
+                             * does not jump when a transfer starts. */
+                            ImGui::ProgressBar(row_prog / 100.0f,
+                                               ImVec2(icon, icon), "");
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Downloading… %d%%", row_prog);
+                        } else {
+                            char tip[192];
+                            std::snprintf(tip, sizeof(tip),
+                                          can_dl
+                                              ? "Download %s %s from the host"
+                                              : "%s %s cannot be downloaded "
+                                                "from the host in this build",
+                                          lm.name, lm.version);
+                            if (download_icon_button("##get", icon, can_dl, th,
+                                                     tip)) {
+                                const int rc = np->lobby_mods_download_one
+                                    ? np->lobby_mods_download_one(np->ctx, i)
+                                    : -1;
+                                if (rc != 0)
+                                    std::snprintf(m->mod_status,
+                                                  sizeof(m->mod_status),
+                                                  "Could not start the download "
+                                                  "for %s.", lm.name);
+                                else
+                                    m->mod_status[0] = '\0';
+                            }
+                        }
+                    }
+                    else {
+                        /* Installed rows reserve the same cell, so every row
+                         * is the same height and the list does not shuffle as
+                         * packages arrive. */
+                        ImGui::SameLine();
+                        ImGui::Dummy(ImVec2(icon, icon));
+                    }
+                    ImGui::PopID();
                     ImGui::Separator();
                 }
                 if (plan_n == 0) {
@@ -6199,36 +6355,54 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                         image_mismatch = true;
                 }
                 ImGui::Spacing();
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
                 ImGui::TextColored(col(th.warn),
                                    "%d mod(s) unavailable. The match cannot "
                                    "start until they are.", missing_n);
+                ImGui::PopTextWrapPos();
                 if (image_mismatch) {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
                     ImGui::TextColored(col(th.warn),
                         "One or more mods target a different dump of this game "
                         "than yours. Downloading will not help — the host and "
                         "you need the same disc image.");
+                    ImGui::PopTextWrapPos();
                 }
-                ImGui::TextColored(col(th.text_muted),
-                                   "Downloading runs the host's code on your "
-                                   "machine. Only accept mods from a host you "
-                                   "trust.");
-                if (progress >= 0 && progress < 100) {
-                    ImGui::ProgressBar(progress / 100.0f,
-                                       ImVec2(px(320), 0));
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(px(100), 0)) &&
-                        np->mod_xfer_cancel) {
-                        np->mod_xfer_cancel(np->ctx);
-                    }
+                if (!can_dl) {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
+                    ImGui::TextColored(col(th.text_muted),
+                        "This build cannot download mods from the host yet. "
+                        "Install them yourself to play. You can stay in the "
+                        "lobby — the match simply will not start until every "
+                        "player has them.");
+                    ImGui::PopTextWrapPos();
                 } else {
-                    if (ImGui::Button("Download from host", ImVec2(px(200), 0))) {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
+                    ImGui::TextColored(col(th.text_muted),
+                                       "Downloading runs the host's code on "
+                                       "your machine. Only accept mods from a "
+                                       "host you trust.");
+                    ImGui::PopTextWrapPos();
+                    if (progress >= 0 && progress < 100) {
+                        ImGui::ProgressBar(progress / 100.0f,
+                                           ImVec2(px(320), 0));
+                        ImGui::SameLine();
+                        if (ImGui::Button("Cancel", ImVec2(px(100), 0)) &&
+                            np->mod_xfer_cancel) {
+                            np->mod_xfer_cancel(np->ctx);
+                        }
+                    } else if (ImGui::Button("Download from host",
+                                             ImVec2(px(200), 0))) {
                         const int rc = np->lobby_mods_download
                             ? np->lobby_mods_download(np->ctx) : -1;
                         if (rc != 0) {
+                            /* Do not guess at a cause here: whoever refused
+                             * knows why and says so through mod_xfer_failed,
+                             * printed just below. */
                             std::snprintf(m->mod_status, sizeof(m->mod_status),
-                                          "Could not start the download — ask "
-                                          "the host to re-open the lobby, or "
-                                          "install the mods manually.");
+                                          "The download did not start. Leave "
+                                          "and re-join to be offered these "
+                                          "mods, or install them yourself.");
                         } else {
                             m->mod_status[0] = '\0';
                         }
@@ -6238,8 +6412,10 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 if (np->mod_xfer_failed &&
                     np->mod_xfer_failed(np->ctx, xfer_err, sizeof(xfer_err)) &&
                     xfer_err[0]) {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
                     ImGui::TextColored(col(th.warn), "Transfer failed: %s",
                                        xfer_err);
+                    ImGui::PopTextWrapPos();
                 }
             } else if (plan_n > 0) {
                 ImGui::Spacing();
@@ -6317,7 +6493,9 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::EndDisabled();
 
         if (m->mod_status[0]) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(520));
             ImGui::TextColored(col(th.warn), "%s", m->mod_status);
+            ImGui::PopTextWrapPos();
         }
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(px(120), 0))) {
