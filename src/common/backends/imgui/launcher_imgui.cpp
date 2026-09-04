@@ -8588,20 +8588,49 @@ static void draw_setup_progress_modal(LauncherModel* m, const LauncherTheme& th)
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(14)));
 
-    ImGui::PushTextWrapPos(wrap_x);
+    /* The status line is fed every compiler invocation during a rebuild.
+     * Those lines are long, so the text wrapped to a second line, the modal
+     * grew to fit, the next short line shrank it back -- a window that
+     * bounced in height on every ninja step. Reserve exactly two lines and
+     * elide anything that would need a third, so the frame never moves. */
     const char* st = m->setup_status[0] ? m->setup_status : "Working…";
     const bool warn_st =
         (strncmp(st, "WARNING", 7) == 0) ||
         (strstr(st, "Do not close") != nullptr) ||
         (strstr(st, "DO NOT") != nullptr);
+    const float wrap_w = ImGui::GetContentRegionAvail().x;
+    const float two_lines = ImGui::GetTextLineHeight() * 2.0f + 1.0f;
+    char shown[sizeof(m->setup_status) + 4];
+    std::snprintf(shown, sizeof(shown), "%s", st);
+    if (ImGui::CalcTextSize(shown, nullptr, false, wrap_w).y > two_lines) {
+        /* Longest prefix that still fits in two lines with an ellipsis.
+         * Cut only on UTF-8 code point boundaries. */
+        size_t lo = 0, hi = std::strlen(st);
+        char probe[sizeof(shown)];
+        while (lo < hi) {
+            size_t mid = (lo + hi + 1) / 2;
+            while (mid > 0 && mid < hi && (static_cast<unsigned char>(st[mid]) & 0xC0) == 0x80)
+                --mid;
+            if (mid <= lo) { hi = lo; break; }
+            std::snprintf(probe, sizeof(probe), "%.*s…", static_cast<int>(mid), st);
+            if (ImGui::CalcTextSize(probe, nullptr, false, wrap_w).y <= two_lines)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        std::snprintf(shown, sizeof(shown), "%.*s…", static_cast<int>(lo), st);
+    }
+    const ImVec2 status_pos = ImGui::GetCursorPos();
+    ImGui::PushTextWrapPos(wrap_x);
     if (warn_st) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
-        ImGui::TextWrapped("%s", st);
+        ImGui::TextWrapped("%s", shown);
         ImGui::PopStyleColor();
     } else {
-        ImGui::TextColored(col(th.accent), "%s", st);
+        ImGui::TextColored(col(th.accent), "%s", shown);
     }
     ImGui::PopTextWrapPos();
+    ImGui::SetCursorPos(ImVec2(status_pos.x, status_pos.y + two_lines));
     ImGui::Dummy(ImVec2(0, px(8)));
     const float bar = (m->setup_prepare_fraction >= 0.0f)
                           ? m->setup_prepare_fraction
