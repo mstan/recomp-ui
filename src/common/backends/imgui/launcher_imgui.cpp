@@ -4394,15 +4394,44 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // narrower chips then. Single-chip cells keep the wider chip AND the
         // exact legacy cell width (label + 170) so non-pad/single-bind consoles
         // (SNES/GBA) pack columns byte-identically to before this existed.
-        const bool two_chip = (bpi >= 2) || has_pad;
+        // ONE chip per row when the console keeps a single bind per input.
+        //
+        // A row used to carry a KEY chip and a GAMEPAD chip side by side, but
+        // only one of them can act: the player's Input source decides whether a
+        // key or a pad button drives that input, and the other chip maps
+        // something nothing reads. Showing both put an inert control next to a
+        // live one with nothing to tell them apart. The source selector sits
+        // directly above, so switching it brings the other set back.
+        //
+        // N64 (bpi >= 2) is untouched: its two chips are primary and ALTERNATE
+        // binds for the same input, and both are live.
+        const bool two_chip = (bpi >= 2);
         const float chip_w   = two_chip ? px(118.0f) : px(160.0f);
         const float chip_gap = px(6.0f);
         const float cell_w = two_chip
             ? (label_col_w + chip_w + chip_gap + chip_w + px(16.0f))
-            : (label_col_w + px(170.0f));
-        int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
-        if (cols < 1) cols = 1;
-        if (cols > 4) cols = 4;
+            : (label_col_w + chip_w + px(16.0f));
+
+        // Column-major when the console declares a panel order: a pad's
+        // controls come in groups (D-pad, face, shoulders) and reading DOWN a
+        // column keeps each group together. Filling across rows scatters them.
+        const int* const order = spec.pad_bind_order;
+        const int order_rows = order ? spec.pad_bind_rows : 0;
+        const int order_cols = order ? spec.pad_bind_cols : 0;
+        // Only when the declared grid matches the buttons actually shown: a pad
+        // MODE can reduce the active count, and an order naming a hidden button
+        // would put a control on screen for an input this mode does not have.
+        const bool vertical = order && order_rows > 0 && order_cols > 0 &&
+                              order_rows * order_cols == nbtn;
+
+        int cols;
+        if (vertical) {
+            cols = order_cols;
+        } else {
+            cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
+            if (cols < 1) cols = 1;
+            if (cols > 4) cols = 4;
+        }
         // Fixed-width columns, explicitly sized to cell_w: the default
         // stretch policy divides available width evenly across `cols`
         // regardless of our computed cell_w, which reintroduces the very
@@ -4410,7 +4439,14 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::BeginTable("binds", cols, ImGuiTableFlags_SizingFixedFit)) {
             for (int c = 0; c < cols; ++c)
                 ImGui::TableSetupColumn(nullptr, ImGuiTableColumnFlags_WidthFixed, cell_w);
-            for (int b = 0; b < nbtn; ++b) {
+            const int cell_count = vertical ? (order_rows * order_cols) : nbtn;
+            for (int cell = 0; cell < cell_count; ++cell) {
+                // Column-major: walk down column 0, then column 1, then 2. The
+                // table itself is filled left-to-right, so the index is
+                // transposed here rather than the table being reshaped.
+                const int b = vertical
+                    ? order[(cell % order_cols) * order_rows + (cell / order_cols)]
+                    : cell;
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
                 ImGui::AlignTextToFramePadding();
@@ -4433,8 +4469,26 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         if (cap) ImGui::PopStyleColor();
                         ImGui::PopID();
                     }
+                } else if (has_pad && pad_cap) {
+                    // GAMEPAD chip only: the player's source is a pad, so a key
+                    // bind on this row would map something nothing reads.
+                    ImGui::PushID("pad");
+                    const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
+                    char settings_pad[48];
+                    settings_pad_label(m->s.player_pad_bind[p][b],
+                                       settings_pad, sizeof settings_pad);
+                    const char* pl = settings_player_binds
+                        ? settings_pad
+                        : (m->pad_binds[p][b][0]
+                            ? m->pad_binds[p][b] : "(unbound)");
+                    if (cap_pad) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                    if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl, ImVec2(chip_w, 0)))
+                        launcher_model_begin_pad_capture(m, b);
+                    if (cap_pad) ImGui::PopStyleColor();
+                    ImGui::PopID();
                 } else {
-                    // KEY chip
+                    // KEY chip only: keyboard is the source (or the console has
+                    // no pad binds at all).
                     const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
                     if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                     const char* key_text = settings_player_binds
@@ -4443,37 +4497,84 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     if (ImGui::Button(cap_key ? "[ press a key... ]" : key_text, ImVec2(chip_w, 0)))
                         launcher_model_begin_capture(m, b);
                     if (cap_key) ImGui::PopStyleColor();
-                    // GAMEPAD chip (pad-bind consoles only: Genesis)
-                    if (has_pad) {
-                        ImGui::SameLine(0, chip_gap);
-                        ImGui::PushID("pad");
-                        const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
-                        char settings_pad[48];
-                        settings_pad_label(m->s.player_pad_bind[p][b],
-                                           settings_pad, sizeof settings_pad);
-                        const char* pl = settings_player_binds
-                            ? settings_pad
-                            : (m->pad_binds[p][b][0]
-                                ? m->pad_binds[p][b] : "(unbound)");
-                        if (cap_pad) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                        if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl, ImVec2(chip_w, 0)))
-                            launcher_model_begin_pad_capture(m, b);
-                        if (cap_pad) ImGui::PopStyleColor();
-                        ImGui::PopID();
-                    }
                 }
                 ImGui::PopID();
             }
             ImGui::EndTable();
         }
         ImGui::Spacing();
+
+        /* ---- Auto Map All -------------------------------------------------
+         *
+         * Walks the panel in the order it is READ -- down column 1, then 2,
+         * then 3 -- capturing each input in turn, so the player presses
+         * buttons in the same sequence their eyes are already following.
+         *
+         * State lives here rather than in the model because it is a property
+         * of this page: a run is abandoned the moment the page stops drawing
+         * it, which is what should happen when the player navigates away
+         * mid-sequence. */
+        static int  s_automap_i = -1;      /* next cell to capture, -1 = idle */
+        static int  s_automap_player = -1; /* run belongs to one player only */
+
+        const bool automap_running =
+            s_automap_i >= 0 && s_automap_player == p;
+        const int automap_total = vertical ? (order_rows * order_cols) : nbtn;
+
+        if (automap_running) {
+            /* Esc abandons the whole run, not just the current capture. Checked
+             * before advancing, or cancelling one capture would immediately
+             * begin the next and Esc would appear to do nothing. */
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                s_automap_i = -1;
+                s_automap_player = -1;
+            } else if (!m->capturing) {
+                if (s_automap_i >= automap_total) {
+                    s_automap_i = -1;       /* finished the last column */
+                    s_automap_player = -1;
+                } else {
+                    const int cell = s_automap_i++;
+                    const int b = vertical
+                        ? order[(cell % order_cols) * order_rows +
+                                (cell / order_cols)]
+                        : cell;
+                    if (has_pad && pad_cap) launcher_model_begin_pad_capture(m, b);
+                    else                    launcher_model_begin_capture(m, b);
+                }
+            }
+        }
+
+        if (automap_running) {
+            if (ImGui::Button("Cancel Auto Map")) {
+                s_automap_i = -1;
+                s_automap_player = -1;
+            }
+        } else if (ImGui::Button("Auto Map All")) {
+            s_automap_i = 0;
+            s_automap_player = p;
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Reset to Defaults")) {
             if (settings_player_binds)
                 launcher_model_reset_player_bindings(m, m->cfg_player);
             else
                 launcher_binds_reset_player(m, m->cfg_player + 1);
         }
-        if (m->capturing) ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+        if (automap_running) {
+            /* Name the input being waited on: a bare "Listening..." during a
+             * twelve-step sequence does not say which one. */
+            const int cell = s_automap_i - 1;
+            const int b = (cell >= 0 && cell < automap_total)
+                ? (vertical ? order[(cell % order_cols) * order_rows +
+                                    (cell / order_cols)]
+                            : cell)
+                : 0;
+            ImGui::TextColored(col(th.accent), "Auto Map %d/%d - press %s%s",
+                               cell + 1, automap_total, spec.buttons[b].label,
+                               (has_pad && pad_cap) ? " on the controller" : "");
+        } else if (m->capturing) {
+            ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+        }
         } // !is_psx
     } end_panel();
 
