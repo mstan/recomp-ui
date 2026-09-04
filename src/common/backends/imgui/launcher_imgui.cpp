@@ -6315,7 +6315,17 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                                 const int rc = np->lobby_mods_download_one
                                     ? np->lobby_mods_download_one(np->ctx, i)
                                     : -1;
-                                if (rc != 0)
+                                if (rc == -2)
+                                    /* Not a failure: one transfer runs at a
+                                     * time, so this names the click that was
+                                     * ignored and why, rather than reporting
+                                     * a fault that is not there. */
+                                    std::snprintf(m->mod_status,
+                                                  sizeof(m->mod_status),
+                                                  "Already downloading — let "
+                                                  "it finish, then get %s.",
+                                                  lm.name);
+                                else if (rc != 0)
                                     std::snprintf(m->mod_status,
                                                   sizeof(m->mod_status),
                                                   "Could not start the download "
@@ -6379,9 +6389,12 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 } else {
                     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kModTextWrap);
                     ImGui::TextColored(col(th.text_muted),
+                                       "Download All fetches the %d missing "
+                                       "mod(s) one after another; the arrow "
+                                       "beside a row fetches just that one. "
                                        "Downloading runs the host's code on "
-                                       "your machine. Only accept mods from a "
-                                       "host you trust.");
+                                       "your machine — only accept mods from "
+                                       "a host you trust.", missing_n);
                     ImGui::PopTextWrapPos();
                     if (progress >= 0 && progress < 100) {
                         ImGui::ProgressBar(progress / 100.0f,
@@ -6391,7 +6404,8 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                             np->mod_xfer_cancel) {
                             np->mod_xfer_cancel(np->ctx);
                         }
-                    } else if (ImGui::Button("Download from host",
+                    } else if (ImGui::Button(missing_n > 1 ? "Download All"
+                                                          : "Download",
                                              ImVec2(px(200), 0))) {
                         const int rc = np->lobby_mods_download
                             ? np->lobby_mods_download(np->ctx) : -1;
