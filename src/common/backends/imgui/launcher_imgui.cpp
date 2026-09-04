@@ -2376,6 +2376,7 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
 bool any_deep_display(const LauncherModel* m) {
     return m->has_window_size || m->has_renderer || m->has_supersampling ||
            m->has_antialiasing || m->has_texture_filter || m->has_screen_kind ||
+           m->has_scanlines ||
            m->has_fmv_filter ||
            m->has_frame_interp || m->has_skip_fmv ||
            m->has_geometry_precision ||
@@ -2703,6 +2704,30 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         // shorter models (e.g. "DMG") center within the same fixed box.
         if (ImGui::Button(ui_text(launcher_model_screen_kind_label(m)), ImVec2(px(220), px(30))))
             launcher_model_cycle_screen_kind(m);
+    }
+
+    // Scanlines: darken every other display line for a CRT look. Independent of
+    // the Screen model colour filter above — the two compose. The strength row
+    // only appears once it is on.
+    if (m->has_scanlines) {
+        row_label("Scanlines", th);
+        bool sl = m->s.scanlines != 0;
+        if (ImGui::Checkbox("##scanlines", &sl))
+            launcher_model_toggle_scanlines(m);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("Darkens the gaps between display lines for a CRT "
+                              "look.\nApplied at the console's own scanline "
+                              "pitch; cleanest when the\nwindow is at least twice "
+                              "the console's line count tall.");
+        if (m->s.scanlines) {
+            row_label("Scanline strength", th);
+            int p = launcher_model_scanline_strength_pct(m);
+            ImGui::PushID("scanline_strength");
+            ImGui::SetNextItemWidth(px(150));
+            if (ImGui::SliderInt("##scanline_strength", &p, 1, 100, "%d%%"))
+                launcher_model_set_scanline_strength_pct(m, p);
+            ImGui::PopID();
+        }
     }
 
     // Frame interpolation is only meaningful under OpenGL (Software has no
@@ -3491,6 +3516,70 @@ void settings_pad_label(int binding, char* out, size_t capacity) {
     snprintf(out, capacity, "%s", text);
 }
 
+/* PSX's runtime matches a host shortcut bound to ONE button or ONE trigger
+ * direction only while Select is also held (hotkey_pad_binding_down): the
+ * implicit chord keeps a lone face button from firing Rewind mid-game. A
+ * two-button capture is stored as an explicit chord and replaces that
+ * implicit Select. Show the requirement in the label so a player who binds
+ * "righttrigger+" is not left pressing R2 alone and seeing nothing. */
+static bool assist_pad_bind_implies_select(const LauncherModel* m, int binding) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : nullptr;
+    const bool psx = prof && prof->id && std::strcmp(prof->id, "psx") == 0;
+    return psx && (RECOMP_LAUNCHER_PAD_IS_BUTTON(binding) ||
+                   RECOMP_LAUNCHER_PAD_IS_AXIS(binding));
+}
+
+static void assist_pad_label(const LauncherModel* m, int binding,
+                             char* out, size_t capacity) {
+    char text[96];
+    settings_pad_label(binding, text, sizeof text);
+    if (assist_pad_bind_implies_select(m, binding))
+        snprintf(out, capacity, "select + %s", text);
+    else
+        snprintf(out, capacity, "%s", text);
+}
+
+/* The PSX runtime evaluates controller host shortcuts against PLAYER 1's
+ * opened pad handle only, so with Player 1 on Keyboard / None, or its pad
+ * unplugged, every controller shortcut is dead no matter what is bound.
+ * Hide the column in that state instead of offering bindings that cannot
+ * fire. Other profiles keep the column unconditionally. */
+static bool assist_pad_column_available(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : nullptr;
+    const bool psx = prof && prof->id && std::strcmp(prof->id, "psx") == 0;
+    if (!psx) return true;
+    if (m->s.player_src[0] != 2) return false;
+    const char* guid = m->s.player_gamepad_guid[0];
+    for (int j = 0; j < g_pad_count; ++j) {
+        if (g_pads[j].id && g_pads[j].id == m->player_pad_id[0]) return true;
+        if (guid[0] && g_pads[j].guid[0] && std::strcmp(g_pads[j].guid, guid) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void draw_assist_pad_unavailable_hint(const LauncherModel* m,
+                                             const LauncherTheme& th) {
+    if (!m) return;
+    ImGui::TextColored(col(th.text_muted),
+        m->s.player_src[0] == 2
+            ? "Controller shortcuts hidden: Player 1's gamepad is not connected."
+            : "Controller shortcuts hidden: set Player 1's input source to a gamepad.");
+}
+
+static void draw_assist_pad_chord_hint(const LauncherModel* m,
+                                       const LauncherTheme& th) {
+    if (!m) return;
+    for (int action = 0; action < m->assist_binding_count; ++action) {
+        if (assist_pad_bind_implies_select(m, m->s.assist_pad_bind[action])) {
+            ImGui::TextColored(col(th.text_muted),
+                "Single-button shortcuts fire with Select held; capture two"
+                " buttons together for a chord without Select.");
+            return;
+        }
+    }
+}
+
 void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
                                 const char* table_id, int action_limit,
                                 bool show_reset) {
@@ -3505,14 +3594,17 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
         m->has_assist_tools
             ? "Global controls; they only operate while Assist Tools is enabled."
             : "Press a controller button or chord.");
-    if (ImGui::BeginTable(table_id, 3, ImGuiTableFlags_SizingFixedFit |
-                                      ImGuiTableFlags_RowBg)) {
+    const bool pad_col = assist_pad_column_available(m);
+    if (ImGui::BeginTable(table_id, pad_col ? 3 : 2,
+                          ImGuiTableFlags_SizingFixedFit |
+                              ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed,
                                 px(150));
         ImGui::TableSetupColumn("Keyboard", ImGuiTableColumnFlags_WidthFixed,
                                 px(180));
-        ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthFixed,
-                                px(180));
+        if (pad_col)
+            ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthFixed,
+                                    px(180));
         ImGui::TableHeadersRow();
         int count = m->assist_binding_count;
         if (action_limit > 0 && count > action_limit) count = action_limit;
@@ -3525,24 +3617,35 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
-            if (ImGui::Button(
-                    capture_key ? "[ press a key... ]" :
-                        settings_key_label(m->s.assist_key_bind[action]),
-                    ImVec2(px(170), 0)))
+            /* "##key" / "##pad": both columns can read "(unbound)" at once
+             * (a freshly added shortcut), which would give the two buttons
+             * the same ImGui ID inside this row's PushID scope. */
+            char key_lbl[96];
+            snprintf(key_lbl, sizeof key_lbl, "%s##key",
+                     capture_key ? "[ press a key... ]"
+                                 : settings_key_label(m->s.assist_key_bind[action]));
+            if (ImGui::Button(key_lbl, ImVec2(px(170), 0)))
                 launcher_model_begin_assist_capture(m, action, false);
-            ImGui::TableSetColumnIndex(2);
-            bool capture_pad = m->capturing && m->capture_assist &&
-                               m->capture_pad && m->capture_btn == action;
-            char pad[48];
-            settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
-            if (ImGui::Button(
-                    capture_pad ? "[ press a button... ]" : pad,
-                    ImVec2(px(170), 0)))
-                launcher_model_begin_assist_capture(m, action, true);
+            if (pad_col) {
+                ImGui::TableSetColumnIndex(2);
+                bool capture_pad = m->capturing && m->capture_assist &&
+                                   m->capture_pad && m->capture_btn == action;
+                char pad[112];
+                assist_pad_label(m, m->s.assist_pad_bind[action], pad, sizeof pad);
+                char pad_lbl[128];
+                snprintf(pad_lbl, sizeof pad_lbl, "%s##pad",
+                         capture_pad ? "[ press a button... ]" : pad);
+                if (ImGui::Button(pad_lbl, ImVec2(px(170), 0)))
+                    launcher_model_begin_assist_capture(m, action, true);
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
+    if (pad_col) draw_assist_pad_chord_hint(m, th);
+    else         draw_assist_pad_unavailable_hint(m, th);
+    if (m->capturing && m->capture_assist)
+        ImGui::TextColored(col(th.text_muted), "Backspace clears the binding.");
     if (show_reset && ImGui::Button(m->has_assist_tools
                                         ? "Reset Assist Controls"
                                         : "Reset Host Shortcuts"))
@@ -3561,15 +3664,17 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
                        m->has_assist_tools
                            ? "(global; requires Assist Tools)"
                            : "(keyboard and controller)");
-    if (ImGui::BeginTable("controller_assist_binds", 3,
+    const bool pad_col = assist_pad_column_available(m);
+    if (ImGui::BeginTable("controller_assist_binds", pad_col ? 3 : 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch,
                                 1.1f);
         ImGui::TableSetupColumn("Keyboard", ImGuiTableColumnFlags_WidthStretch,
                                 1.0f);
-        ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthStretch,
-                                1.0f);
+        if (pad_col)
+            ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthStretch,
+                                    1.0f);
         ImGui::TableHeadersRow();
         for (int action = 0; action < m->assist_binding_count; ++action) {
             ImGui::PushID(action);
@@ -3580,25 +3685,34 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
-            if (ImGui::Button(
-                    capture_key ? "[ key... ]" :
-                        settings_key_label(m->s.assist_key_bind[action]),
-                    ImVec2(-FLT_MIN, 0)))
+            /* "##key" / "##pad": see draw_assist_binding_editor. */
+            char key_lbl[96];
+            snprintf(key_lbl, sizeof key_lbl, "%s##key",
+                     capture_key ? "[ key... ]"
+                                 : settings_key_label(m->s.assist_key_bind[action]));
+            if (ImGui::Button(key_lbl, ImVec2(-FLT_MIN, 0)))
                 launcher_model_begin_assist_capture(m, action, false);
-            ImGui::TableSetColumnIndex(2);
-            bool capture_pad = m->capturing && m->capture_assist &&
-                               m->capture_pad && m->capture_btn == action;
-            char pad[48];
-            settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
-            if (ImGui::Button(capture_pad ? "[ button... ]" : pad,
-                              ImVec2(-FLT_MIN, 0)))
-                launcher_model_begin_assist_capture(m, action, true);
+            if (pad_col) {
+                ImGui::TableSetColumnIndex(2);
+                bool capture_pad = m->capturing && m->capture_assist &&
+                                   m->capture_pad && m->capture_btn == action;
+                char pad[112];
+                assist_pad_label(m, m->s.assist_pad_bind[action], pad, sizeof pad);
+                char pad_lbl[128];
+                snprintf(pad_lbl, sizeof pad_lbl, "%s##pad",
+                         capture_pad ? "[ button... ]" : pad);
+                if (ImGui::Button(pad_lbl, ImVec2(-FLT_MIN, 0)))
+                    launcher_model_begin_assist_capture(m, action, true);
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
+    if (pad_col) draw_assist_pad_chord_hint(m, th);
+    else         draw_assist_pad_unavailable_hint(m, th);
     if (m->capturing && m->capture_assist)
-        ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+        ImGui::TextColored(col(th.warn),
+                           "Listening... (Esc cancels, Backspace clears)");
 }
 
 void draw_assist_tools(LauncherModel* m, const LauncherTheme& th) {
@@ -4057,6 +4171,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                                spec.buttons[b].label);
                             ImGui::SameLine(label_col_w);
                             const bool cap = m->capturing && !m->capture_pad &&
+                                             !m->capture_assist &&
                                              m->capture_btn == b;
                             const bool cap_alt = cap && m->capture_slot == 1;
                             const char* lbl = m->binds[p][b];
@@ -4130,7 +4245,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         s_kb_profile_saved_until = ImGui::GetTime() + 2.5;
                     }
                 }
-                if (m->capturing && !m->capture_pad) {
+                if (m->capturing && !m->capture_pad && !m->capture_assist) {
                     const char* label =
                         (m->capture_btn >= 0 &&
                          m->capture_btn < LNG_PSX_PAD_BUTTON_COUNT)
@@ -4168,6 +4283,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                                spec.buttons[b].label);
                             ImGui::SameLine(label_col_w);
                             const bool cap = m->capturing && m->capture_pad &&
+                                             !m->capture_assist &&
                                              m->capture_btn == b;
                             const bool wait_rel = cap && m->map_all_wait_release;
                             const char* pl = m->pad_binds[p][b][0]
@@ -4215,7 +4331,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         s_profile_saved_until = ImGui::GetTime() + 2.5;
                     }
                 }
-                if (m->capturing && m->capture_pad) {
+                if (m->capturing && m->capture_pad && !m->capture_assist) {
                     const char* label =
                         (m->capture_btn >= 0 &&
                          m->capture_btn < LNG_PSX_PAD_BUTTON_COUNT)
@@ -4316,7 +4432,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     for (int slot = 0; slot < bpi; ++slot) {
                         if (slot) ImGui::SameLine(0, chip_gap);
                         ImGui::PushID(slot);
-                        const bool cap = m->capturing && m->capture_btn == b
+                        const bool cap = m->capturing && !m->capture_assist &&
+                                         m->capture_btn == b
                                                       && m->capture_slot == slot;
                         const char* txt = cap
                             ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
@@ -4329,7 +4446,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     }
                 } else {
                     // KEY chip
-                    const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
+                    const bool cap_key = m->capturing && !m->capture_pad &&
+                                         !m->capture_assist && m->capture_btn == b;
                     if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                     const char* key_text = settings_player_binds
                         ? settings_key_label(m->s.player_key_bind[p][b])
@@ -4341,7 +4459,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     if (has_pad) {
                         ImGui::SameLine(0, chip_gap);
                         ImGui::PushID("pad");
-                        const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
+                        const bool cap_pad = m->capturing && m->capture_pad &&
+                                             !m->capture_assist && m->capture_btn == b;
                         char settings_pad[48];
                         settings_pad_label(m->s.player_pad_bind[p][b],
                                            settings_pad, sizeof settings_pad);
@@ -9305,6 +9424,13 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     // the player's selected Input source device.
     if (m->capturing && m->capture_pad) {
         if (m->settings_bindings && m->capture_assist) {
+            // Backspace while listening clears the shortcut (0 = unbound);
+            // there is no other way to remove a host shortcut from the UI.
+            if (ev.type == SDL_EVENT_KEY_DOWN && LNG_EVKEY(ev) == SDLK_BACKSPACE) {
+                launcher_model_set_captured_pad(m, 0);
+                launcher_model_cancel_capture(m);
+                return true;
+            }
             if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 const int button = (int)LNG_EVGBTN(ev);
                 uint32_t mask = launcher_input_gamepad_button_mask(
@@ -9516,7 +9642,8 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         // (capture_slot is always 0 for them).
         const SystemProfile* prof = (const SystemProfile*)m->profile;
         if (m->settings_bindings && m->capture_assist)
-            launcher_model_set_captured_key(m, (int)LNG_EVSCAN(ev));
+            launcher_model_set_captured_key(
+                m, LNG_EVKEY(ev) == SDLK_BACKSPACE ? 0 : (int)LNG_EVSCAN(ev));
         else if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
             launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
                                            m->capture_slot, (int)LNG_EVSCAN(ev));
@@ -9531,7 +9658,12 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     }
     // hotkey capture: wait past a bare modifier press for the real key
     if (is_modifier_scancode((SDL_Scancode)LNG_EVSCAN(ev))) return true;
-    launcher_binds_set_hotkey(m, m->capture_hk, (int)LNG_EVKEY(ev), (int)LNG_EVMOD(ev));
+    // Backspace unbinds: launcher_binds_set_hotkey writes "None", which the
+    // PSX runtime honours as an explicit unbind (no default fallback).
+    if (LNG_EVKEY(ev) == SDLK_BACKSPACE)
+        launcher_binds_set_hotkey(m, m->capture_hk, 0, 0);
+    else
+        launcher_binds_set_hotkey(m, m->capture_hk, (int)LNG_EVKEY(ev), (int)LNG_EVMOD(ev));
     launcher_model_cancel_hk_capture(m);
     return true;
 }
