@@ -57,6 +57,17 @@ typedef struct {
     // ---- appended additively (older positional initializers zero-fill) ----
     const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
     int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
+    // ---- per-GUID gamepad bindings panel ----------------------------------
+    // Layout for the Gamepad Bindings page: indices into buttons[], read
+    // COLUMN-MAJOR (down a column, then the next one), which is how a pad's
+    // controls actually group -- D-pad together, face buttons together,
+    // shoulders together. Row-major would scatter each group across rows.
+    //
+    // NULL (the zero-fill of every older positional initializer) means the
+    // console has no per-GUID panel and keeps the plain rebind grid, so adding
+    // this changed no existing console until it opted in.
+    const int* pad_bind_order;
+    int  pad_bind_cols, pad_bind_rows;             // order length == cols*rows
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------

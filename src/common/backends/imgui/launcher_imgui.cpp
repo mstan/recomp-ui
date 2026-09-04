@@ -6285,8 +6285,16 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                                        lm.builtin ? "  [built-in]" : "");
 
                     /* Right-align the control so the rows form a column
-                     * regardless of how long the names are. */
-                    if (!lm.installed) {
+                     * regardless of how long the names are.
+                     *
+                     * Offered on INSTALLED rows too, as a re-fetch. A local
+                     * copy can be stale or incomplete -- an older transfer of
+                     * the same version, a half-finished install -- and the row
+                     * only knows the package is present, not that it is the
+                     * host's. Without a control there is no way to repair it
+                     * from inside the game. The transfer replaces a copy at
+                     * the same version, so this is a repair, not a duplicate. */
+                    if (true) {
                         const float right =
                             ImGui::GetWindowContentRegionMax().x - icon;
                         if (right > ImGui::GetCursorPosX()) {
@@ -6303,12 +6311,16 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                             if (ImGui::IsItemHovered())
                                 ImGui::SetTooltip("Downloading… %d%%", row_prog);
                         } else {
-                            char tip[192];
+                            char tip[224];
                             std::snprintf(tip, sizeof(tip),
-                                          can_dl
-                                              ? "Download %s %s from the host"
-                                              : "%s %s cannot be downloaded "
-                                                "from the host in this build",
+                                          !can_dl
+                                              ? "%s %s cannot be downloaded "
+                                                "from the host in this build"
+                                          : lm.installed
+                                              ? "Get %s %s from the host again "
+                                                "(replaces your copy — use this "
+                                                "if the mod is not working)"
+                                              : "Download %s %s from the host",
                                           lm.name, lm.version);
                             if (download_icon_button("##get", icon, can_dl, th,
                                                      tip)) {
@@ -6335,12 +6347,30 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                             }
                         }
                     }
-                    else {
-                        /* Installed rows reserve the same cell, so every row
-                         * is the same height and the list does not shuffle as
-                         * packages arrive. */
-                        ImGui::SameLine();
-                        ImGui::Dummy(ImVec2(icon, icon));
+                    /* The host's configuration for this package, indented
+                     * under it. This is what the guest will actually run --
+                     * its own settings are replaced with the host's before
+                     * launch -- and it refreshes whenever the host republishes
+                     * its caps, so changing a dropdown on the host shows up
+                     * here without the guest touching anything. */
+                    if (lm.options[0]) {
+                        ImGui::Indent(px(24));
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                                               px(460));
+                        /* One line per entry: a mod with several features, or
+                         * several dropdowns, is a list and reads as one. */
+                        const char* line = lm.options;
+                        while (*line) {
+                            const char* nl = std::strchr(line, '\n');
+                            const int len = nl ? (int)(nl - line)
+                                               : (int)std::strlen(line);
+                            ImGui::TextColored(col(th.text_muted),
+                                               "host runs: %.*s", len, line);
+                            if (!nl) break;
+                            line = nl + 1;
+                        }
+                        ImGui::PopTextWrapPos();
+                        ImGui::Unindent(px(24));
                     }
                     ImGui::PopID();
                     ImGui::Separator();

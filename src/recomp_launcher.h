@@ -124,6 +124,15 @@ typedef struct RecompLauncherCNetplayLobbyMod {
     char reason[96];
     int  builtin;
     uint32_t size;
+    /* How the HOST has this package configured: the enabled features and the
+     * option values it resolved them to, e.g. "localization language=en".
+     *
+     * Shown to guests because it is what they will actually run -- the host's
+     * configuration is adopted before launch, so a guest reading its own local
+     * settings here would be reading the wrong ones. Refreshed from the host's
+     * published caps, so it tracks a host changing a dropdown without the
+     * guest doing anything. Empty when the host published no configuration. */
+    char options[192];
 } RecompLauncherCNetplayLobbyMod;
 
 typedef struct RecompLauncherCNetplayLaunch {
