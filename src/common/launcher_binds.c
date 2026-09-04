@@ -668,6 +668,206 @@ static int snes_gamepad_set_button(LauncherModel* m, int player, int b,
     return 1;
 }
 
+/* ---- SNES per-GUID controller profiles ---------------------------------
+ *
+ * A profile is one section of the game's own config.ini:
+ *
+ *   [Controller.<guid>]
+ *   Name       = DualSense Wireless Controller   ; display label
+ *   NameCustom = 1                               ; the player renamed it
+ *   Deadzone   = 10
+ *   Controls   = DpadUp, DpadDown, ...           ; the [GamepadMap] line
+ *
+ * Same shape PSX keeps in input.ini, in the file this console already uses --
+ * the game reads [GamepadMap] and knows nothing about profiles, so a saved one
+ * only takes effect when it is applied back onto that section. Storing the
+ * mapping per GUID is what lets two different pads keep different layouts
+ * instead of overwriting one shared line.
+ *
+ * The identity is the GUID: SDL instance ids are per-connection. */
+static void snes_profile_section(const char* guid, char* out, size_t cap) {
+    snprintf(out, cap, "Controller.%s", guid ? guid : "");
+}
+
+/* One key out of one section. Mirrors snes_gamepad_read_config_order's walk
+ * rather than adding a general ini reader for four call sites. */
+static int snes_profile_get(const char* guid, const char* key,
+                            char* out, size_t cap) {
+    char want[96];
+    long len = 0;
+    char* text;
+    char* save = NULL;
+    int in_sect = 0;
+    int found = 0;
+
+    if (out && cap) out[0] = '\0';
+    if (!guid || !guid[0] || !key || !out || !cap) return 0;
+    snes_profile_section(guid, want, sizeof(want));
+    text = read_whole(config_path(), &len);
+    if (!text) return 0;
+
+    for (char* line = strtok_r(text, "\n", &save); line;
+         line = strtok_r(NULL, "\n", &save)) {
+        char* p = trim_token(line);
+        if (!*p || *p == '#' || *p == ';') continue;
+        if (*p == '[') {
+            char* close = strchr(p, ']');
+            size_t sl = close ? (size_t)(close - p - 1) : strlen(p + 1);
+            in_sect = ieq(p + 1, sl, want);
+            continue;
+        }
+        if (!in_sect) continue;
+        {
+            char* eq = strchr(p, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            if (ieq(trim_token(p), strlen(trim_token(p)), key)) {
+                copy_str(out, cap, trim_token(eq + 1));
+                found = out[0] != '\0';
+                break;
+            }
+        }
+    }
+    free(text);
+    return found;
+}
+
+int launcher_binds_snes_profile_exists(LauncherModel* m, int player) {
+    char v[64];
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return 0;
+    return snes_profile_get(m->s.player_gamepad_guid[player - 1], "Controls",
+                            v, sizeof(v)) ||
+           snes_profile_get(m->s.player_gamepad_guid[player - 1], "Name",
+                            v, sizeof(v));
+}
+
+/* Put a readable name on a slot restored from settings.
+ *
+ * Settings carry the GUID -- the only identity that survives a reconnect --
+ * but not a label, so a restored slot showed "050057564c05..." in the Input
+ * source box where the device name belongs. The saved profile's Name is
+ * preferred (it may be the player's own rename); otherwise the live device is
+ * asked, and failing both the slot keeps whatever it had. */
+void launcher_binds_hydrate_snes_pad_names(LauncherModel* m,
+                                           const LauncherPad* pads,
+                                           int pad_count) {
+    if (!m || !is_snes_profile(m)) return;
+    for (int p = 0; p < 2; ++p) {
+        const char* guid = m->s.player_gamepad_guid[p];
+        char name[64];
+        if (m->s.player_src[p] != 2 || !guid[0]) continue;
+        if (snes_profile_get(guid, "Name", name, sizeof(name)) && name[0]) {
+            copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]), name);
+            continue;
+        }
+        if (!pads) continue;
+        for (int i = 0; i < pad_count; ++i) {
+            if (pads[i].guid[0] && !strcmp(pads[i].guid, guid)) {
+                copy_str(m->player_pad_name[p], sizeof(m->player_pad_name[p]),
+                         pads[i].name);
+                m->player_pad_id[p] = pads[i].id;
+                break;
+            }
+        }
+    }
+}
+
+void launcher_binds_save_snes_gamepad(LauncherModel* m, int player) {
+    char sect[96];
+    char value[768] = {0};
+    char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
+    char num[16];
+    const char* guid;
+    int dz;
+
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return;
+    guid = m->s.player_gamepad_guid[player - 1];
+    if (!guid[0]) return;                 /* nothing to key the profile on */
+    snes_profile_section(guid, sect, sizeof(sect));
+
+    /* The mapping as it stands in [GamepadMap] -- the profile records what the
+     * game would actually run, not a separate copy that could drift from it. */
+    snes_gamepad_read_config_order(player - 1, controls);
+    for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i) {
+        if (i) strncat(value, ", ", sizeof(value) - strlen(value) - 1);
+        strncat(value, controls[i], sizeof(value) - strlen(value) - 1);
+    }
+    launcher_ini_kv_write(config_path(), sect, "Controls", value);
+
+    dz = m->s.deadzone[player - 1];
+    if (dz < 0) dz = 0;
+    if (dz > 100) dz = 100;
+    snprintf(num, sizeof(num), "%d", dz);
+    launcher_ini_kv_write(config_path(), sect, "Deadzone", num);
+
+    if (m->player_pad_name[player - 1][0])
+        launcher_ini_kv_write(config_path(), sect, "Name",
+                              m->player_pad_name[player - 1]);
+}
+
+void launcher_binds_rename_snes_gamepad(LauncherModel* m, int player,
+                                        const char* name) {
+    char sect[96];
+    const char* guid;
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return;
+    guid = m->s.player_gamepad_guid[player - 1];
+    if (!guid[0] || !name || !name[0]) return;
+    snes_profile_section(guid, sect, sizeof(sect));
+    launcher_ini_kv_write(config_path(), sect, "Name", name);
+    /* Marked custom so a later reconnect does not overwrite the player's name
+     * with whatever SDL reports the device as. */
+    launcher_ini_kv_write(config_path(), sect, "NameCustom", "1");
+    copy_str(m->player_pad_name[player - 1],
+             sizeof(m->player_pad_name[player - 1]), name);
+}
+
+void launcher_binds_delete_snes_gamepad(LauncherModel* m, int player) {
+    char sect[96];
+    const char* guid;
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return;
+    guid = m->s.player_gamepad_guid[player - 1];
+    if (!guid[0]) return;
+    snes_profile_section(guid, sect, sizeof(sect));
+    /* Emptied rather than excised: the surgical writer edits keys in place and
+     * has no notion of removing a section, and an empty Controls reads as "no
+     * profile" everywhere it is consulted. Leaving a stale mapping behind
+     * would be the one outcome a Delete must not produce. */
+    launcher_ini_kv_write(config_path(), sect, "Controls", "");
+    launcher_ini_kv_write(config_path(), sect, "Name", "");
+    launcher_ini_kv_write(config_path(), sect, "NameCustom", "0");
+    launcher_ini_kv_write(config_path(), sect, "Deadzone", "");
+}
+
+/* Apply a saved profile onto the live [GamepadMap] line and the model. Called
+ * when a pad becomes a player's source, so selecting a controller restores the
+ * layout that controller was configured with. */
+void launcher_binds_apply_snes_pad_profile(LauncherModel* m, int player) {
+    char stored[768];
+    char name[64];
+    char dzs[16];
+    const char* guid;
+
+    if (!m || !is_snes_profile(m) || player < 1 || player > 2) return;
+    guid = m->s.player_gamepad_guid[player - 1];
+    if (!guid[0]) return;
+
+    if (snes_profile_get(guid, "Controls", stored, sizeof(stored)) &&
+        stored[0]) {
+        launcher_ini_kv_write(config_path(), "GamepadMap",
+                              snes_gamepad_config_key(player - 1), stored);
+    }
+    if (snes_profile_get(guid, "Deadzone", dzs, sizeof(dzs)) && dzs[0]) {
+        int dz = atoi(dzs);
+        if (dz < 0) dz = 0;
+        if (dz > 100) dz = 100;
+        m->s.deadzone[player - 1] = dz;
+    }
+    if (snes_profile_get(guid, "Name", name, sizeof(name)) && name[0])
+        copy_str(m->player_pad_name[player - 1],
+                 sizeof(m->player_pad_name[player - 1]), name);
+    reload_player_display(m, player);
+}
+
 static void snes_gamepad_reset_player(int player) {
     char controls[LNG_SNES_PAD_BUTTON_COUNT][48];
     for (int i = 0; i < LNG_SNES_PAD_BUTTON_COUNT; ++i)

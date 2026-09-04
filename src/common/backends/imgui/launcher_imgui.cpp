@@ -176,6 +176,19 @@ namespace {
 float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
 
+/* Auto Map All run state.
+ *
+ * File scope, not a function static, because the gamepad-navigation suppressor
+ * in the event loop has to see it. A run spends one frame between steps with
+ * m->capturing false -- the capture has committed and the next has not begun --
+ * and the nav flag is recomputed BEFORE the panel code that starts the next
+ * step. For that frame the pad drove the menu instead of the mapping, so a
+ * twelve-button run scattered focus twelve times. */
+static int s_automap_i = -1;      /* next cell to capture, -1 = idle */
+static int s_automap_player = -1; /* a run belongs to one player */
+static inline bool automap_in_progress(void) { return s_automap_i >= 0; }
+
+
 /* A download glyph -- arrow into a tray -- drawn rather than glyphed because
  * the launcher ships no icon font (see the font loader above: body + optional
  * JP face, nothing pictographic). Sized from the row height so it lines up
@@ -1979,6 +1992,8 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
 void draw_source_selectables(LauncherModel* m, int p) {
     const SystemProfile* src_prof = (const SystemProfile*)m->profile;
     const bool psx = src_prof && src_prof->id && !strcmp(src_prof->id, "psx");
+    const bool snes_prof = src_prof && src_prof->id &&
+                           !strcmp(src_prof->id, "snes");
     if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
         launcher_model_set_source(m, p, 0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
@@ -2098,6 +2113,13 @@ void draw_source_selectables(LauncherModel* m, int p) {
                                      opts[i].guid);
             if (psx) {
                 launcher_binds_apply_psx_pad_profile(m, p);
+                launcher_binds_refresh(m);
+            } else if (snes_prof) {
+                /* Selecting a controller restores the profile saved for it, so
+                 * swapping pads swaps layouts instead of leaving whichever one
+                 * was configured last in [GamepadMap]. Does nothing when that
+                 * GUID has no saved profile. */
+                launcher_binds_apply_snes_pad_profile(m, p + 1);
                 launcher_binds_refresh(m);
             }
         }
@@ -3778,6 +3800,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const int p = m->cfg_player;
     const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
     const bool cfg_psx = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "psx");
+    const bool cfg_snes = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "snes");
     if (cfg_psx && m->s.player_src[p] == 2 &&
         m->s.player_gamepad_guid[p][0] && !m->player_pad_name[p][0])
         launcher_binds_hydrate_psx_pad_names(m);
@@ -3791,6 +3814,78 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             draw_source_selectables(m, p);
             ImGui::EndCombo();
         }
+        /* SNES: Save / Rename / Delete for the selected controller.
+         *
+         * Same three actions PSX offers, writing into this console's own
+         * config.ini as [Controller.<guid>]. Disabled until a pad with a GUID
+         * is the player's source -- there is nothing to key a profile on
+         * before that, and a profile saved against "no device" could never be
+         * found again. */
+        if (cfg_snes) {
+            static bool s_snes_rename_open = false;
+            static char s_snes_rename_buf[64] = {};
+            const bool can_pad = m->s.player_src[p] == 2 &&
+                                 m->s.player_gamepad_guid[p][0];
+
+            ImGui::SameLine();
+            if (!can_pad) ImGui::BeginDisabled();
+            if (ImGui::Button("Save Profile"))
+                launcher_binds_save_snes_gamepad(m, p + 1);
+            if (ImGui::IsItemHovered() && can_pad)
+                ImGui::SetTooltip("Store this controller's mapping, name and "
+                                  "deadzone so it comes back next time it is "
+                                  "selected");
+            ImGui::SameLine();
+            if (ImGui::Button("Rename")) {
+                std::snprintf(s_snes_rename_buf, sizeof(s_snes_rename_buf),
+                              "%s", m->player_pad_name[p]);
+                s_snes_rename_open = true;
+            }
+            {
+                const float del_w = px(130.0f);
+                const float right = ImGui::GetWindowContentRegionMax().x;
+                if (right - del_w > ImGui::GetCursorPosX())
+                    ImGui::SameLine(right - del_w);
+                else
+                    ImGui::SameLine();
+                if (ImGui::Button("Delete Profile", ImVec2(del_w, 0)))
+                    launcher_binds_delete_snes_gamepad(m, p + 1);
+                if (ImGui::IsItemHovered() && can_pad)
+                    ImGui::SetTooltip("Forget this controller's saved profile. "
+                                      "The mapping in use is not changed.");
+            }
+            if (!can_pad) ImGui::EndDisabled();
+
+            if (s_snes_rename_open) ImGui::OpenPopup("Rename Controller");
+            ImVec2 c2 = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(c2, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Rename Controller", &s_snes_rename_open,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted("Display name for this controller:");
+                ImGui::SetNextItemWidth(px(320));
+                const bool enter = ImGui::InputText(
+                    "##snes_rename_pad", s_snes_rename_buf,
+                    sizeof(s_snes_rename_buf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::Spacing();
+                if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+                    s_snes_rename_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                const bool ok = s_snes_rename_buf[0] != '\0';
+                ImGui::BeginDisabled(!ok);
+                if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
+                    launcher_binds_rename_snes_gamepad(m, p + 1,
+                                                       s_snes_rename_buf);
+                    s_snes_rename_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+            }
+        }
+
         if (cfg_psx) {
             static bool s_rename_open = false;
             static char s_rename_buf[64] = {};
@@ -4368,6 +4463,18 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // placeholder.
         const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
 
+        // Is this player actually driving the game with a pad?
+        //
+        // NOT pad_cap: that helper answers "does the N64's shared device table
+        // capture pad fields", and is `is_n64_profile(m) && ...` -- always 0
+        // anywhere else. Using it to pick which chip is live meant a SNES
+        // player on a controller was shown the KEYBOARD row and Auto Map
+        // listened for keys, so pressing the controller did nothing at all.
+        //
+        // player_src == 2 is the gamepad source the Input source selector sets,
+        // and is what the PSX gamepad panel already keys off.
+        const bool pad_src = has_pad && m->s.player_src[p] == 2;
+
         // Heading uses accent2 so each console's title tints in ITS logo colour
         // (N64 blue; single-accent consoles set accent2 == accent).
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
@@ -4469,7 +4576,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         if (cap) ImGui::PopStyleColor();
                         ImGui::PopID();
                     }
-                } else if (has_pad && pad_cap) {
+                } else if (pad_src) {
                     // GAMEPAD chip only: the player's source is a pad, so a key
                     // bind on this row would map something nothing reads.
                     ImGui::PushID("pad");
@@ -4514,9 +4621,6 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
          * of this page: a run is abandoned the moment the page stops drawing
          * it, which is what should happen when the player navigates away
          * mid-sequence. */
-        static int  s_automap_i = -1;      /* next cell to capture, -1 = idle */
-        static int  s_automap_player = -1; /* run belongs to one player only */
-
         const bool automap_running =
             s_automap_i >= 0 && s_automap_player == p;
         const int automap_total = vertical ? (order_rows * order_cols) : nbtn;
@@ -4529,17 +4633,37 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 s_automap_i = -1;
                 s_automap_player = -1;
             } else if (!m->capturing) {
-                if (s_automap_i >= automap_total) {
+                /* Wait for the pad to come to REST between steps.
+                 *
+                 * Without this, one held control satisfies every remaining
+                 * step: the capture commits, the next begins on the following
+                 * frame, and the same still-held button commits that one too.
+                 * A single resting D-pad direction (deadzone defaults to 0%)
+                 * walked straight down the list and bound itself to eight
+                 * inputs in a fraction of a second.
+                 *
+                 * PSX's Map All carries the same guard as map_all_wait_release
+                 * -- "never bind while waiting for release". Mine did not. */
+                const uint32_t pad_id = m->player_pad_id[p];
+                if (pad_src && pad_id &&
+                    !launcher_input_gamepad_at_rest(pad_id)) {
+                    /* hold here; nothing is captured until the pad settles */
+                } else if (s_automap_i >= automap_total) {
                     s_automap_i = -1;       /* finished the last column */
                     s_automap_player = -1;
                 } else {
-                    const int cell = s_automap_i++;
-                    const int b = vertical
-                        ? order[(cell % order_cols) * order_rows +
-                                (cell / order_cols)]
-                        : cell;
-                    if (has_pad && pad_cap) launcher_model_begin_pad_capture(m, b);
-                    else                    launcher_model_begin_capture(m, b);
+                    /* order[] is ALREADY in reading order -- down column 1,
+                     * then 2, then 3 -- so the sequence walks it directly.
+                     *
+                     * The transposition below is for DRAWING: the table fills
+                     * left-to-right, so a screen cell has to be converted into
+                     * an order index. Reusing it here made Auto Map follow the
+                     * screen's fill order instead of the column order, which is
+                     * exactly the left-to-right walk that looked wrong. */
+                    const int b = vertical ? order[s_automap_i] : s_automap_i;
+                    s_automap_i++;
+                    if (pad_src) launcher_model_begin_pad_capture(m, b);
+                    else         launcher_model_begin_capture(m, b);
                 }
             }
         }
@@ -4565,13 +4689,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
              * twelve-step sequence does not say which one. */
             const int cell = s_automap_i - 1;
             const int b = (cell >= 0 && cell < automap_total)
-                ? (vertical ? order[(cell % order_cols) * order_rows +
-                                    (cell / order_cols)]
-                            : cell)
+                ? (vertical ? order[cell] : cell)
                 : 0;
-            ImGui::TextColored(col(th.accent), "Auto Map %d/%d - press %s%s",
-                               cell + 1, automap_total, spec.buttons[b].label,
-                               (has_pad && pad_cap) ? " on the controller" : "");
+            const uint32_t pad_id_now = m->player_pad_id[p];
+            const bool settling = pad_src && pad_id_now && !m->capturing &&
+                                  !launcher_input_gamepad_at_rest(pad_id_now);
+            if (settling) {
+                ImGui::TextColored(col(th.warn),
+                                   "Auto Map - release the controller to "
+                                   "continue");
+            } else {
+                ImGui::TextColored(col(th.accent), "Auto Map %d/%d - press %s%s",
+                                   cell + 1, automap_total,
+                                   spec.buttons[b].label,
+                                   pad_src ? " on the controller" : "");
+            }
         } else if (m->capturing) {
             ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
         }
@@ -9715,10 +9847,44 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         }
         const SystemProfile* cap_prof = (const SystemProfile*)m->profile;
         const bool psx_cap = cap_prof && cap_prof->id && !strcmp(cap_prof->id, "psx");
-        const uint32_t want_id = m->player_pad_id[m->cfg_player];
+        /* Which SDL device may bind.
+         *
+         * player_pad_id is set when the player picks a pad from the Input
+         * source list, but a selection RESTORED from settings only carries the
+         * GUID -- the id is re-resolved by a sync that runs for PSX alone. On
+         * every other console the id was therefore 0 after a restart, and a
+         * filter keyed on it would have let any pad bind. Resolve the GUID
+         * against the live device list here so the rule holds from a restored
+         * selection too. */
+        uint32_t want_id = m->player_pad_id[m->cfg_player];
+        if (!want_id && m->s.player_src[m->cfg_player] == 2) {
+            const char* want_guid = m->s.player_gamepad_guid[m->cfg_player];
+            if (want_guid[0]) {
+                for (int i = 0; i < g_pad_count; ++i) {
+                    if (g_pads[i].guid[0] &&
+                        std::strcmp(g_pads[i].guid, want_guid) == 0) {
+                        want_id = g_pads[i].id;
+                        break;
+                    }
+                }
+            }
+        }
         auto from_selected = [&](uint32_t which) -> bool {
-            if (!psx_cap) return true;                 // Genesis: any pad
-            if (!want_id) return false;
+            /* A binding belongs to the device the player SELECTED.
+             *
+             * This used to require psx_cap, so every other console bound
+             * whatever pad spoke first: with two controllers attached, the one
+             * that was not chosen could capture the mapping, and the player had
+             * no way to tell which had won. If a device is selected, only that
+             * device may bind.
+             *
+             * want_id == 0 means no specific device is chosen (the console
+             * offers a generic "Gamepad" source), and any pad is accepted --
+             * which is the behaviour Genesis had and keeps. PSX additionally
+             * refuses when its selection has not resolved to a live device,
+             * because its bindings are stored per GUID and would otherwise be
+             * written against the wrong profile. */
+            if (!want_id) return !psx_cap;
             return which == want_id;
         };
         auto try_clear_release_wait = [&](uint32_t which) {
@@ -10171,6 +10337,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         // or saved [gamepads] registry), never the generic "Gamepad" placeholder.
         launcher_binds_sync_psx_pad_sources(m, g_pads, g_pad_count);
 
+        // SNES: same purpose, from this console's own profile store. Run every
+        // frame so a pad plugged in after start-up picks up its label too.
+        launcher_binds_hydrate_snes_pad_names(m, g_pads, g_pad_count);
+
         // Pad capture release-gate: clear once the selected pad is fully at
         // rest (covers the case where SDL stops sending AXIS_MOTION at rest).
         if (m->capturing && m->capture_pad && m->map_all_wait_release) {
@@ -10232,7 +10402,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         {
             ImGuiIO& nav_io = ImGui::GetIO();
             if (m->capturing || m->hk_capturing || m->camera_capturing ||
-                !s_pad_nav_armed)
+                automap_in_progress() || !s_pad_nav_armed)
                 nav_io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
             else
                 nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;

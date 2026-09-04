@@ -77,6 +77,23 @@ void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
 // (N64: resets the whole device TABLE the player's source selects.)
 void launcher_binds_reset_player(LauncherModel* m, int player);
 
+// ---- SNES gamepad profiles (config.ini [Controller.<guid>]) ---------------
+// Per-device layout, name and deadzone kept in the game's own config.ini, so
+// two controllers can hold different mappings instead of sharing the single
+// [GamepadMap] line the game reads. Save writes the CURRENT mapping; apply
+// copies a saved one back onto [GamepadMap]; delete empties the section.
+int  launcher_binds_snes_profile_exists(LauncherModel* m, int player /*1-based*/);
+void launcher_binds_save_snes_gamepad(LauncherModel* m, int player /*1-based*/);
+void launcher_binds_rename_snes_gamepad(LauncherModel* m, int player /*1-based*/,
+                                        const char* name);
+void launcher_binds_delete_snes_gamepad(LauncherModel* m, int player /*1-based*/);
+void launcher_binds_apply_snes_pad_profile(LauncherModel* m, int player /*1-based*/);
+// Give a slot restored from settings a readable label (saved profile Name, or
+// the live device). Without it the Input source box shows the raw GUID.
+void launcher_binds_hydrate_snes_pad_names(LauncherModel* m,
+                                           const LauncherPad* pads,
+                                           int pad_count);
+
 // ---- PSX gamepad registry (input.ini [gamepads] + [mapping.<guid>]) --------
 // Save Profile: persist this player's selected gamepad name, custom-name flag,
 // deadzone, and button mappings into input.ini.
