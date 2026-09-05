@@ -104,10 +104,90 @@ static void test_autofill(const char* dir) {
     remove(p[2]);
 }
 
+static int fixture_sbi_status;
+static int fixture_verify(const char* path, RecompLauncherCDiscVerify* out) {
+    (void)path;
+    out->sbi_status = fixture_sbi_status;
+    out->iso_ok = 1;
+    out->verdict = fixture_sbi_status == RECOMP_SBI_MISSING ? 3 : 1;
+    return 1;
+}
+
+static int fixture_import_ok;
+static int fixture_import(const char* disc, const char* sbi, char* out, size_t cap, char* error, size_t error_cap) {
+    expect(!strcmp(disc, "selected.cue"), "SBI callback receives the selected disc");
+    expect(!strcmp(sbi, "matching.SBI"), "SBI suffix accepts uppercase");
+    if (fixture_import_ok == 2) {
+        if (cap <= 600) {
+            safe_copy(error, error_cap, "Imported disc path is too long");
+            return 0;
+        }
+        memset(out, 'x', 600);
+        out[600] = '\0';
+        return 1;
+    }
+    if (!fixture_import_ok) {
+        safe_copy(error, error_cap, "Wrong companion");
+        return 0;
+    }
+    safe_copy(out, cap, "imported.cue");
+    return 1;
+}
+
+static void test_sbi_verification_refresh(void) {
+    LauncherModel* m = (LauncherModel*)calloc(1, sizeof(LauncherModel));
+    SystemProfile profile = {0};
+    if (!m) { ++fails; return; }
+    profile.verify.mode = 1;
+    m->profile = &profile;
+    m->rom_present = true;
+    m->disc_verify_cb = fixture_verify;
+    for (int status = RECOMP_SBI_MISSING; status <= RECOMP_SBI_OK; ++status) {
+        fixture_sbi_status = status;
+        run_verify(m);
+        expect(m->verify.sbi_status == status, "selected disc carries current SBI status");
+        expect(m->verify.verdict == (status == RECOMP_SBI_MISSING ? 3 : 1), "missing SBI fails disc verification");
+    }
+    fixture_sbi_status = RECOMP_SBI_NA;
+    run_verify(m);
+    expect(m->verify.sbi_status == RECOMP_SBI_NA, "unlisted disc clears previous SBI state");
+    m->rom_present = false;
+    run_verify(m);
+    expect(m->verify.sbi_status == RECOMP_SBI_NA, "empty selection clears SBI state");
+    launcher_model_set_rom(m, "matching.SBI");
+    expect(!m->rom_present && m->setup_error[0], "SBI without disc shows an error and keeps empty selection");
+    launcher_model_set_rom(m, "selected.cue");
+    m->import_sbi_cb = fixture_import;
+    launcher_model_set_rom(m, "matching.SBI");
+    expect(!strcmp(m->rom_full, "selected.cue") && m->setup_error[0], "rejected SBI preserves the selected disc");
+    fixture_import_ok = 1;
+    fixture_import_ok = 2;
+    launcher_model_set_rom(m, "matching.SBI");
+    expect(!strcmp(m->rom_full, "selected.cue") && m->setup_error[0], "oversized imported path is rejected instead of truncated");
+    fixture_import_ok = 1;
+    launcher_model_set_rom(m, "matching.SBI");
+    expect(!strcmp(m->rom_full, "imported.cue") && !m->setup_error[0], "accepted SBI selects its mounted CUE and clears error");
+    RecompLauncherCDisc roster[2] = {{0}};
+    roster[0].path = "selected.cue";
+    roster[1].path = "selected.cue";
+    m->discs = roster;
+    m->num_discs = 2;
+    m->disc_selected = 0;
+    fixture_import_ok = 0;
+    launcher_model_set_disc_path(m, 1, "matching.SBI");
+    expect(!strcmp(launcher_model_disc_path(m, 1), "selected.cue"), "rejected slot SBI preserves roster path");
+    fixture_import_ok = 1;
+    launcher_model_set_disc_path(m, 1, "matching.SBI");
+    expect(!strcmp(launcher_model_disc_path(m, 1), "imported.cue"), "slot SBI stores imported CUE, never the SBI");
+    expect(m->disc_selected == 0, "importing for another slot does not move the mount");
+    free(m);
+}
+
 int main(int argc, char** argv) {
     const char* dir = (argc > 1) ? argv[1] : ".";
     test_token_rewriting();
     test_autofill(dir);
+    test_sbi_verification_refresh();
     if (fails) { fprintf(stderr, "\n%d FAILED\n", fails); return 1; }
     printf("\nall passed\n");
     return 0;

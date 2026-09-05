@@ -831,6 +831,8 @@ struct RecompLauncherCSettings {
 // ---- host verification/inspection results (filled by the callbacks below) ----
 // Plain-C structs so a host can implement the callbacks with zero launcher
 // internal types. Mirror what the legacy launcher computed inline.
+#define RECOMP_LAUNCHER_HAS_SBI_STATUS 1
+enum { RECOMP_SBI_NA = 0, RECOMP_SBI_MISSING = 1, RECOMP_SBI_OK = 2 };
 typedef struct RecompLauncherCDiscVerify {
     char serial[16];   // e.g. "SCUS-94423"; "" = unknown/unread
     char region[8];    // e.g. "NTSC-U"; "" = unknown
@@ -841,6 +843,7 @@ typedef struct RecompLauncherCDiscVerify {
     int  netplay_ok;       // 1 = mount satisfies game.toml [netplay] policy
     char disc_fp[65];      // lowercase hex SHA-256 TOC fingerprint; "" if none
     char netplay_detail[160];
+    int sbi_status; // RECOMP_SBI_*; zero means no requirement recorded by host.
 } RecompLauncherCDiscVerify;
 
 /* Host BIOS check for the first-run setup wizard (has_bios games). */
@@ -1393,6 +1396,10 @@ typedef struct RecompLauncherCGameInfo {
     /* NDS input convenience setting. When set, Settings shows a Virtual Stylus
      * opt-out and the Controller page may expose host-owned bindings for it. */
     int has_virtual_stylus;
+    /* Optional host import: attach user-selected SBI to the current disc.
+     * Return a private mounted-disc path; never replace the disc with the SBI. */
+    int (*import_sbi)(const char* disc, const char* sbi, char* out_disc,
+                      size_t out_cap, char* error, size_t error_cap);
 } RecompLauncherCGameInfo;
 
 /* recomp_launcher_run_window return codes */
