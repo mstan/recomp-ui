@@ -939,7 +939,7 @@ static bool lm_is_sbi_path(const char* path) {
 
 void launcher_model_set_disc_path(LauncherModel* m, int idx, const char* path) {
     if (!m || idx < 0 || idx >= m->num_discs) return;
-    char imported[1024] = {0};
+    char imported[sizeof(m->disc_path_override[0])] = {0};
     if (lm_is_sbi_path(path)) {
         const char* disc = launcher_model_disc_path(m, idx);
         m->setup_error[0] = '\0';
@@ -1084,7 +1084,7 @@ int launcher_model_autofill_sibling_discs(LauncherModel* m) {
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
     if (lm_is_sbi_path(path)) {
-        char mounted[1024] = {0};
+        char mounted[sizeof(m->rom_full)] = {0};
         m->setup_error[0] = '\0';
         if (!m->rom_present || !m->import_sbi_cb) {
             safe_copy(m->setup_error, sizeof(m->setup_error),
