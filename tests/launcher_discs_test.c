@@ -154,6 +154,19 @@ static void test_sbi_verification_refresh(void) {
     fixture_import_ok = 1;
     launcher_model_set_rom(m, "matching.SBI");
     expect(!strcmp(m->rom_full, "imported.cue") && !m->setup_error[0], "accepted SBI selects its mounted CUE and clears error");
+    RecompLauncherCDisc roster[2] = {{0}};
+    roster[0].path = "selected.cue";
+    roster[1].path = "selected.cue";
+    m->discs = roster;
+    m->num_discs = 2;
+    m->disc_selected = 0;
+    fixture_import_ok = 0;
+    launcher_model_set_disc_path(m, 1, "matching.SBI");
+    expect(!strcmp(launcher_model_disc_path(m, 1), "selected.cue"), "rejected slot SBI preserves roster path");
+    fixture_import_ok = 1;
+    launcher_model_set_disc_path(m, 1, "matching.SBI");
+    expect(!strcmp(launcher_model_disc_path(m, 1), "imported.cue"), "slot SBI stores imported CUE, never the SBI");
+    expect(m->disc_selected == 0, "importing for another slot does not move the mount");
     free(m);
 }
 

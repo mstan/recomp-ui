@@ -929,8 +929,27 @@ static int lm_path_exists(const char* path) {
     return 1;
 }
 
+static bool lm_is_sbi_path(const char* path) {
+    const size_t n = path ? strlen(path) : 0;
+    return n >= 4 && path[n - 4] == '.' &&
+           tolower((unsigned char)path[n - 3]) == 's' &&
+           tolower((unsigned char)path[n - 2]) == 'b' &&
+           tolower((unsigned char)path[n - 1]) == 'i';
+}
+
 void launcher_model_set_disc_path(LauncherModel* m, int idx, const char* path) {
     if (!m || idx < 0 || idx >= m->num_discs) return;
+    char imported[1024] = {0};
+    if (lm_is_sbi_path(path)) {
+        const char* disc = launcher_model_disc_path(m, idx);
+        m->setup_error[0] = '\0';
+        if (!disc || !disc[0] || !m->import_sbi_cb) {
+            safe_copy(m->setup_error, sizeof(m->setup_error), "Select a supported disc first, then select its matching SBI file.");
+            return;
+        }
+        if (!m->import_sbi_cb(disc, path, imported, sizeof(imported), m->setup_error, sizeof(m->setup_error))) return;
+        path = imported;
+    }
     safe_copy(m->disc_path_override[idx], sizeof(m->disc_path_override[idx]),
               (path && path[0]) ? path : "");
     /* Locating the SELECTED disc is also a statement about what is mounted, so
@@ -1064,11 +1083,7 @@ int launcher_model_autofill_sibling_discs(LauncherModel* m) {
 }
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
-    const size_t path_len = path ? strlen(path) : 0;
-    if (path_len >= 4 && path[path_len - 4] == '.' &&
-        tolower((unsigned char)path[path_len - 3]) == 's' &&
-        tolower((unsigned char)path[path_len - 2]) == 'b' &&
-        tolower((unsigned char)path[path_len - 1]) == 'i') {
+    if (lm_is_sbi_path(path)) {
         char mounted[1024] = {0};
         m->setup_error[0] = '\0';
         if (!m->rom_present || !m->import_sbi_cb) {
