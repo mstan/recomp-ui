@@ -1129,7 +1129,8 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     // Checklist: Serial / Region / ISO header. Before a disc is chosen, show
     // em-dashes with no pass/fail marks so the layout still reserves the rows.
     if (ImGui::BeginTable("verdict_checklist", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
+        const float label_width = std::max(px(96), ImGui::CalcTextSize(ui_text("ISO header")).x + px(18));
+        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, label_width);
         ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("m", ImGuiTableColumnFlags_WidthFixed, px(28));
         const char* dash = "\xE2\x80\x94";
@@ -1139,6 +1140,11 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
                th, !pending, v.region[0] != '\0');
         kv_row("ISO header", pending ? dash : (v.iso_ok ? "OK" : "Mismatch"),
                th, !pending, v.iso_ok);
+        const char* sbi_text = v.sbi_status == RECOMP_SBI_OK ? "OK" :
+                              v.sbi_status == RECOMP_SBI_MISSING ? "Missing" : "N/A";
+        kv_row("SBI File", pending ? dash : sbi_text,
+               th, !pending && v.sbi_status != RECOMP_SBI_NA,
+               v.sbi_status == RECOMP_SBI_OK);
         // TOC fingerprinting is a netplay capability, not part of ordinary
         // offline disc identification. Never expose it for offline titles,
         // even if a host accidentally leaves stale netplay fields populated.
@@ -1244,6 +1250,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     else
         snprintf(change_label, sizeof(change_label), "%s %s",
                  ui_text("Browse For"), ui_text(noun));
+    if (m->import_sbi_cb)
+        std::strncat(change_label, " / SBI", sizeof(change_label) - std::strlen(change_label) - 1);
     if (ImGui::Button(change_label, ImVec2(availw, px(34)))) {
         // Native file dialog filter comes from the active console's
         // SystemProfile.rom_filter — never a hardcoded per-system set. Every
@@ -1256,13 +1264,19 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (disc_no > 0)
             snprintf(title, sizeof(title), "Select %s %d", noun, disc_no);
         else
-            snprintf(title, sizeof(title), "Select %s", noun);
+            snprintf(title, sizeof(title), "Select %s%s", noun, m->import_sbi_cb ? " / SBI" : "");
         if (prof && prof->rom_filter.patterns && prof->rom_filter.pattern_count > 0)
             request_rom_picker(m, title, prof->rom_filter.patterns,
                                prof->rom_filter.pattern_count,
                                prof->rom_filter.desc, false);
         else
             request_rom_picker(m, title, NULL, 0, NULL, false);
+    }
+
+    if (m->setup_error[0]) {
+        ImGui::PushTextWrapPos();
+        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::PopTextWrapPos();
     }
 
     // MSU-1 patch-available sub-block: this game ships an IPS patch that

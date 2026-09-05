@@ -13,6 +13,7 @@
 #include "ips_patch.h"
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -300,6 +301,7 @@ void launcher_model_init(LauncherModel* m,
         m->language_labels      = game->language_labels;
         m->num_languages        = game->num_languages;
         m->disc_verify_cb       = game->disc_verify;      // real disc verdict (PSX), or NULL
+        m->import_sbi_cb        = game->import_sbi;
         m->memcard_inspect_cb   = game->memcard_inspect;  // real memcard summary (PSX), or NULL
         m->bios_verify_cb       = game->bios_verify;
         m->persist_setup_cb     = game->persist_setup;
@@ -1062,6 +1064,24 @@ int launcher_model_autofill_sibling_discs(LauncherModel* m) {
 }
 
 void launcher_model_set_rom(LauncherModel* m, const char* path) {
+    const size_t path_len = path ? strlen(path) : 0;
+    if (path_len >= 4 && path[path_len - 4] == '.' &&
+        tolower((unsigned char)path[path_len - 3]) == 's' &&
+        tolower((unsigned char)path[path_len - 2]) == 'b' &&
+        tolower((unsigned char)path[path_len - 1]) == 'i') {
+        char mounted[1024] = {0};
+        m->setup_error[0] = '\0';
+        if (!m->rom_present || !m->import_sbi_cb) {
+            safe_copy(m->setup_error, sizeof(m->setup_error),
+                      "Select a supported disc first, then select its matching SBI file.");
+            return;
+        }
+        if (!m->import_sbi_cb(m->rom_full, path, mounted, sizeof(mounted),
+                              m->setup_error, sizeof(m->setup_error))) return;
+        launcher_model_set_rom(m, mounted);
+        return;
+    }
+    m->setup_error[0] = '\0';
     m->rom_present = path && path[0] != '\0';
     safe_copy(m->rom_full, sizeof(m->rom_full), m->rom_present ? path : "");
     m->rom_sha1_hex[0] = '\0';
@@ -1176,6 +1196,7 @@ static void run_verify(LauncherModel* m) {
             safe_copy(m->verify.region, sizeof(m->verify.region), dv.region);
             m->verify.iso_ok  = dv.iso_ok != 0;
             m->verify.verdict = dv.verdict;
+            m->verify.sbi_status = dv.sbi_status;
             m->verify.track_count = dv.track_count;
             m->verify.netplay_ok = dv.netplay_ok;
             safe_copy(m->verify.disc_fp, sizeof(m->verify.disc_fp), dv.disc_fp);
