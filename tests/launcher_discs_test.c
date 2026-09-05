@@ -117,6 +117,15 @@ static int fixture_import_ok;
 static int fixture_import(const char* disc, const char* sbi, char* out, size_t cap, char* error, size_t error_cap) {
     expect(!strcmp(disc, "selected.cue"), "SBI callback receives the selected disc");
     expect(!strcmp(sbi, "matching.SBI"), "SBI suffix accepts uppercase");
+    if (fixture_import_ok == 2) {
+        if (cap <= 600) {
+            safe_copy(error, error_cap, "Imported disc path is too long");
+            return 0;
+        }
+        memset(out, 'x', 600);
+        out[600] = '\0';
+        return 1;
+    }
     if (!fixture_import_ok) {
         safe_copy(error, error_cap, "Wrong companion");
         return 0;
@@ -151,6 +160,10 @@ static void test_sbi_verification_refresh(void) {
     m->import_sbi_cb = fixture_import;
     launcher_model_set_rom(m, "matching.SBI");
     expect(!strcmp(m->rom_full, "selected.cue") && m->setup_error[0], "rejected SBI preserves the selected disc");
+    fixture_import_ok = 1;
+    fixture_import_ok = 2;
+    launcher_model_set_rom(m, "matching.SBI");
+    expect(!strcmp(m->rom_full, "selected.cue") && m->setup_error[0], "oversized imported path is rejected instead of truncated");
     fixture_import_ok = 1;
     launcher_model_set_rom(m, "matching.SBI");
     expect(!strcmp(m->rom_full, "imported.cue") && !m->setup_error[0], "accepted SBI selects its mounted CUE and clears error");
