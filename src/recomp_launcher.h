@@ -69,8 +69,11 @@ extern "C" {
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
 
-/* Netplay lobby membership ceiling (party games up to 8). */
+/* Netplay lobby membership ceiling (party games up to 8). Players only. */
 #define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 8
+/* Spectator seats a host may open, a separate pool on top of the players --
+ * so a full room can still be watched. */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS 4
 
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
@@ -101,6 +104,11 @@ typedef struct RecompLauncherCNetplayMember {
     int  bios_offer_valid;
     int  bios_can_scph1001;
     int  bios_prefer_openbios;
+    /* 1 when this row is a spectator rather than a player. `slot` stays the
+     * seat index to pass back to move_member / kick_member either way -- the
+     * two roles share one index namespace, so the UI never has to translate.
+     * Always 0 against a host that predates spectators. */
+    int  is_spectator;
 } RecompLauncherCNetplayMember;
 
 typedef struct RecompLauncherCNetplayNeedMod {
@@ -170,6 +178,13 @@ typedef struct RecompLauncherCNetplayLaunch {
      * console-B seat is occupied at launch; otherwise the session degrades to
      * a standard lobby of the seated players. */
     int      lobby_kind;
+    /* 1 when this client launches into the gallery: it runs the same
+     * simulation from the same start and displays it, and contributes no
+     * input to anybody. Its own controllers must not reach the guest.
+     *
+     * player_count / occupied_mask above stay PLAYERS ONLY. A spectator
+     * counted there is a seat every peer waits on and nobody ever fills. */
+    int      is_spectator;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -348,6 +363,35 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*seat_swap_respond)(void* ctx, int accept);
     int  (*seat_swap_outgoing)(void* ctx);
     void (*seat_swap_clear)(void* ctx);
+
+    /* ---- spectators -----------------------------------------------------
+     * Optional, and every one of them reports "no gallery" against a host or
+     * server that predates the feature -- so the UI gates its whole spectator
+     * section on lobby_allow_spectators() and otherwise renders as before.
+     *
+     * A spectator watches the match in sync and cannot affect it. The relay
+     * enforces that; the launcher only has to stop offering it a controller.
+     *
+     *   allow_spectators_get/set : host toggle, applied on the NEXT create
+     *   lobby_allow_spectators   : what the CURRENT lobby actually has
+     *   lobby_max_spectators     : gallery seat count (0 = none)
+     *   lobby_spectator_count    : occupied gallery seats
+     *   local_is_spectator       : 1 when this client is watching
+     *   spectator_slot           : seat index for gallery position `index`,
+     *                              to pass to move_member / kick_member;
+     *                              <0 when out of range.
+     *
+     * Moving between the tables is move_member(from_slot, to_slot) with a
+     * seat index from either side -- there is no separate promote/demote
+     * call, because a promotion IS a move and giving it its own path is how
+     * the two end up behaving differently. */
+    int  (*allow_spectators_get)(void* ctx);
+    int  (*allow_spectators_set)(void* ctx, int allow);
+    int  (*lobby_allow_spectators)(void* ctx);
+    int  (*lobby_max_spectators)(void* ctx);
+    int  (*lobby_spectator_count)(void* ctx);
+    int  (*local_is_spectator)(void* ctx);
+    int  (*spectator_slot)(void* ctx, int index);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

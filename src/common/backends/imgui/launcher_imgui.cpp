@@ -5346,6 +5346,31 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                                        : "(this game is 2-player)");
             }
         }
+        /* Spectators.
+         *
+         * Only offered where it can actually be enforced. A LAN / Direct-IP
+         * room has no lobby server between the peers, so there is nothing to
+         * drop a spectator's packets at -- and a spectator that is merely
+         * asked not to send is not a spectator, it is a promise. */
+        if (np_cb_host && np_cb_host->allow_spectators_set &&
+            np_cb_host->allow_spectators_get && !m->netplay_lan_only) {
+            ImGui::Spacing();
+            bool allow_spec =
+                np_cb_host->allow_spectators_get(np_cb_host->ctx) != 0;
+            if (ImGui::Checkbox("Allow Spectators", &allow_spec))
+                (void)np_cb_host->allow_spectators_set(np_cb_host->ctx,
+                                                       allow_spec ? 1 : 0);
+            ImGui::SameLine();
+            ImGui::TextColored(col(th.text_muted),
+                               "up to %d, on top of the players",
+                               RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS);
+            if (allow_spec)
+                ImGui::TextColored(col(th.text_muted),
+                                   "Once the player slots are full, joiners "
+                                   "take a spectator seat. They watch in sync "
+                                   "and cannot affect the match; you can move "
+                                   "anyone in or out of play from the lobby.");
+        }
         ImGui::Spacing();
         bool lan = m->netplay_lan_only;
         if (ImGui::Checkbox("LAN/Direct IP Only", &lan)) {
@@ -5695,14 +5720,57 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
 /* One seat row of the lobby player table. Shared by the standard single
  * table and the PSX-Link two-console tables (identical columns; the caller
  * owns BeginTable/EndTable and the header rows). */
+/* One rendered seat table.
+ *
+ * Players and spectators differ in where their rows live and what a seat is
+ * called, and in nothing else. The index move_member / kick_member take is one
+ * namespace covering both, so dragging a row from one table to the other needs
+ * no translation -- which is the point: a promotion IS a move, and giving it
+ * its own code path is how the two end up behaving differently. */
+struct LobbySeatView {
+    RecompLauncherCNetplayMember* rows; /* indexed by position within a table */
+    bool* occupied;
+    int   n;
+    /* Wire index of position 0. Zero for players; the server-reported gallery
+     * base for spectators, which is why the gallery view is only built when
+     * the server actually reported one. */
+    int   wire_base;
+    bool  spectator;
+    const char* label; /* "P" or "S" */
+};
+
+/* Resolve a wire seat index back to its row, whichever table it is in.
+ * Returns null for a seat neither table covers -- a stale drag payload after
+ * the gallery closed, say, which must do nothing rather than index anything. */
+static const RecompLauncherCNetplayMember* lobby_seat_lookup(
+    const LobbySeatView* views, int nviews, int wire, bool* occupied_out,
+    bool* spectator_out) {
+    for (int i = 0; i < nviews; ++i) {
+        const int pos = wire - views[i].wire_base;
+        if (pos < 0 || pos >= views[i].n) continue;
+        if (occupied_out) *occupied_out = views[i].occupied[pos];
+        if (spectator_out) *spectator_out = views[i].spectator;
+        return &views[i].rows[pos];
+    }
+    if (occupied_out) *occupied_out = false;
+    if (spectator_out) *spectator_out = false;
+    return nullptr;
+}
+
 static void draw_lobby_seat_row(LauncherModel* m,
                                 const LauncherTheme& th,
                                 const RecompLauncherCNetplayCallbacks* np,
-                                int slot,
-                                RecompLauncherCNetplayMember* slots,
-                                bool* occupied, bool is_host, float text_h) {
+                                const LobbySeatView& view, int pos,
+                                const LobbySeatView* views, int nviews,
+                                bool is_host, float text_h) {
     const float member_row_h = px(42);
-    ImGui::PushID(slot);
+    /* `wire` is what the backend is told; `pos` is only where the row is
+     * drawn. Keeping them separate is what lets one renderer serve both
+     * tables without either one knowing the other's indices. */
+    const int wire = view.wire_base + pos;
+    RecompLauncherCNetplayMember& row = view.rows[pos];
+    const bool occ = view.occupied[pos];
+    ImGui::PushID(wire);
 
         ImGui::TableNextRow(ImGuiTableRowFlags_None, member_row_h);
         ImGui::TableSetColumnIndex(0);
@@ -5718,33 +5786,48 @@ static void draw_lobby_seat_row(LauncherModel* m,
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload =
                     ImGui::AcceptDragDropPayload("NETPLAY_MEMBER_SLOT")) {
-                const int from_slot = *(const int*)payload->Data;
-                const bool self_drag =
-                    from_slot >= 0 && slots[from_slot].is_local;
-                if (from_slot != slot) {
+                const int from_wire = *(const int*)payload->Data;
+                bool from_spectator = false;
+                const RecompLauncherCNetplayMember* from_row =
+                    lobby_seat_lookup(views, nviews, from_wire, nullptr,
+                                      &from_spectator);
+                const bool self_drag = from_row && from_row->is_local;
+                if (from_wire != wire && from_row) {
                     if (is_host && np->move_member && !self_drag) {
-                        (void)np->move_member(np->ctx, from_slot, slot);
+                        /* The one call that crosses tables. Promotion,
+                         * demotion and a plain reorder are all this. */
+                        (void)np->move_member(np->ctx, from_wire, wire);
+                    } else if (self_drag && (from_spectator || view.spectator)) {
+                        /* Self-service stays inside the player table: moving
+                         * yourself between watching and playing is the host's
+                         * call, and the server refuses it anyway. Say so --
+                         * a drag that silently does nothing reads as a bug. */
+                        std::snprintf(m->netplay_status,
+                                      sizeof(m->netplay_status),
+                                      "Only the host can move players between "
+                                      "the player and spectator tables.");
                     } else if (self_drag) {
                         /* Moving yourself: a free seat is yours to take; an
                          * occupied one needs that player's consent. Say so
                          * when the backend refuses — a drag that silently
                          * does nothing is indistinguishable from a bug. */
                         int rc = -1;
-                        if (!occupied[slot]) {
+                        if (!occ) {
                             if (np->seat_move_self)
-                                rc = np->seat_move_self(np->ctx, slot);
+                                rc = np->seat_move_self(np->ctx, wire);
                             if (rc != 0)
                                 std::snprintf(m->netplay_status,
                                               sizeof(m->netplay_status),
-                                              "Could not move to P%d (seat "
-                                              "refused by the host).", slot + 1);
+                                              "Could not move to %s%d (seat "
+                                              "refused by the host).",
+                                              view.label, pos + 1);
                         } else if (np->seat_swap_request) {
-                            rc = np->seat_swap_request(np->ctx, slot);
+                            rc = np->seat_swap_request(np->ctx, wire);
                             if (rc != 0)
                                 std::snprintf(m->netplay_status,
                                               sizeof(m->netplay_status),
                                               "Could not ask %s to swap seats.",
-                                              slots[slot].display_name);
+                                              row.display_name);
                         }
                     }
                 }
@@ -5757,11 +5840,12 @@ static void draw_lobby_seat_row(LauncherModel* m,
         ImVec2 grip_max = ImGui::GetItemRectMax();
         const float grip_cx = (grip_min.x + grip_max.x) * 0.5f;
         const float grip_cy = (grip_min.y + grip_max.y) * 0.5f;
-        const bool self_row = occupied[slot] && slots[slot].is_local;
+        const bool self_row = occ && row.is_local;
         const int can_drag =
-            occupied[slot] &&
+            occ &&
             ((is_host && np->move_member) ||
-             (self_row && (np->seat_move_self || np->seat_swap_request)));
+             (self_row && !view.spectator &&
+              (np->seat_move_self || np->seat_swap_request)));
         ImU32 grip_col = imcol(can_drag ? th.text_muted : th.border);
         ImDrawList* grip_dl = ImGui::GetWindowDrawList();
         for (int line = -1; line <= 1; ++line) {
@@ -5772,55 +5856,62 @@ static void draw_lobby_seat_row(LauncherModel* m,
         if (can_drag) {
             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                ImGui::SetDragDropPayload("NETPLAY_MEMBER_SLOT", &slot, sizeof(slot));
+                ImGui::SetDragDropPayload("NETPLAY_MEMBER_SLOT", &wire, sizeof(wire));
                 ImGui::BeginGroup();
-                ImGui::Text("P%d", slot + 1);
+                ImGui::Text("%s%d", view.label, pos + 1);
                 ImGui::SameLine(0, px(28));
-                ImGui::TextUnformatted(slots[slot].display_name);
+                ImGui::TextUnformatted(row.display_name);
                 ImGui::SameLine(0, px(28));
                 ImGui::TextColored(col(th.good), "%s",
-                                   slots[slot].is_host ? "Host" : "Connected");
+                                   row.is_host ? "Host"
+                                   : view.spectator ? "Watching" : "Connected");
                 ImGui::EndGroup();
                 ImGui::EndDragDropSource();
             }
         }
         ImGui::TableSetColumnIndex(1);
         table_row_vcenter(member_row_h, text_h);
-        ImGui::Text("P%d", slot + 1);
+        ImGui::Text("%s%d", view.label, pos + 1);
         ImGui::TableSetColumnIndex(2);
         table_row_vcenter(member_row_h, text_h);
-        if (!occupied[slot]) ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-        ImGui::TextUnformatted(occupied[slot] ? slots[slot].display_name : "Open slot");
-        if (!occupied[slot]) ImGui::PopStyleColor();
+        if (!occ) ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::TextUnformatted(occ ? row.display_name
+                                   : view.spectator ? "Open seat" : "Open slot");
+        if (!occ) ImGui::PopStyleColor();
         ImGui::TableSetColumnIndex(3);
         table_row_vcenter(member_row_h, text_h);
-        if (occupied[slot] && slots[slot].is_host)
+        if (occ && row.is_host)
             ImGui::TextColored(col(th.good), "Host");
-        else if (occupied[slot])
+        else if (occ && view.spectator)
+            /* Not "Connected": a spectator IS connected, and the thing worth
+             * saying about it is that it cannot touch the match. */
+            ImGui::TextColored(col(th.text_muted), "Watching");
+        else if (occ)
             ImGui::TextColored(col(th.good), "Connected");
         else
             ImGui::TextColored(col(th.text_muted), "Waiting");
-        if (occupied[slot] && slots[slot].bios_offer_valid &&
-            ImGui::IsItemHovered()) {
+        if (occ && view.spectator && ImGui::IsItemHovered())
+            ImGui::SetTooltip("Runs the match in sync. Its controllers do not "
+                              "reach the game.");
+        else if (occ && row.bios_offer_valid && ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
                 "BIOS: %s%s",
-                slots[slot].bios_prefer_openbios ? "OpenBIOS" : "SCPH-1001",
-                slots[slot].bios_can_scph1001 ? "" : " (no SCPH dump)");
+                row.bios_prefer_openbios ? "OpenBIOS" : "SCPH-1001",
+                row.bios_can_scph1001 ? "" : " (no SCPH dump)");
         }
         ImGui::TableSetColumnIndex(4);
         table_row_vcenter(member_row_h, text_h);
         /* RTT to that seat from local peer — never on the local row. */
-        if (occupied[slot] && !slots[slot].is_local &&
-            slots[slot].latency_ms >= 0) {
-            ImGui::Text("%d ms", slots[slot].latency_ms);
+        if (occ && !row.is_local && row.latency_ms >= 0) {
+            ImGui::Text("%d ms", row.latency_ms);
         } else {
             ImGui::TextColored(col(th.text_muted), "—");
         }
         ImGui::TableSetColumnIndex(5);
         {
             const float kick_btn = px(34);
-            const bool can_kick = is_host && occupied[slot] &&
-                                  !slots[slot].is_host && np->kick_member;
+            const bool can_kick = is_host && occ &&
+                                  !row.is_host && np->kick_member;
             ImVec2 cell = ImGui::GetCursorScreenPos();
             const float avail_x = ImGui::GetContentRegionAvail().x;
             ImGui::SetCursorScreenPos(ImVec2(
@@ -5842,7 +5933,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
                         tp, ImGui::GetColorU32(ImGuiCol_Text), boot);
                 }
                 if (pressed)
-                    (void)np->kick_member(np->ctx, slot);
+                    (void)np->kick_member(np->ctx, wire);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Kick player");
             } else {
@@ -5861,9 +5952,10 @@ static void draw_lobby_seat_row(LauncherModel* m,
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (!is_host)
                         ImGui::SetTooltip("Only the host can kick");
-                    else if (!occupied[slot])
-                        ImGui::SetTooltip("Open slot");
-                    else if (slots[slot].is_host)
+                    else if (!occ)
+                        ImGui::SetTooltip(view.spectator ? "Open seat"
+                                                         : "Open slot");
+                    else if (row.is_host)
                         ImGui::SetTooltip("Cannot kick the host");
                     else if (!np->kick_member)
                         ImGui::SetTooltip("Kick unavailable");
@@ -6039,9 +6131,36 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     if (max_slots < 2) max_slots = 2;
     if (max_slots > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
         max_slots = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+    /* The gallery, when the CURRENT lobby has one. Gated on the lobby rather
+     * than on the callback existing: a build that supports spectators still
+     * talks to hosts and servers that do not, and there the whole section has
+     * to be absent, not empty. */
+    const bool spectators_on =
+        np->lobby_allow_spectators && np->lobby_allow_spectators(np->ctx) != 0;
+    int spectator_seats = 0;
+    int spectator_base = 0;
+    if (spectators_on) {
+        if (np->lobby_max_spectators) spectator_seats = np->lobby_max_spectators(np->ctx);
+        if (spectator_seats > RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS)
+            spectator_seats = RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS;
+        /* The base comes from the backend, never assumed: it is the server's
+         * namespace. Without it the two views could overlap, and a drag would
+         * resolve to the wrong row. */
+        if (np->spectator_slot) spectator_base = np->spectator_slot(np->ctx, 0);
+        if (spectator_base <= 0) spectator_seats = 0;
+    }
+    RecompLauncherCNetplayMember specs[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS]{};
+    bool spec_occupied[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS] = {};
     for (int i = 0; i < count; ++i) {
         RecompLauncherCNetplayMember mem{};
         if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
+        if (mem.is_spectator) {
+            const int pos = spectator_seats ? mem.slot - spectator_base : -1;
+            if (pos < 0 || pos >= spectator_seats) continue;
+            specs[pos] = mem;
+            spec_occupied[pos] = mem.display_name[0] != '\0';
+            continue;
+        }
         if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
         slots[mem.slot] = mem;
         occupied[mem.slot] = mem.display_name[0] != '\0';
@@ -6070,20 +6189,32 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         (((np->lobby_kind_get && np->lobby_kind_get(np->ctx) == 1)) ||
          (np->link_lobby_supported && np->link_lobby_supported(np->ctx)));
     const float text_h = ImGui::GetTextLineHeight();
-    auto seat_table = [&](const char* id, const char* title, int lo, int hi) {
+    LobbySeatView views[2];
+    int nviews = 0;
+    const int player_view = nviews;
+    views[nviews++] = LobbySeatView{slots,   occupied,      max_slots,
+                                    0,               false, "P"};
+    if (spectator_seats > 0)
+        views[nviews++] = LobbySeatView{specs, spec_occupied, spectator_seats,
+                                        spectator_base,  true,  "S"};
+    const float text_h_ = text_h;
+    auto seat_table = [&](const char* id, const char* title, int vi, int lo,
+                          int hi) {
         if (title) ImGui::TextColored(col(th.text_muted), "%s", title);
         if (ImGui::BeginTable(id, 6,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                               ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
             ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(40));
-            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(views[vi].spectator ? "Spectator" : "Player",
+                                    ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(100));
             ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(72));
             ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
             ImGui::TableHeadersRow();
-            for (int slot = lo; slot < hi; ++slot)
-                draw_lobby_seat_row(m, th, np, slot, slots, occupied, is_host, text_h);
+            for (int pos = lo; pos < hi; ++pos)
+                draw_lobby_seat_row(m, th, np, views[vi], pos, views, nviews,
+                                    is_host, text_h_);
             ImGui::EndTable();
         }
     };
@@ -6095,10 +6226,11 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
         ImGui::TextColored(col(th.text_muted),
                            " — two linked consoles, 2 players each");
-        seat_table("lobby_players_a", "Console A — Players 1 & 2", 0, 2);
+        seat_table("lobby_players_a", "Console A — Players 1 & 2", player_view,
+                   0, 2);
         ImGui::Spacing();
-        seat_table("lobby_players_b", "Console B — Players 3 & 4", 2,
-                   max_slots < 4 ? max_slots : 4);
+        seat_table("lobby_players_b", "Console B — Players 3 & 4", player_view,
+                   2, max_slots < 4 ? max_slots : 4);
         {
             bool b_occupied = false;
             for (int i = 2; i < 4 && i < max_slots; ++i)
@@ -6109,7 +6241,29 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                     "2-player race.");
         }
     } else {
-        seat_table("lobby_players", nullptr, 0, max_slots);
+        seat_table("lobby_players",
+                   spectator_seats > 0 ? "Players" : nullptr, player_view, 0,
+                   max_slots);
+    }
+    if (spectator_seats > 0) {
+        ImGui::Spacing();
+        seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
+                   spectator_seats);
+        ImGui::TextColored(col(th.text_muted),
+                           "Spectators watch the match in sync. Their "
+                           "controllers do not reach the game.");
+        /* Said here rather than discovered at Play. The backend refuses to
+         * arm a seat-less session, so without this line a spectator presses
+         * Play and nothing happens -- which reads as a broken button. */
+        if (np->local_is_spectator && np->local_is_spectator(np->ctx))
+            ImGui::TextColored(col(th.warn),
+                               "You are spectating. This build cannot yet run "
+                               "the match from a spectator seat — ask the host "
+                               "to move you into a player slot to play.");
+        if (is_host && np->move_member)
+            ImGui::TextColored(col(th.text_muted),
+                               "Drag a row between the tables to move somebody "
+                               "in or out of play.");
     }
     /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
      * about save-state compatibility, not kernel-RAM details.
