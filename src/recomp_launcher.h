@@ -1165,10 +1165,14 @@ typedef struct RecompLauncherCGameInfo {
      * prepare_disc_label / prepare_disc_note are button + help text (NULL =>
      * "Convert raw dump…" / default note).
      *
-     * Path persistence (Continue to launcher / Change ROM / BIOS browse):
-     * The launcher writes `rom_cache_path` (NULL => "rom.cfg") immediately so
-     * quitting without PLAY still remembers the ROM. Optional persist_setup
-     * lets the host also flush BIOS / config.ini (return 0 on success). */
+     * Path persistence: the moment the wizard's picks are confirmed (Confirm
+     * disc / Continue to launcher), the launcher writes rom.cfg, disc.cfg and
+     * bios.cfg beside the executable and in the cwd, and calls persist_setup
+     * (or persist_setup_discs), so quitting without PLAY -- or a host relaunch
+     * -- still remembers them and the wizard does not ask again. The same
+     * flush runs on a BIOS change, before Generate and after a rebuild.
+     * persist_setup lets the host also flush its own config (project-root
+     * sidecars, config.ini); return 0 on success. */
     int needs_setup;
     int (*bios_verify)(const char* bios_path, RecompLauncherCBiosVerify* out);
     int (*prepare_disc)(const char* source_path, char* out_disc_path, size_t out_cap,

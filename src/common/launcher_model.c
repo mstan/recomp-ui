@@ -219,6 +219,7 @@ static void run_verify(LauncherModel* m);   // fwd; defined below, called from l
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
+static void lm_persist_setup_sidecars(LauncherModel* m);    // fwd; called from launcher_model_finish_setup
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -2372,6 +2373,17 @@ bool launcher_model_netplay_disc_ok(const LauncherModel* m) {
 
 void launcher_model_finish_setup(LauncherModel* m) {
     if (!m || !launcher_model_can_finish_setup(m)) return;
+    /* The player just confirmed the picks: write them down NOW, not on PLAY.
+     *
+     * Until this call, Confirm / Continue only closed the modal. The sidecars
+     * (rom.cfg / disc.cfg / bios.cfg) and the host's persist_setup were written
+     * on a BIOS change, before Generate and after a rebuild -- every path
+     * EXCEPT the one where the player confirms a disc that needs none of
+     * those. Quit from the dashboard, or let the host relaunch, and the next
+     * start found nothing remembered and opened the same wizard again with
+     * "confirm disc" copy, asking for the pick it had already been given.
+     * A confirmation that is not recorded is not a confirmation. */
+    lm_persist_setup_sidecars(m);
     m->setup_wizard_open = false;
     m->setup_status[0] = '\0';
     m->setup_error[0] = '\0';
