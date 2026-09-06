@@ -125,6 +125,16 @@ mapped to it, and player seats sit at lobby seat + 1. The server settles the
 flag at start and sizes the relay for the extra slot. Backends without the
 callback keep the old rule (the host's seat stays in play; the UI says so).
 
+### Country flags
+
+`RecompLauncherCNetplayMember.country` and `RecompLauncherCNetplayLobby.host_country`
+carry ISO 3166-1 alpha-2 codes (empty = unknown / LAN). The UI draws them as
+flags before the player name in the seat tables and before the lobby name in
+the browser, through the color emoji pipeline (regional-indicator pairs); a
+build without a color provider shows a muted `[JP]` instead. Backends fill
+them from the server's `country` / `host_country` fields; LAN rooms leave
+them empty.
+
 ### Chat callbacks
 
 Three optional, append-only members: `chat_send(text)`, `chat_count()`,

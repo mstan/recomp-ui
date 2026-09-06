@@ -89,6 +89,9 @@ typedef struct RecompLauncherCNetplayLobby {
     int  latency_ms;
     /* 0 standard, 1 PSX-Link (browser badge; 0 when the server predates it). */
     int  lobby_kind;
+    /* Host's country, ISO 3166-1 alpha-2 (e.g. "JP"), from the server's GeoIP
+     * on the host's address. Empty when unknown, private, or LAN. */
+    char host_country[4];
 } RecompLauncherCNetplayLobby;
 
 typedef struct RecompLauncherCNetplayMember {
@@ -117,6 +120,9 @@ typedef struct RecompLauncherCNetplayMember {
     int  memcard_offer_valid;
     int  memcard_has_card;
     int  memcard_share;
+    /* Country, ISO 3166-1 alpha-2, from the server's GeoIP on this peer's
+     * address. Empty when unknown, private, or LAN. Drawn as a flag. */
+    char country[4];
 } RecompLauncherCNetplayMember;
 
 typedef struct RecompLauncherCNetplayNeedMod {

@@ -95,8 +95,18 @@ static void dl_pump(void* c) { (void)c; }
 static void dl_set_player_name(void* c, const char* n) { (void)c; (void)n; }
 static const char* dl_player_name(void* c) { (void)c; return demo_lobby_host ? "Alex" : "Marisa"; }
 static void dl_request_list(void* c) { (void)c; }
-static int  dl_list_count(void* c) { (void)c; return 0; }
-static int  dl_list_get(void* c, int i, RecompLauncherCNetplayLobby* o) { (void)c; (void)i; (void)o; return 0; }
+static int  dl_list_count(void* c) { (void)c; return 1; }
+static int  dl_list_get(void* c, int i, RecompLauncherCNetplayLobby* o) {
+    (void)c;
+    if (i != 0 || !o) return 0;
+    memset(o, 0, sizeof(*o));
+    snprintf(o->lobby_id, sizeof(o->lobby_id), "demo-1");
+    snprintf(o->name, sizeof(o->name), "Reimu's Lobby");
+    snprintf(o->game_name, sizeof(o->game_name), "Recomp UI Test");
+    o->player_count = 1; o->max_slots = 2; o->latency_ms = 91;
+    snprintf(o->host_country, sizeof(o->host_country), "JP");
+    return 1;
+}
 static int  dl_leave(void* c) { (void)c; demo_lobby_in = 0; return 0; }
 static int  dl_in_lobby(void* c) { (void)c; return demo_lobby_in; }
 static int  dl_is_host(void* c) { (void)c; return demo_lobby_host; }
@@ -120,6 +130,10 @@ static int  dl_member_get(void* c, int i, RecompLauncherCNetplayMember* out) {
         out->memcard_offer_valid = 1;
         out->memcard_has_card = 1;
         out->memcard_share = demo_lobby_share;
+    }
+    {
+        static const char* countries[3] = { "CA", "JP", "DE" };
+        snprintf(out->country, sizeof(out->country), "%s", countries[i]);
     }
     return 1;
 }
@@ -183,6 +197,8 @@ static RecompLauncherCNetplayCallbacks demo_lobby_cb;
 
 static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_host = !(mode && strcmp(mode, "guest") == 0);
+    /* "browse": connected, not seated -- the lobby browser with the demo row. */
+    demo_lobby_in = !(mode && strcmp(mode, "browse") == 0);
     memset(&demo_lobby_cb, 0, sizeof(demo_lobby_cb));
     demo_lobby_cb.default_url = dl_default_url;
     demo_lobby_cb.set_lobby_url = dl_set_lobby_url;

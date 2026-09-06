@@ -834,6 +834,31 @@ static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
+/* Country flag for an ISO 3166-1 alpha-2 code, drawn inline before a name.
+ * The flag is the pair of regional-indicator symbols, which the color emoji
+ * provider renders as the real flag. Without a color provider the outline
+ * font has no flags, so the code is shown in a muted "[JP]" instead of two
+ * meaningless letter boxes. Draws nothing for an empty / malformed code. */
+static void np_draw_country_flag(const LauncherTheme& th, const char* cc) {
+    if (!cc || !cc[0] || !cc[1]) return;
+    const char a = (char)std::toupper((unsigned char)cc[0]);
+    const char b = (char)std::toupper((unsigned char)cc[1]);
+    if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z') return;
+    if (recomp_emoji_backend_available()) {
+        char seq[9];
+        char disp[32];
+        size_t n = utf8_encode((ImWchar)(0x1F1E6 + (a - 'A')), seq);
+        n += utf8_encode((ImWchar)(0x1F1E6 + (b - 'A')), seq + n);
+        seq[n] = '\0';
+        emoji_display(seq, disp, sizeof(disp));
+        ImGui::TextUnformatted(disp);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%c%c", a, b);
+    } else {
+        ImGui::TextColored(col(th.text_muted), "[%c%c]", a, b);
+    }
+    ImGui::SameLine(0, px(6));
+}
+
 /* apply_scale hooks: reserve atlas rects before Build, blit after. */
 static void emoji_atlas_reserve(ImFontAtlas* atlas, ImFont* font, float body) {
     const int px = (int)(body + 0.5f);
@@ -6266,6 +6291,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
         ImGui::Text("%s%d", view.label, pos + 1);
         ImGui::TableSetColumnIndex(2);
         table_row_vcenter(member_row_h, text_h);
+        if (occ) np_draw_country_flag(th, row.country);
         if (!occ) ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
         ImGui::TextUnformatted(occ ? row.display_name
                                    : view.spectator ? "Open seat" : "Open slot");
@@ -7903,6 +7929,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::SetCursorScreenPos(row_pos);
             table_row_vcenter(lobby_row_h, text_h);
+            np_draw_country_flag(th, row.host_country);
             char lobby_label[96];
             std::snprintf(lobby_label, sizeof(lobby_label), "%s%s",
                           row.name[0] ? row.name : "Unnamed lobby",
