@@ -30,6 +30,12 @@
 #define SDL_EVENT_MOUSE_BUTTON_DOWN     SDL_MOUSEBUTTONDOWN
 #define SDL_EVENT_MOUSE_BUTTON_UP       SDL_MOUSEBUTTONUP
 #define SDL_EVENT_MOUSE_WHEEL           SDL_MOUSEWHEEL
+/* Typing. Missing here until the debug console learned to type into the chat
+ * box, at which point every SDL2 build stopped compiling -- the shim is what
+ * lets the rest of the tree name events the SDL3 way, so a name it does not
+ * cover is a build break rather than a fallback. */
+#define SDL_EVENT_TEXT_INPUT            SDL_TEXTINPUT
+#define SDL_EVENT_TEXT_EDITING          SDL_TEXTEDITING
 #define SDL_EVENT_GAMEPAD_BUTTON_DOWN   SDL_CONTROLLERBUTTONDOWN
 #define SDL_EVENT_GAMEPAD_BUTTON_UP     SDL_CONTROLLERBUTTONUP
 #define SDL_EVENT_GAMEPAD_AXIS_MOTION   SDL_CONTROLLERAXISMOTION
