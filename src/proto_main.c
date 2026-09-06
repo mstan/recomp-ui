@@ -170,6 +170,7 @@ static int dl_chat_get(void* c, int i, RecompLauncherCNetplayChatMessage* out) {
     snprintf(out->from, sizeof(out->from), "%s", demo_chat[i].from);
     snprintf(out->text, sizeof(out->text), "%s", demo_chat[i].text);
     out->is_local = demo_chat[i].is_local;
+    out->is_system = demo_chat[i].from[0] == '\0';
     out->seq = (uint32_t)(i + 1);
     return 1;
 }
@@ -215,9 +216,10 @@ static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_cb.chat_send = dl_chat_send;
     demo_lobby_cb.chat_count = dl_chat_count;
     demo_lobby_cb.chat_get = dl_chat_get;
-    demo_chat_push("Marisa", "gg last time, ready when you are", 0);
-    demo_chat_push("Alex", "one sec, swapping to my duel deck card", demo_lobby_host);
-    demo_chat_push("Reimu", "I'll take P4 and watch this one", 0);
+    demo_chat_push("Marisa", "gg last time, ready when you are \xF0\x9F\x98\x80", 0);
+    demo_chat_push("Alex", "one sec, swapping to my duel deck card \xF0\x9F\x94\xA5\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", demo_lobby_host);
+    demo_chat_push("Reimu", "I'll take P4 and watch this one \xF0\x9F\x87\xAF\xF0\x9F\x87\xB5 \xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 \xE2\x9D\xA4\xEF\xB8\x8F", 0);
+    demo_chat_push("", "Reimu has joined as a spectator.", 0);
     gi->num_players = 4;
     gi->netplay_supported = 1;
     gi->netplay = &demo_lobby_cb;

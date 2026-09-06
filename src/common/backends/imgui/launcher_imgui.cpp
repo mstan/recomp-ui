@@ -643,6 +643,162 @@ const LauncherPanel* find_composed(const char* const* ids, const char* id, Launc
     return nullptr;
 }
 
+#include "emoji/recomp_emoji.h"
+#include <unordered_map>
+#include <vector>
+
+/* ---- Color emoji in the atlas ---------------------------------------------
+ * stb_truetype only rasterizes outlines, so the emoji merged from OpenMoji
+ * are black shapes. For text the launcher OWNS (chat lines), each emoji
+ * sequence is rendered through recomp_emoji (DirectWrite / FreeType) to an
+ * RGBA sprite, given a private-use codepoint, and blitted into the atlas as
+ * a custom glyph; the string is then drawn with that codepoint substituted,
+ * so TextUnformatted / CalcTextSize / wrapping all work unchanged.
+ *
+ * The atlas is static in this ImGui, so a never-seen emoji marks it dirty
+ * and the next frame rebuilds fonts once (apply_scale). One hitch per new
+ * emoji, then never again. Where no provider exists (no FreeType, a console
+ * port) registration fails, nothing is substituted, and the outline glyphs
+ * draw exactly as before — that is the fallback. */
+struct EmojiSprite {
+    std::string seq;
+    ImWchar     cp;
+    int         w, h;
+    std::vector<unsigned char> rgba;
+    bool        ok;
+    int         rect_id;
+};
+static std::vector<EmojiSprite> g_emoji_sprites;
+static std::unordered_map<std::string, int> g_emoji_lookup;
+static bool    g_emoji_atlas_dirty = false;
+static int     g_emoji_px = 0;
+static ImFont* g_emoji_font = nullptr;
+#ifdef IMGUI_USE_WCHAR32
+static const ImWchar kEmojiPuaBase = 0xF0000;   /* Plane 15 private use */
+static const int     kEmojiPuaSlots = 0xFFFD;
+#else
+static const ImWchar kEmojiPuaBase = 0xE000;    /* BMP private use */
+static const int     kEmojiPuaSlots = 0x1900;
+#endif
+
+/* Codepoint for an emoji sequence, rendering and registering it on first
+ * sight. 0 when it cannot be rendered (caller keeps the original bytes). */
+static ImWchar emoji_register(const char* seq, size_t len) {
+    if (g_emoji_px <= 0) return 0;
+    std::string key(seq, len);
+    auto it = g_emoji_lookup.find(key);
+    if (it != g_emoji_lookup.end()) {
+        const EmojiSprite& s = g_emoji_sprites[(size_t)it->second];
+        return s.ok ? s.cp : 0;
+    }
+    if ((int)g_emoji_sprites.size() >= kEmojiPuaSlots) return 0;
+    EmojiSprite s;
+    s.seq = key;
+    s.cp = (ImWchar)(kEmojiPuaBase + (ImWchar)g_emoji_sprites.size());
+    s.w = s.h = 0;
+    s.ok = false;
+    s.rect_id = -1;
+    RecompEmojiBitmap bm;
+    if (recomp_emoji_render(seq, len, g_emoji_px, &bm)) {
+        s.w = bm.w;
+        s.h = bm.h;
+        s.rgba.assign(bm.rgba, bm.rgba + (size_t)bm.w * (size_t)bm.h * 4);
+        s.ok = true;
+        recomp_emoji_free(&bm);
+        g_emoji_atlas_dirty = true;
+    }
+    g_emoji_lookup[key] = (int)g_emoji_sprites.size();
+    g_emoji_sprites.push_back(std::move(s));
+    return g_emoji_sprites.back().ok ? g_emoji_sprites.back().cp : 0;
+}
+
+static size_t utf8_encode(ImWchar cp, char* out) {
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F)); return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18)); out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+/* `in` with every renderable emoji sequence replaced by its atlas
+ * codepoint. Sequences that could not be rendered are copied through. */
+static void emoji_display(const char* in, char* out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = '\0';
+    if (!in) return;
+    const size_t len = std::strlen(in);
+    size_t pos = 0, o = 0;
+    while (pos < len && o + 1 < cap) {
+        size_t start = 0, seq_len = 0;
+        if (!recomp_emoji_scan(in, len, pos, &start, &seq_len)) start = len;
+        /* Plain run up to the next sequence. */
+        size_t run = start - pos;
+        if (run > cap - 1 - o) run = cap - 1 - o;
+        std::memcpy(out + o, in + pos, run);
+        o += run;
+        pos = start;
+        if (pos >= len) break;
+        const ImWchar cp = emoji_register(in + start, seq_len);
+        if (cp) {
+            char enc[4];
+            const size_t n = utf8_encode(cp, enc);
+            if (o + n >= cap) break;
+            std::memcpy(out + o, enc, n);
+            o += n;
+        } else {
+            size_t n = seq_len;
+            if (n > cap - 1 - o) n = cap - 1 - o;
+            std::memcpy(out + o, in + start, n);
+            o += n;
+        }
+        pos = start + seq_len;
+    }
+    out[o] = '\0';
+}
+
+/* apply_scale hooks: reserve atlas rects before Build, blit after. */
+static void emoji_atlas_reserve(ImFontAtlas* atlas, ImFont* font, float body) {
+    const int px = (int)(body + 0.5f);
+    g_emoji_font = font;
+    if (px != g_emoji_px) {
+        /* Rendered at another size: drop them, they re-register on sight. */
+        g_emoji_sprites.clear();
+        g_emoji_lookup.clear();
+        g_emoji_px = px;
+    }
+    for (EmojiSprite& s : g_emoji_sprites) {
+        s.rect_id = -1;
+        if (!s.ok || !font) continue;
+        s.rect_id = atlas->AddCustomRectFontGlyph(
+            font, s.cp, s.w, s.h, (float)s.w + 1.0f,
+            ImVec2(0.0f, (body - (float)s.h) * 0.5f));
+    }
+}
+
+static void emoji_atlas_blit(ImFontAtlas* atlas) {
+    unsigned char* pixels = nullptr;
+    int tw = 0, th = 0;
+    bool any = false;
+    for (const EmojiSprite& s : g_emoji_sprites)
+        if (s.ok && s.rect_id >= 0) { any = true; break; }
+    if (!any) return;
+    atlas->GetTexDataAsRGBA32(&pixels, &tw, &th);
+    if (!pixels) return;
+    for (const EmojiSprite& s : g_emoji_sprites) {
+        if (!s.ok || s.rect_id < 0) continue;
+        const ImFontAtlasCustomRect* r = atlas->GetCustomRectByIndex(s.rect_id);
+        if (!r || !r->IsPacked()) continue;
+        for (int y = 0; y < s.h && y < (int)r->Height; ++y)
+            std::memcpy(pixels + ((size_t)(r->Y + y) * (size_t)tw + r->X) * 4,
+                        s.rgba.data() + (size_t)y * (size_t)s.w * 4,
+                        (size_t)(s.w < (int)r->Width ? s.w : (int)r->Width) * 4);
+    }
+}
+
 // Merge an optional TTF over the active font when the file exists.
 static void merge_font_if_present(const char* path, float size,
                                   const ImWchar* ranges) {
@@ -675,9 +831,12 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         0,
     };
     bool loaded = false;
-    if (font_path && font_path[0])
-        loaded = io.Fonts->AddFontFromFileTTF(font_path, body, &cfg, kRanges) != nullptr;
-    if (!loaded) { cfg.SizePixels = body; io.Fonts->AddFontDefault(&cfg); }
+    ImFont* base_font = nullptr;
+    if (font_path && font_path[0]) {
+        base_font = io.Fonts->AddFontFromFileTTF(font_path, body, &cfg, kRanges);
+        loaded = base_font != nullptr;
+    }
+    if (!loaded) { cfg.SizePixels = body; base_font = io.Fonts->AddFontDefault(&cfg); }
     // Merge a Japanese subset atlas over the Latin base when the game ships one
     // (PMS-J's kana cart names / trainer strings). MergeMode folds the JP glyphs
     // into the same font so mixed Latin+kana strings render in one pass; absent
@@ -718,7 +877,19 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     merge_font_if_present(symbols_font_path, body, kSymbolRanges);
     (void)emoji_font_path;
 #endif
+    /* Color emoji sprites ride in the same atlas as custom glyphs. */
+    emoji_atlas_reserve(io.Fonts, base_font, body);
     io.Fonts->Build();
+    emoji_atlas_blit(io.Fonts);
+    g_emoji_atlas_dirty = false;
+    {
+        static bool s_logged = false;
+        if (!s_logged) {
+            s_logged = true;
+            std::fprintf(stderr, "[rui] color emoji backend: %s\n",
+                         recomp_emoji_backend_name());
+        }
+    }
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     ImGui_ImplOpenGL3_CreateFontsTexture();
 
@@ -7237,13 +7408,18 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
             if (!np->chat_get(np->ctx, i, &msg)) continue;
             newest = msg.seq;
             if (msg.is_system) {
-                ImGui::TextColored(col(th.text_muted), "%s", msg.text);
+                char sys_disp[640];
+                emoji_display(msg.text, sys_disp, sizeof(sys_disp));
+                ImGui::TextColored(col(th.text_muted), "%s", sys_disp);
                 continue;
             }
-            ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s",
-                               msg.from[0] ? msg.from : "?");
+            char from_disp[128];
+            char text_disp[640];
+            emoji_display(msg.from[0] ? msg.from : "?", from_disp, sizeof(from_disp));
+            emoji_display(msg.text, text_disp, sizeof(text_disp));
+            ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s", from_disp);
             ImGui::SameLine(0, px(6));
-            ImGui::TextUnformatted(msg.text);
+            ImGui::TextUnformatted(text_disp);
         }
         ImGui::PopTextWrapPos();
         /* Scroll to a NEW line only; a reader who scrolled up to re-read is
@@ -10914,7 +11090,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         } while (SDL_PollEvent(&ev));
 
         launcher_platform_refresh_metrics(p);
-        if (applied_scale != p->display_scale) {
+        /* Also when a never-seen emoji was registered last frame: the atlas
+         * is static, so it is rebuilt once here, before NewFrame. */
+        if (applied_scale != p->display_scale || g_emoji_atlas_dirty) {
             apply_scale(*th, p->display_scale, font_path.c_str(),
                         jp_font_path.c_str(), symbols_font_path.c_str(),
                         emoji_font_path.c_str());

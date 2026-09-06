@@ -162,6 +162,11 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_boot_timing.c  # PSX_LAUNCHER_BOOT_TIMING / LNG_BOOT_TIMING
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/common/launcher_i18n.cpp
+        # color emoji for chat: scanner + per-platform rasterizers (each
+        # provider compiles to nothing where its platform/deps are absent)
+        ${RUI_SRC}/common/emoji/recomp_emoji.c
+        ${RUI_SRC}/common/emoji/recomp_emoji_freetype.c
+        ${RUI_SRC}/common/emoji/recomp_emoji_win32.cpp
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
         # reached when the active SystemProfile opts into the capability
@@ -238,6 +243,34 @@ function(recomp_target_launcher_ui TGT)
         # (Steam Deck) even though the package is found — see cmake/recomp_gl.cmake.
         recomp_resolve_gl(RUI_GL_TARGET)
         target_link_libraries(${TGT} PRIVATE ${RUI_GL_TARGET} ${CMAKE_DL_LIBS})
+    endif()
+
+    # ---- color emoji providers (see src/common/emoji/recomp_emoji.h) ----------
+    # Windows: DirectWrite + Direct2D on Segoe UI Emoji (always available).
+    # Elsewhere: FreeType on the system color emoji font when the build can find
+    # FreeType, plus HarfBuzz for sequence shaping when that is around too. A
+    # build without either simply keeps the outline emoji glyphs — no option to
+    # remember, no missing-dependency failure.
+    if(WIN32)
+        target_link_libraries(${TGT} PRIVATE d2d1 dwrite windowscodecs ole32)
+    elseif(NOT ANDROID)
+        find_package(Freetype QUIET)
+        if(TARGET Freetype::Freetype)
+            target_compile_definitions(${TGT} PRIVATE RECOMP_UI_HAVE_FREETYPE=1)
+            target_link_libraries(${TGT} PRIVATE Freetype::Freetype)
+            find_package(PkgConfig QUIET)
+            if(PkgConfig_FOUND)
+                pkg_check_modules(RUI_HARFBUZZ QUIET IMPORTED_TARGET harfbuzz)
+                if(RUI_HARFBUZZ_FOUND)
+                    target_compile_definitions(${TGT} PRIVATE RECOMP_UI_HAVE_HARFBUZZ=1)
+                    target_link_libraries(${TGT} PRIVATE PkgConfig::RUI_HARFBUZZ)
+                endif()
+            endif()
+            message(STATUS "recomp-ui: color emoji via FreeType"
+                           "$<$<BOOL:${RUI_HARFBUZZ_FOUND}>: + HarfBuzz>")
+        else()
+            message(STATUS "recomp-ui: no FreeType; emoji stay outline glyphs")
+        endif()
     endif()
 
     if(NOT MSVC)
