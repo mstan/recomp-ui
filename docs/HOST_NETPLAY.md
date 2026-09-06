@@ -94,6 +94,25 @@ A host therefore only needs `in_lobby()` to be truthful: a backend that keeps
 reporting seated after a kick or a dropped socket keeps the player on a room
 page that will never start.
 
+The right column is the lobby chat. The room address, match settings and mod
+plan moved into the **Settings** popup (footer button; guests see it as
+**Room Info**, read-only), and the header's top-right corner shows the mod
+plan summary ("Mods: vanilla match", "Mods: Widescreen (16:9) +1 more") in
+place of the old LOBBY label when the build has a mod provider.
+
+### Chat callbacks
+
+Three optional, append-only members: `chat_send(text)`, `chat_count()`,
+`chat_get(index, RecompLauncherCNetplayChatMessage*)`. The UI never appends
+its own line: a send returns 0 when accepted and the line appears through
+`chat_get` once the room has it (online: the server's `chat` echo, which is
+the room's order; PSX LAN: the host's `MOTK5 CHAT` relay). Keep a ring of the
+last few dozen lines, oldest first, cleared on create / join / leave, and make
+`seq` monotonic across rooms — the panel scrolls to a line only when `seq`
+changes, so reusing 1 for the first line of a new room would leave it unscrolled.
+A backend with no way to deliver a line (SNES LAN rooms today) returns nonzero
+from `chat_send`; the UI reports "Chat is not available in this room."
+
 For layout work without a server, the prototype launcher takes
 `LNG_DEMO_LOBBY=host|guest` (a fake three-player room) and screenshots through
 `LNG_SCRIPT`, e.g. `LNG_VARIANT=psx LNG_DEMO_LOBBY=host LNG_SCRIPT="wait:40;shot:/tmp/lobby.png;quit"`.

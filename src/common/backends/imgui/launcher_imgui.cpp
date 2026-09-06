@@ -7172,6 +7172,150 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
     }
 }
 
+/* "Vanilla match." / "Widescreen (16:9) +1 more" — the plan every peer will
+ * run (host-authoritative). False when this build has no mod provider, so
+ * the caller can fall back to a plain label. */
+static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap) {
+#if RECOMP_UI_ENABLE_MODS
+    if (!m->mods || !out || cap == 0) return false;
+    const auto* lmods = m->mods;
+    const int lfc = lmods->feature_count ? lmods->feature_count(lmods->ctx) : 0;
+    int enabled_n = 0;
+    char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
+    for (int i = 0; i < lfc; ++i) {
+        RecompLauncherCModFeature f{};
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
+        ++enabled_n;
+    }
+    if (enabled_n == 0)
+        std::snprintf(out, cap, "Mods: vanilla match");
+    else if (enabled_n == 1)
+        std::snprintf(out, cap, "Mods: %s", first_name);
+    else
+        std::snprintf(out, cap, "Mods: %s +%d more", first_name, enabled_n - 1);
+    return true;
+#else
+    (void)m; (void)out; (void)cap;
+    return false;
+#endif
+}
+
+/* Lobby chat: the whole right column. Every seated player and spectator sees
+ * every line; the backend's ring is the only source (the UI never appends
+ * its own send, so what you see is what the room saw, in the room's order).
+ * Enter sends and keeps the box focused, so a conversation does not need the
+ * mouse. */
+static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
+                            const RecompLauncherCNetplayCallbacks* np) {
+    ImGui::TextColored(col(th.accent2), "CHAT");
+    ImGui::Spacing();
+    if (!np->chat_send || !np->chat_count || !np->chat_get) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(col(th.text_muted),
+                           "Chat is not available in this lobby (the host "
+                           "runs an older build).");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+    const float input_h = ImGui::GetFrameHeight() + px(10);
+    const float list_h = ImGui::GetContentRegionAvail().y - input_h;
+    const int n = np->chat_count(np->ctx);
+    uint32_t newest = 0;
+    if (ImGui::BeginChild("##lobby_chat_log", ImVec2(0, list_h > px(80) ? list_h : px(80)),
+                          ImGuiChildFlags_Borders)) {
+        ImGui::PushTextWrapPos(0.0f);
+        if (n <= 0)
+            ImGui::TextColored(col(th.text_muted),
+                               "Say hello — everyone in the room sees this.");
+        for (int i = 0; i < n; ++i) {
+            RecompLauncherCNetplayChatMessage msg{};
+            if (!np->chat_get(np->ctx, i, &msg)) continue;
+            newest = msg.seq;
+            if (msg.is_system) {
+                ImGui::TextColored(col(th.text_muted), "%s", msg.text);
+                continue;
+            }
+            ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s",
+                               msg.from[0] ? msg.from : "?");
+            ImGui::SameLine(0, px(6));
+            ImGui::TextUnformatted(msg.text);
+        }
+        ImGui::PopTextWrapPos();
+        /* Scroll to a NEW line only; a reader who scrolled up to re-read is
+         * left where they are until the next line lands. */
+        if (newest != m->netplay_chat_seen_seq) {
+            ImGui::SetScrollHereY(1.0f);
+            m->netplay_chat_seen_seq = newest;
+        }
+    }
+    ImGui::EndChild();
+
+    const float send_w = px(72);
+    const float gap = px(8);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - send_w - gap);
+    if (m->netplay_chat_focus) {
+        ImGui::SetKeyboardFocusHere();
+        m->netplay_chat_focus = false;
+    }
+    bool send = ImGui::InputTextWithHint("##lobby_chat_edit", "Message the lobby…",
+                                         m->netplay_chat_edit,
+                                         sizeof(m->netplay_chat_edit),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    if (send) m->netplay_chat_focus = true;
+    ImGui::SameLine(0, gap);
+    if (ImGui::Button(ui_text("Send"), ImVec2(send_w, 0))) send = true;
+    if (send) {
+        /* Trim; an empty or all-space line is not a message. */
+        char* t = m->netplay_chat_edit;
+        while (*t == ' ') ++t;
+        size_t len = std::strlen(t);
+        while (len > 0 && t[len - 1] == ' ') t[--len] = '\0';
+        if (len > 0) {
+            if (np->chat_send(np->ctx, t) == 0)
+                m->netplay_chat_edit[0] = '\0';
+            else
+                std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                              "Chat is not available in this room.");
+        }
+    }
+}
+
+/* Lobby Settings popup: the room address, the match settings, and the mod
+ * plan — the things a host tunes, and a guest looks up. Opened from the
+ * footer. The mod picker is its own modal, and ImGui does not nest two
+ * modals, so choosing mods from here closes this one first. */
+static void draw_lobby_settings_popup(LauncherModel* m, const LauncherTheme& th,
+                                      const RecompLauncherCNetplayCallbacks* np,
+                                      const LobbySnapshot& s) {
+    if (m->netplay_lobby_settings_open)
+        ImGui::OpenPopup("Lobby Settings");
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Lobby Settings", &m->netplay_lobby_settings_open,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    draw_lobby_room_panel(m, th, np);
+    ImGui::Dummy(ImVec2(0, px(14)));
+    draw_lobby_match_settings(m, th, np, s.is_host);
+#if RECOMP_UI_ENABLE_MODS
+    if (m->mods) {
+        ImGui::Dummy(ImVec2(0, px(14)));
+        draw_lobby_mods_panel(m, th, np, s);
+        if (m->netplay_lobby_mods_open) {
+            /* The picker was asked for: hand over to it. */
+            m->netplay_lobby_settings_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+#endif
+    ImGui::Spacing();
+    if (ImGui::Button(ui_text("Close"), ImVec2(px(120), 0))) {
+        m->netplay_lobby_settings_open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 /* The lobby view body. */
 void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
@@ -7213,16 +7357,14 @@ void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
 
     if (two_col) ImGui::SameLine(0, gap);
     else ImGui::Dummy(ImVec2(0, px(12)));
-    begin_container("lobby_side", ImVec2(two_col ? side_w : avail_w, 0.0f),
-                    two_col ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
-    draw_lobby_room_panel(m, th, np);
-    ImGui::Dummy(ImVec2(0, px(14)));
-    draw_lobby_match_settings(m, th, np, s.is_host);
-#if RECOMP_UI_ENABLE_MODS
-    ImGui::Dummy(ImVec2(0, px(14)));
-    draw_lobby_mods_panel(m, th, np, s);
-#endif
+    /* Stacked: the chat still needs a real height to be usable, so it takes
+     * a fixed band rather than auto-sizing to its (empty) contents. */
+    begin_container("lobby_side", ImVec2(two_col ? side_w : avail_w,
+                                         two_col ? 0.0f : px(320)));
+    draw_lobby_chat(m, th, np);
     end_container();
+
+    draw_lobby_settings_popup(m, th, np, s);
 
     /* Seat trade: somebody asked to swap with this player. Modal, because
      * agreeing moves them out of the seat they chose. */
@@ -7287,9 +7429,25 @@ static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
         np_lobby_leave(m, np);
     ImGui::PopStyleColor(4);
 
+    /* Settings — the room address, match settings and mod plan. The host
+     * edits there; a guest gets the same page read-only, which is where it
+     * finds the room's address and what the host has chosen. */
+    const float settings_w = px(130);
+    float next_x = origin.x + leave_w + gap;
+    ImGui::SetCursorScreenPos(ImVec2(next_x, cta_y));
+    if (ImGui::Button(s.is_host ? ui_text("Settings") : ui_text("Room Info"),
+                      ImVec2(settings_w, play_h))) {
+        g_lobby_settings_synced = false;
+        m->netplay_lobby_settings_open = true;
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip(s.is_host
+            ? "Room address, match settings, and the mod plan"
+            : "Room address and the settings the host chose");
+    next_x += settings_w + gap;
 #if RECOMP_UI_ENABLE_MODS
     if (m->mods) {
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + leave_w + gap, cta_y));
+        ImGui::SetCursorScreenPos(ImVec2(next_x, cta_y));
         if (ImGui::Button(s.is_host ? ui_text("Mods") : ui_text("View Mods"),
                           ImVec2(mods_w, play_h)))
             m->netplay_lobby_mods_open = true;
@@ -7297,11 +7455,12 @@ static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
             ImGui::SetTooltip(s.is_host
                 ? "Pick the mods everyone in this lobby will run"
                 : "See the mods the host has enabled for this lobby");
+        next_x += mods_w + gap;
     }
 #else
     (void)mods_w;
-    (void)gap;
 #endif
+    (void)next_x;
 
     if (s.is_host) {
         /* Require two seated players, without waiting for every open seat.
@@ -10116,8 +10275,15 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                 /* No Back: you are seated, and the only way out of a seat is
                  * the footer's Leave Lobby — a Back that quietly kept the seat
                  * would leave a ghost in the room. */
-                ImGui::SetCursorPos(ImVec2(right - w, y));
-                ImGui::TextColored(col(th.accent2), "%s", ui_text("LOBBY"));
+                char summary[192];
+                const char* label =
+                    np_lobby_mods_summary(m, summary, sizeof(summary))
+                        ? summary : ui_text("LOBBY");
+                const float tw = ImGui::CalcTextSize(label).x;
+                ImGui::SetCursorPos(ImVec2(
+                    right - tw, y + (px(34) - ImGui::GetTextLineHeight()) * 0.5f));
+                ImGui::TextColored(col(th.accent2), "%s", label);
+                (void)w;
             } else {
                 ImGui::SetCursorPos(ImVec2(right - w, y));
                 if (ImGui::Button(ui_text("< Back"), ImVec2(w, px(34))))

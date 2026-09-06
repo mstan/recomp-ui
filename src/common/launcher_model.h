@@ -537,6 +537,11 @@ typedef struct {
     int       netplay_host_max_players;
     /* Active room seat ceiling after create/join (0 = use game player_count). */
     int       netplay_lobby_max_slots;
+    /* Lobby chat: the line being typed, and the seq of the newest line the
+     * chat panel has scrolled to (so a new line scrolls the list once). */
+    char      netplay_chat_edit[256];
+    uint32_t  netplay_chat_seen_seq;
+    bool      netplay_chat_focus; /* refocus the input after Enter sends */
     bool      defaults_modal_open;   // confirmed full-settings reset
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live

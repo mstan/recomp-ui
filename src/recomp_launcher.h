@@ -151,6 +151,17 @@ typedef struct RecompLauncherCNetplayLobbyMod {
     char options[192];
 } RecompLauncherCNetplayLobbyMod;
 
+/* One lobby chat line, oldest first. Backends keep a short ring (the last
+ * 64 or so); the UI redraws the whole ring every frame, so `seq` only has to
+ * be monotonic so the UI can notice a new line and scroll to it. */
+typedef struct RecompLauncherCNetplayChatMessage {
+    char     from[64];   /* display name; empty for a system line */
+    char     text[256];
+    int      is_local;   /* sent by this client */
+    int      is_system;  /* join/leave/notice, not a player */
+    uint32_t seq;
+} RecompLauncherCNetplayChatMessage;
+
 typedef struct RecompLauncherCNetplayLaunch {
     int      enabled;
     int      local_slot;
@@ -428,6 +439,16 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*memcard_offer_set)(void* ctx, int has_card, int share);
     int  (*guest_memcard_get)(void* ctx);
     int  (*guest_memcard_set)(void* ctx, int allow);
+    /* ---- lobby chat --------------------------------------------------
+     * Optional (append-only). Everyone seated (players and spectators) sees
+     * every line. chat_send returns 0 when the line was accepted; the line
+     * shows up through chat_get once the room has it (online: the server's
+     * echo, so order is the server's; LAN: the host's relay), so the UI
+     * never appends locally. chat_count/chat_get read the backend's ring,
+     * oldest first; the ring is cleared on join/leave. */
+    int  (*chat_send)(void* ctx, const char* text);
+    int  (*chat_count)(void* ctx);
+    int  (*chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

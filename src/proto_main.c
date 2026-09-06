@@ -146,6 +146,33 @@ static int  dl_memcard_offer_set(void* c, int has_card, int share) {
 }
 static int  dl_guest_memcard_get(void* c) { (void)c; return demo_lobby_allow; }
 static int  dl_guest_memcard_set(void* c, int a) { (void)c; demo_lobby_allow = a ? 1 : 0; return 0; }
+/* A few chat lines so the panel has something to show; sends append locally
+ * (a real backend appends on the server echo instead). */
+static struct { char from[64]; char text[256]; int is_local; } demo_chat[64];
+static int demo_chat_n = 0;
+static void demo_chat_push(const char* from, const char* text, int is_local) {
+    if (demo_chat_n >= 64) return;
+    snprintf(demo_chat[demo_chat_n].from, 64, "%s", from);
+    snprintf(demo_chat[demo_chat_n].text, 256, "%s", text);
+    demo_chat[demo_chat_n].is_local = is_local;
+    ++demo_chat_n;
+}
+static int dl_chat_send(void* c, const char* text) {
+    (void)c;
+    demo_chat_push(demo_lobby_host ? "Alex" : "Marisa", text, 1);
+    return 0;
+}
+static int dl_chat_count(void* c) { (void)c; return demo_chat_n; }
+static int dl_chat_get(void* c, int i, RecompLauncherCNetplayChatMessage* out) {
+    (void)c;
+    if (i < 0 || i >= demo_chat_n || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    snprintf(out->from, sizeof(out->from), "%s", demo_chat[i].from);
+    snprintf(out->text, sizeof(out->text), "%s", demo_chat[i].text);
+    out->is_local = demo_chat[i].is_local;
+    out->seq = (uint32_t)(i + 1);
+    return 1;
+}
 static RecompLauncherCNetplayCallbacks demo_lobby_cb;
 
 static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
@@ -185,6 +212,12 @@ static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_cb.memcard_offer_set = dl_memcard_offer_set;
     demo_lobby_cb.guest_memcard_get = dl_guest_memcard_get;
     demo_lobby_cb.guest_memcard_set = dl_guest_memcard_set;
+    demo_lobby_cb.chat_send = dl_chat_send;
+    demo_lobby_cb.chat_count = dl_chat_count;
+    demo_lobby_cb.chat_get = dl_chat_get;
+    demo_chat_push("Marisa", "gg last time, ready when you are", 0);
+    demo_chat_push("Alex", "one sec, swapping to my duel deck card", demo_lobby_host);
+    demo_chat_push("Reimu", "I'll take P4 and watch this one", 0);
     gi->num_players = 4;
     gi->netplay_supported = 1;
     gi->netplay = &demo_lobby_cb;
