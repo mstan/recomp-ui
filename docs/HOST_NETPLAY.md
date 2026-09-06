@@ -100,6 +100,20 @@ plan moved into the **Settings** popup (footer button; guests see it as
 plan summary ("Mods: vanilla match", "Mods: Widescreen (16:9) +1 more") in
 place of the old LOBBY label when the build has a mod provider.
 
+### Seats, session slots, and ports
+
+Lobby seat, session slot, and controller port are three different numbers.
+Players may move themselves to a free seat (`seat_move_self`) or ask the
+occupant of a taken one to trade (`seat_swap_request`; the occupant sees the
+prompt through `seat_swap_incoming` and answers with `seat_swap_respond`),
+and the host may drag anyone anywhere, itself included. So the lobby host can
+end up in any seat. At launch, backends must keep the host as **session slot
+0** regardless (`launch.slot_port_valid` + `slot_port[]`: host first, then
+the players in seat order, each driving the port of its *lobby* seat). PSX
+does this on both the online and LAN paths. A backend that maps session slot
+== lobby seat instead makes whoever sits in seat 0 the sim authority, with
+the host's save-state and overlay controls in that player's hands.
+
 ### Host in the spectator table
 
 A host may drag its own row into the spectator table when the backend answers

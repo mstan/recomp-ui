@@ -223,6 +223,14 @@ typedef struct RecompLauncherCNetplayLaunch {
      * slot 0), and player seats sit at lobby seat + 1. Settled by the server
      * at start; backends fold it into local_slot / occupied_mask. */
     int      host_spectates;
+    /* Session slot -> controller port, when slot_port_valid. The lobby host
+     * is always session slot 0 (the sim authority every host-only path keys
+     * on) whatever seat it holds; the other players follow in lobby-seat
+     * order; each drives the port of its LOBBY seat, so the game sees a
+     * player where the lobby seated them. -1 = no port (a host in the
+     * gallery). Without it, session slot == lobby seat == port. */
+    int      slot_port_valid;
+    int      slot_port[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1];
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
