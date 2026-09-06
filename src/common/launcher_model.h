@@ -542,6 +542,10 @@ typedef struct {
     char      netplay_chat_edit[256];
     uint32_t  netplay_chat_seen_seq;
     bool      netplay_chat_focus; /* refocus the input after Enter sends */
+    /* Server chat (per-game, on the lobby browser page): same three. */
+    char      netplay_schat_edit[256];
+    uint32_t  netplay_schat_seen_seq;
+    bool      netplay_schat_focus;
     bool      defaults_modal_open;   // confirmed full-settings reset
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live

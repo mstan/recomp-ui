@@ -497,6 +497,15 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * not drawn. */
     int  (*online_count)(void* ctx);
     int  (*online_get)(void* ctx, int index, RecompLauncherCNetplayOnlinePlayer* out);
+
+    /* ---- server chat (optional, append-only) ------------------------------
+     * Per-game chat outside any room, for everyone on the lobby server
+     * playing this title. Same contract as the lobby chat callbacks: send
+     * returns 0 when queued and the line arrives through get; no history.
+     * NULL (or send returning <0 while offline) hides the panel. */
+    int  (*server_chat_send)(void* ctx, const char* text);
+    int  (*server_chat_count)(void* ctx);
+    int  (*server_chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

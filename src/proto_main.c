@@ -200,6 +200,28 @@ static int  dl_online_get(void* c, int i, RecompLauncherCNetplayOnlinePlayer* o)
     o->is_local = (i == 2);
     return 1;
 }
+/* Server chat: its own small ring; a send lands locally as if echoed. */
+static struct { char from[64]; char text[256]; int is_local; } demo_schat[32];
+static int demo_schat_n = 0;
+static void demo_schat_push(const char* from, const char* text, int is_local) {
+    if (demo_schat_n >= 32) { memmove(&demo_schat[0], &demo_schat[1], sizeof(demo_schat[0]) * 31); demo_schat_n = 31; }
+    snprintf(demo_schat[demo_schat_n].from, sizeof(demo_schat[demo_schat_n].from), "%s", from);
+    snprintf(demo_schat[demo_schat_n].text, sizeof(demo_schat[demo_schat_n].text), "%s", text);
+    demo_schat[demo_schat_n].is_local = is_local;
+    ++demo_schat_n;
+}
+static int  dl_schat_send(void* c, const char* t) { (void)c; demo_schat_push("Alex", t, 1); return 0; }
+static int  dl_schat_count(void* c) { (void)c; return demo_schat_n; }
+static int  dl_schat_get(void* c, int i, RecompLauncherCNetplayChatMessage* out) {
+    (void)c;
+    if (i < 0 || i >= demo_schat_n || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    snprintf(out->from, sizeof(out->from), "%s", demo_schat[i].from);
+    snprintf(out->text, sizeof(out->text), "%s", demo_schat[i].text);
+    out->is_local = demo_schat[i].is_local;
+    out->seq = (uint32_t)(i + 1);
+    return 1;
+}
 static int  dl_leave(void* c) { (void)c; demo_lobby_in = 0; return 0; }
 static int  dl_in_lobby(void* c) { (void)c; return demo_lobby_in; }
 static int  dl_is_host(void* c) { (void)c; return demo_lobby_host; }
@@ -305,6 +327,11 @@ static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_cb.list_get = dl_list_get;
     demo_lobby_cb.online_count = dl_online_count;
     demo_lobby_cb.online_get = dl_online_get;
+    demo_lobby_cb.server_chat_send = dl_schat_send;
+    demo_lobby_cb.server_chat_count = dl_schat_count;
+    demo_lobby_cb.server_chat_get = dl_schat_get;
+    demo_schat_push("Sakuya", "anyone up for a set? \xF0\x9F\x94\xA5", 0);
+    demo_schat_push("Reimu", "hosting now, come in", 0);
     demo_lobby_cb.leave = dl_leave;
     demo_lobby_cb.in_lobby = dl_in_lobby;
     demo_lobby_cb.is_host = dl_is_host;

@@ -156,6 +156,29 @@ are (hosting or in a room, or browsing). The server sends that list as the
 `players` array of every `lobby_list`; a LAN-only backend leaves the two
 callbacks NULL and the panel is not drawn.
 
+### Server chat (per game) and players online
+
+The browser page's players panel lists only players on the lobby server
+for THIS title (the server tags each presence row with the title that
+client listed for, and the backend drops the rest). Below the list and the
+panel, a "Server Chat" band is the per-game room outside any lobby:
+`server_chat_send` / `server_chat_count` / `server_chat_get`, the same
+contract and message struct as lobby chat, drawn only when all three exist
+and the backend is online (a LAN-only session hides it). The server relays
+a line to everyone browsing for the same title; there is no history. Emoji
+and the profanity filter apply exactly as in lobby chat.
+
+### Chat filtering
+
+Backends mask profanity and slurs before a line reaches `chat_get`, with
+one shared filter: recomp-net's `rnet_chat_filter_apply` (word list
+`data/chat_filter_words.txt`, many languages, leetspeak and spaced-out
+letters folded) at every ring push, and the same rules on the lobby server
+for relayed lines. Because the client side masks on arrival, LAN rooms and
+older servers are covered too. The UI never sees an unmasked line and needs
+no filter of its own. `RNET_CHAT_FILTER=0` in a client's environment turns
+its local pass off (developer use).
+
 ### Chat callbacks
 
 Three optional, append-only members: `chat_send(text)`, `chat_count()`,

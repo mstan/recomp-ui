@@ -7550,35 +7550,39 @@ static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap)
  * its own send, so what you see is what the room saw, in the room's order).
  * Enter sends and keeps the box focused, so a conversation does not need the
  * mouse. */
-static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
-                            const RecompLauncherCNetplayCallbacks* np) {
-    ImGui::TextColored(col(th.accent2), "CHAT");
+/* One chat panel, two rooms: the lobby's chat and the browser page's
+ * per-game server chat draw through this. The log scrolls to a NEW line
+ * only; the input holds display form (atlas codepoints for emoji) so the
+ * box matches the log, and emoji_restore turns it back into UTF-8 to send.
+ * Lines arrive already masked by the backend (see docs, "Chat filtering");
+ * this panel adds nothing and removes nothing. */
+struct ChatPanelIo {
+    void* ctx;
+    int (*send)(void* ctx, const char* text);
+    int (*count)(void* ctx);
+    int (*get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
+};
+
+static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
+                            const ChatPanelIo& io, const char* id,
+                            const char* title, const char* empty_hint,
+                            const char* input_hint, const char* send_fail,
+                            char* edit, size_t edit_cap, uint32_t* seen_seq,
+                            bool* focus) {
+    ImGui::PushID(id);
+    ImGui::TextColored(col(th.accent2), "%s", title);
     ImGui::Spacing();
-    if (!np->chat_send || !np->chat_count || !np->chat_get) {
-        /* This tests OUR OWN callback table, so it says nothing whatsoever
-         * about the host. It read "the host runs an older build", which sent
-         * players to look at the wrong machine -- on a title that simply does
-         * not implement chat it appeared for every lobby, including one this
-         * player was hosting themselves. */
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(col(th.text_muted),
-                           "This build does not have lobby chat.");
-        ImGui::PopTextWrapPos();
-        return;
-    }
     const float input_h = ImGui::GetFrameHeight() + px(10);
     const float list_h = ImGui::GetContentRegionAvail().y - input_h;
-    const int n = np->chat_count(np->ctx);
+    const int n = io.count(io.ctx);
     uint32_t newest = 0;
-    if (ImGui::BeginChild("##lobby_chat_log", ImVec2(0, list_h > px(80) ? list_h : px(80)),
+    if (ImGui::BeginChild("##chat_log", ImVec2(0, list_h > px(80) ? list_h : px(80)),
                           ImGuiChildFlags_Borders)) {
         ImGui::PushTextWrapPos(0.0f);
-        if (n <= 0)
-            ImGui::TextColored(col(th.text_muted),
-                               "Say hello — everyone in the room sees this.");
+        if (n <= 0) ImGui::TextColored(col(th.text_muted), "%s", empty_hint);
         for (int i = 0; i < n; ++i) {
             RecompLauncherCNetplayChatMessage msg{};
-            if (!np->chat_get(np->ctx, i, &msg)) continue;
+            if (!io.get(io.ctx, i, &msg)) continue;
             newest = msg.seq;
             if (msg.is_system) {
                 char sys_disp[640];
@@ -7597,9 +7601,9 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
         ImGui::PopTextWrapPos();
         /* Scroll to a NEW line only; a reader who scrolled up to re-read is
          * left where they are until the next line lands. */
-        if (newest != m->netplay_chat_seen_seq) {
+        if (newest != *seen_seq) {
             ImGui::SetScrollHereY(1.0f);
-            m->netplay_chat_seen_seq = newest;
+            *seen_seq = newest;
         }
     }
     ImGui::EndChild();
@@ -7607,37 +7611,78 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
     const float send_w = px(72);
     const float gap = px(8);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - send_w - gap);
-    if (m->netplay_chat_focus) {
+    if (*focus) {
         ImGui::SetKeyboardFocusHere();
-        m->netplay_chat_focus = false;
+        *focus = false;
     }
-    /* The buffer holds display form (atlas codepoints for emoji) so the box
-     * matches the log; emoji_restore turns it back into real UTF-8 to send. */
-    bool send = ImGui::InputTextWithHint("##lobby_chat_edit", "Message the lobby…",
-                                         m->netplay_chat_edit,
-                                         sizeof(m->netplay_chat_edit),
+    bool send = ImGui::InputTextWithHint("##chat_edit", input_hint, edit, edit_cap,
                                          ImGuiInputTextFlags_EnterReturnsTrue |
                                              ImGuiInputTextFlags_CallbackEdit,
                                          emoji_input_callback);
-    if (send) m->netplay_chat_focus = true;
+    if (send) *focus = true;
     ImGui::SameLine(0, gap);
     if (ImGui::Button(ui_text("Send"), ImVec2(send_w, 0))) send = true;
     if (send) {
         /* Trim; an empty or all-space line is not a message. */
-        char* t = m->netplay_chat_edit;
+        char* t = edit;
         while (*t == ' ') ++t;
         size_t len = std::strlen(t);
         while (len > 0 && t[len - 1] == ' ') t[--len] = '\0';
         if (len > 0) {
             char raw[1024];
             emoji_restore(t, raw, sizeof(raw));
-            if (np->chat_send(np->ctx, raw) == 0)
-                m->netplay_chat_edit[0] = '\0';
+            if (io.send(io.ctx, raw) == 0)
+                edit[0] = '\0';
             else
-                std::snprintf(m->netplay_status, sizeof(m->netplay_status),
-                              "Chat is not available in this room.");
+                std::snprintf(m->netplay_status, sizeof(m->netplay_status), "%s", send_fail);
         }
     }
+    ImGui::PopID();
+}
+
+static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
+                            const RecompLauncherCNetplayCallbacks* np) {
+    if (!np->chat_send || !np->chat_count || !np->chat_get) {
+        /* This tests OUR OWN callback table, so it says nothing whatsoever
+         * about the host. It read "the host runs an older build", which sent
+         * players to look at the wrong machine -- on a title that simply does
+         * not implement chat it appeared for every lobby, including one this
+         * player was hosting themselves. */
+        ImGui::TextColored(col(th.accent2), "CHAT");
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(col(th.text_muted),
+                           "This build does not have lobby chat.");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+    const ChatPanelIo io{np->ctx, np->chat_send, np->chat_count, np->chat_get};
+    draw_chat_panel(m, th, io, "lobby_chat", "CHAT",
+                    "Say hello — everyone in the room sees this.",
+                    "Message the lobby…", "Chat is not available in this room.",
+                    m->netplay_chat_edit, sizeof(m->netplay_chat_edit),
+                    &m->netplay_chat_seen_seq, &m->netplay_chat_focus);
+}
+
+/* The browser page's per-game server chat: everyone on the lobby server
+ * playing this title, seated or not. Drawn only when the backend has the
+ * callbacks and is online (a LAN-only session has no wider room). */
+static bool np_server_chat_available(const RecompLauncherCNetplayCallbacks* np) {
+    return np->server_chat_send && np->server_chat_count && np->server_chat_get &&
+           np->connected && np->connected(np->ctx);
+}
+
+static void draw_server_chat(LauncherModel* m, const LauncherTheme& th,
+                             const RecompLauncherCNetplayCallbacks* np) {
+    const ChatPanelIo io{np->ctx, np->server_chat_send, np->server_chat_count,
+                         np->server_chat_get};
+    draw_chat_panel(m, th, io, "server_chat", "SERVER CHAT",
+                    "Everyone online for this game sees this — no history, "
+                    "only what is said while you are here.",
+                    "Message everyone playing this game…",
+                    "Server chat is not available right now.",
+                    m->netplay_schat_edit, sizeof(m->netplay_schat_edit),
+                    &m->netplay_schat_seen_seq, &m->netplay_schat_focus);
 }
 
 /* Lobby Settings popup: the room address, the match settings, and the mod
@@ -7918,9 +7963,11 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
     ImGui::TextColored(col(th.accent2), "PLAYERS ONLINE");
     ImGui::SameLine();
     ImGui::TextColored(col(th.text_muted), "%d", n);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Players on the lobby server for this game.");
     ImGui::Spacing();
     if (n <= 0) {
-        ImGui::TextColored(col(th.text_muted), "Nobody else is connected.");
+        ImGui::TextColored(col(th.text_muted), "Nobody else is online for this game.");
         return;
     }
     const float row_h = px(26);
@@ -8011,8 +8058,23 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const float side_w = px(300);
     const bool two_col = has_online && avail_w >= side_w + side_gap + px(560);
     const float list_w = two_col ? avail_w - side_w - side_gap : avail_w;
+    /* The per-game server chat takes a band across the bottom; the list and
+     * the players panel share what is above it. */
+    const bool has_schat = np_server_chat_available(np);
+    const float schat_h = px(230);
+    const float schat_gap = px(10);
+    const float avail_h = ImGui::GetContentRegionAvail().y;
+    /* Stack: top row + gap + band must fit exactly, or the page grows a
+     * scrollbar and the band's input row slides under the footer. The gap
+     * is drawn as a Dummy between two children, so it carries two item
+     * spacings of its own. */
+    const float item_sp = ImGui::GetStyle().ItemSpacing.y;
+    const float schat_gap_total = schat_gap > 2.0f * item_sp ? schat_gap : 2.0f * item_sp;
+    const float top_h = has_schat && avail_h > schat_h + px(200)
+                            ? avail_h - schat_h - schat_gap_total - px(2)
+                            : 0.0f;
 
-    begin_container("netplay_lobbies", ImVec2(list_w, 0), ImGuiChildFlags_None);
+    begin_container("netplay_lobbies", ImVec2(list_w, top_h), ImGuiChildFlags_None);
     ImGui::TextColored(col(th.accent2), "LOBBIES");
     if (m->netplay_status[0])
         ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
@@ -8135,8 +8197,15 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
 
     if (two_col) {
         ImGui::SameLine(0, side_gap);
-        begin_container("netplay_online", ImVec2(side_w, 0), ImGuiChildFlags_None);
+        begin_container("netplay_online", ImVec2(side_w, top_h), ImGuiChildFlags_None);
         draw_netplay_online_panel(m, th, np);
+        end_container();
+    }
+    if (has_schat) {
+        ImGui::Dummy(ImVec2(0, schat_gap_total - 2.0f * item_sp));
+        begin_container("netplay_server_chat", ImVec2(avail_w, schat_h),
+                        ImGuiChildFlags_None);
+        draw_server_chat(m, th, np);
         end_container();
     }
 }
