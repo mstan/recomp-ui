@@ -6177,8 +6177,15 @@ static void draw_lobby_seat_row(LauncherModel* m,
                 if (from_wire != wire && from_row) {
                     if (is_host && np->move_member && (!self_drag || host_self_gallery)) {
                         /* The one call that crosses tables. Promotion,
-                         * demotion and a plain reorder are all this. */
-                        (void)np->move_member(np->ctx, from_wire, wire);
+                         * demotion and a plain reorder are all this. A
+                         * refusal is said out loud: a drag that silently
+                         * does nothing reads as a bug. */
+                        if (np->move_member(np->ctx, from_wire, wire) != 0)
+                            std::snprintf(m->netplay_status,
+                                          sizeof(m->netplay_status),
+                                          "Could not move %s to %s%d.",
+                                          from_row->display_name, view.label,
+                                          pos + 1);
                     } else if (self_drag && cross_table) {
                         /* Self-service stays inside the player table: moving
                          * yourself between watching and playing is the host's
