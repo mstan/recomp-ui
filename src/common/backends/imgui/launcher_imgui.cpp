@@ -6166,20 +6166,31 @@ static void draw_lobby_seat_row(LauncherModel* m,
                     lobby_seat_lookup(views, nviews, from_wire, nullptr,
                                       &from_spectator);
                 const bool self_drag = from_row && from_row->is_local;
+                const bool cross_table = from_spectator || view.spectator;
+                /* The host may seat ITSELF in the gallery only when the
+                 * backend can run the match from there (it keeps the host
+                 * role and its save-state / overlay controls; its pad is
+                 * muted). Elsewhere the host's own seat stays in play. */
+                const bool host_self_gallery =
+                    is_host && self_drag && cross_table && np->host_can_spectate &&
+                    np->host_can_spectate(np->ctx) != 0;
                 if (from_wire != wire && from_row) {
-                    if (is_host && np->move_member && !self_drag) {
+                    if (is_host && np->move_member && (!self_drag || host_self_gallery)) {
                         /* The one call that crosses tables. Promotion,
                          * demotion and a plain reorder are all this. */
                         (void)np->move_member(np->ctx, from_wire, wire);
-                    } else if (self_drag && (from_spectator || view.spectator)) {
+                    } else if (self_drag && cross_table) {
                         /* Self-service stays inside the player table: moving
                          * yourself between watching and playing is the host's
                          * call, and the server refuses it anyway. Say so --
                          * a drag that silently does nothing reads as a bug. */
                         std::snprintf(m->netplay_status,
                                       sizeof(m->netplay_status),
-                                      "Only the host can move players between "
-                                      "the player and spectator tables.");
+                                      is_host
+                                          ? "This room cannot run the match with "
+                                            "the host in the spectator table."
+                                          : "Only the host can move players between "
+                                            "the player and spectator tables.");
                     } else if (self_drag) {
                         /* Moving yourself: a free seat is yours to take; an
                          * occupied one needs that player's consent. Say so
@@ -7324,6 +7335,23 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
         ImGui::Spacing();
         seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
                    s.spectator_seats);
+        /* The host watching from the gallery keeps hosting. Say what that
+         * means before Play, not after. */
+        bool host_in_gallery = false;
+        for (int i = 0; i < s.spectator_seats; ++i)
+            if (s.spec_occupied[i] && s.specs[i].is_host) host_in_gallery = true;
+        if (host_in_gallery) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(col(th.text_muted),
+                               s.is_host
+                                   ? "You are hosting from the spectator table: "
+                                     "you keep save states and the host "
+                                     "controls; your controller is not in the "
+                                     "game."
+                                   : "The host is spectating and still runs the "
+                                     "match.");
+            ImGui::PopTextWrapPos();
+        }
     }
     /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
      * about save-state compatibility, not kernel-RAM details.

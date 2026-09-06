@@ -218,6 +218,11 @@ typedef struct RecompLauncherCNetplayLaunch {
      * at start and delivered to every peer with the launch, so all peers
      * agree even if the toggle raced the start. */
     int      guest_memcard;
+    /* 1 = the host watches from the gallery and still runs the match: it
+     * holds session slot 0 with its pad muted (every host-only path keys on
+     * slot 0), and player seats sit at lobby seat + 1. Settled by the server
+     * at start; backends fold it into local_slot / occupied_mask. */
+    int      host_spectates;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -449,6 +454,10 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*chat_send)(void* ctx, const char* text);
     int  (*chat_count)(void* ctx);
     int  (*chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
+    /* Optional (append-only): 1 when this backend can run the match with the
+     * host seated in the gallery (host_spectates above). The UI lets the host
+     * drag itself into the spectator table only when this says yes. */
+    int  (*host_can_spectate)(void* ctx);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

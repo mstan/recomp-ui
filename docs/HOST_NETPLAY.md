@@ -100,6 +100,17 @@ plan moved into the **Settings** popup (footer button; guests see it as
 plan summary ("Mods: vanilla match", "Mods: Widescreen (16:9) +1 more") in
 place of the old LOBBY label when the build has a mod provider.
 
+### Host in the spectator table
+
+A host may drag its own row into the spectator table when the backend answers
+`host_can_spectate()` (append-only, optional). It then runs the match from the
+gallery: `launch.host_spectates` is 1 for every peer, the host keeps **session
+slot 0** — the seat every host-only path keys on (save states, card sync, the
+start, overlay host controls) — with its pad muted and no controller port
+mapped to it, and player seats sit at lobby seat + 1. The server settles the
+flag at start and sizes the relay for the extra slot. Backends without the
+callback keep the old rule (the host's seat stays in play; the UI says so).
+
 ### Chat callbacks
 
 Three optional, append-only members: `chat_send(text)`, `chat_count()`,
