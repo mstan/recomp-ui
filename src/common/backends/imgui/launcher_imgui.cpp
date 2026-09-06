@@ -6212,17 +6212,35 @@ static void draw_lobby_seat_row(LauncherModel* m,
                                           from_row->display_name, view.label,
                                           pos + 1);
                     } else if (self_drag && cross_table) {
-                        /* Self-service stays inside the player table: moving
-                         * yourself between watching and playing is the host's
-                         * call, and the server refuses it anyway. Say so --
-                         * a drag that silently does nothing reads as a bug. */
-                        std::snprintf(m->netplay_status,
-                                      sizeof(m->netplay_status),
-                                      is_host
-                                          ? "This room cannot run the match with "
-                                            "the host in the spectator table."
-                                          : "Only the host can move players between "
-                                            "the player and spectator tables.");
+                        /* Moving yourself between watching and playing: an
+                         * EMPTY seat on the other side is yours to take; a
+                         * taken one is not -- swaps stay inside the player
+                         * table, where consent means something. Say so when
+                         * refused: a drag that silently does nothing reads
+                         * as a bug. */
+                        int rc = -1;
+                        if (is_host && np->host_can_spectate &&
+                            !np->host_can_spectate(np->ctx)) {
+                            std::snprintf(m->netplay_status,
+                                          sizeof(m->netplay_status),
+                                          "This room cannot run the match with "
+                                          "the host in the spectator table.");
+                        } else if (occ) {
+                            std::snprintf(m->netplay_status,
+                                          sizeof(m->netplay_status),
+                                          "%s%d is taken. Pick an empty seat, or "
+                                          "ask to swap inside the player table.",
+                                          view.label, pos + 1);
+                        } else {
+                            if (np->seat_move_self)
+                                rc = np->seat_move_self(np->ctx, wire);
+                            if (rc != 0)
+                                std::snprintf(m->netplay_status,
+                                              sizeof(m->netplay_status),
+                                              "Could not move to %s%d (seat "
+                                              "refused by the host).",
+                                              view.label, pos + 1);
+                        }
                     } else if (self_drag) {
                         /* Moving yourself: a free seat is yours to take; an
                          * occupied one needs that player's consent. Say so
@@ -6261,8 +6279,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
         const int can_drag =
             occ &&
             ((is_host && np->move_member) ||
-             (self_row && !view.spectator &&
-              (np->seat_move_self || np->seat_swap_request)));
+             (self_row && (np->seat_move_self || np->seat_swap_request)));
         ImU32 grip_col = imcol(can_drag ? th.text_muted : th.border);
         ImDrawList* grip_dl = ImGui::GetWindowDrawList();
         for (int line = -1; line <= 1; ++line) {

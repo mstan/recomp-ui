@@ -103,7 +103,8 @@ place of the old LOBBY label when the build has a mod provider.
 ### Seats, session slots, and ports
 
 Lobby seat, session slot, and controller port are three different numbers.
-Players may move themselves to a free seat (`seat_move_self`) or ask the
+Players may move themselves to a free seat in either table, gallery included
+(`seat_move_self`; the server accepts any empty seat), or ask the
 occupant of a taken one to trade (`seat_swap_request`; the occupant sees the
 prompt through `seat_swap_incoming` and answers with `seat_swap_respond`),
 and the host may drag anyone anywhere, itself included. So the lobby host can
