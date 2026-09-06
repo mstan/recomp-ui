@@ -134,8 +134,10 @@ Fallback is automatic: no provider (no FreeType at build time, a console port,
 a font the renderer cannot open) means nothing is substituted and the OpenMoji
 outline glyphs draw as before. `RECOMP_UI_EMOJI_FONT=/path/to/font` overrides
 the FreeType font search. The backend in use is logged at startup as
-`[rui] color emoji backend: …`. The input box still shows outline glyphs while
-typing; only the log is substituted.
+`[rui] color emoji backend: …`. The chat input box holds the substituted
+form while typing (an edit callback restores and re-substitutes the whole
+buffer on every edit, so an emoji typed in pieces still joins) and the real
+UTF-8 is restored on send; the wire never sees an atlas codepoint.
 
 For layout work without a server, the prototype launcher takes
 `LNG_DEMO_LOBBY=host|guest` (a fake three-player room) and screenshots through

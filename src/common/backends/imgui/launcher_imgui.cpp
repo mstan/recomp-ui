@@ -760,15 +760,100 @@ static void emoji_display(const char* in, char* out, size_t cap) {
     out[o] = '\0';
 }
 
+static size_t emoji_utf8_decode(const char* s, size_t len, unsigned int* cp) {
+    const unsigned char* p = (const unsigned char*)s;
+    if (len == 0) { *cp = 0; return 1; }
+    if (p[0] < 0x80) { *cp = p[0]; return 1; }
+    if ((p[0] & 0xE0) == 0xC0 && len >= 2) { *cp = ((p[0] & 0x1Fu) << 6) | (p[1] & 0x3Fu); return 2; }
+    if ((p[0] & 0xF0) == 0xE0 && len >= 3) {
+        *cp = ((p[0] & 0x0Fu) << 12) | ((p[1] & 0x3Fu) << 6) | (p[2] & 0x3Fu); return 3;
+    }
+    if ((p[0] & 0xF8) == 0xF0 && len >= 4) {
+        *cp = ((p[0] & 0x07u) << 18) | ((p[1] & 0x3Fu) << 12) | ((p[2] & 0x3Fu) << 6) | (p[3] & 0x3Fu);
+        return 4;
+    }
+    *cp = 0xFFFD;
+    return 1;
+}
+
+/* The inverse of emoji_display: atlas codepoints back to the sequences they
+ * stand for. What goes on the wire is always this form. */
+static void emoji_restore(const char* in, char* out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = '\0';
+    if (!in) return;
+    const size_t len = std::strlen(in);
+    size_t pos = 0, o = 0;
+    while (pos < len && o + 1 < cap) {
+        unsigned int cp = 0;
+        const size_t adv = emoji_utf8_decode(in + pos, len - pos, &cp);
+        const char* src = in + pos;
+        size_t src_len = adv;
+        if (cp >= (unsigned int)kEmojiPuaBase &&
+            cp < (unsigned int)kEmojiPuaBase + g_emoji_sprites.size()) {
+            const EmojiSprite& sp = g_emoji_sprites[cp - (unsigned int)kEmojiPuaBase];
+            src = sp.seq.data();
+            src_len = sp.seq.size();
+        }
+        if (src_len > cap - 1 - o) break;
+        std::memcpy(out + o, src, src_len);
+        o += src_len;
+        pos += adv;
+    }
+    out[o] = '\0';
+}
+
+/* InputText edit callback: keep the buffer in display form while typing, so
+ * the box shows the same color glyphs as the log. The whole text is restored
+ * and re-substituted on every edit rather than patched, so an emoji typed in
+ * pieces (a thumb, then a skin tone from the OS picker) still joins into one
+ * sequence. The caret is re-placed by substituting the prefix before it. */
+static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackEdit) return 0;
+    char raw[1024];
+    char disp[1024];
+    emoji_restore(data->Buf, raw, sizeof(raw));
+    emoji_display(raw, disp, sizeof(disp));
+    if (std::strcmp(disp, data->Buf) == 0) return 0;
+    if ((int)std::strlen(disp) >= data->BufSize) return 0;
+    int cursor = data->CursorPos;
+    if (cursor < 0) cursor = 0;
+    if (cursor > data->BufTextLen) cursor = data->BufTextLen;
+    char pre[1024];
+    char pre_raw[1024];
+    char pre_disp[1024];
+    const size_t pre_n = (size_t)cursor < sizeof(pre) - 1 ? (size_t)cursor : sizeof(pre) - 1;
+    std::memcpy(pre, data->Buf, pre_n);
+    pre[pre_n] = '\0';
+    emoji_restore(pre, pre_raw, sizeof(pre_raw));
+    emoji_display(pre_raw, pre_disp, sizeof(pre_disp));
+    data->DeleteChars(0, data->BufTextLen);
+    data->InsertChars(0, disp);
+    data->CursorPos = (int)std::strlen(pre_disp);
+    data->SelectionStart = data->SelectionEnd = data->CursorPos;
+    return 0;
+}
+
 /* apply_scale hooks: reserve atlas rects before Build, blit after. */
 static void emoji_atlas_reserve(ImFontAtlas* atlas, ImFont* font, float body) {
     const int px = (int)(body + 0.5f);
     g_emoji_font = font;
     if (px != g_emoji_px) {
-        /* Rendered at another size: drop them, they re-register on sight. */
-        g_emoji_sprites.clear();
-        g_emoji_lookup.clear();
+        /* Rendered at another size: re-render in place. The codepoints must
+         * stay put — an input box may be holding them mid-edit. */
         g_emoji_px = px;
+        for (EmojiSprite& s : g_emoji_sprites) {
+            RecompEmojiBitmap bm;
+            s.ok = false;
+            s.rgba.clear();
+            if (recomp_emoji_render(s.seq.data(), s.seq.size(), px, &bm)) {
+                s.w = bm.w;
+                s.h = bm.h;
+                s.rgba.assign(bm.rgba, bm.rgba + (size_t)bm.w * (size_t)bm.h * 4);
+                s.ok = true;
+                recomp_emoji_free(&bm);
+            }
+        }
     }
     for (EmojiSprite& s : g_emoji_sprites) {
         s.rect_id = -1;
@@ -7438,10 +7523,14 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
         ImGui::SetKeyboardFocusHere();
         m->netplay_chat_focus = false;
     }
+    /* The buffer holds display form (atlas codepoints for emoji) so the box
+     * matches the log; emoji_restore turns it back into real UTF-8 to send. */
     bool send = ImGui::InputTextWithHint("##lobby_chat_edit", "Message the lobby…",
                                          m->netplay_chat_edit,
                                          sizeof(m->netplay_chat_edit),
-                                         ImGuiInputTextFlags_EnterReturnsTrue);
+                                         ImGuiInputTextFlags_EnterReturnsTrue |
+                                             ImGuiInputTextFlags_CallbackEdit,
+                                         emoji_input_callback);
     if (send) m->netplay_chat_focus = true;
     ImGui::SameLine(0, gap);
     if (ImGui::Button(ui_text("Send"), ImVec2(send_w, 0))) send = true;
@@ -7452,7 +7541,9 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
         size_t len = std::strlen(t);
         while (len > 0 && t[len - 1] == ' ') t[--len] = '\0';
         if (len > 0) {
-            if (np->chat_send(np->ctx, t) == 0)
+            char raw[1024];
+            emoji_restore(t, raw, sizeof(raw));
+            if (np->chat_send(np->ctx, raw) == 0)
                 m->netplay_chat_edit[0] = '\0';
             else
                 std::snprintf(m->netplay_status, sizeof(m->netplay_status),

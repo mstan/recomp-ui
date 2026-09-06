@@ -159,6 +159,11 @@ static void demo_chat_push(const char* from, const char* text, int is_local) {
 }
 static int dl_chat_send(void* c, const char* text) {
     (void)c;
+    /* What a real backend would put on the wire: must be plain UTF-8, never
+     * the launcher's private-use atlas codepoints. */
+    fprintf(stderr, "[demo] chat_send bytes:");
+    for (const unsigned char* q = (const unsigned char*)text; *q; ++q) fprintf(stderr, " %02X", *q);
+    fprintf(stderr, "\n[demo] chat_send text: %s\n", text);
     demo_chat_push(demo_lobby_host ? "Alex" : "Marisa", text, 1);
     return 0;
 }
