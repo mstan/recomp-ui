@@ -7211,10 +7211,14 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
     ImGui::TextColored(col(th.accent2), "CHAT");
     ImGui::Spacing();
     if (!np->chat_send || !np->chat_count || !np->chat_get) {
+        /* This tests OUR OWN callback table, so it says nothing whatsoever
+         * about the host. It read "the host runs an older build", which sent
+         * players to look at the wrong machine -- on a title that simply does
+         * not implement chat it appeared for every lobby, including one this
+         * player was hosting themselves. */
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(col(th.text_muted),
-                           "Chat is not available in this lobby (the host "
-                           "runs an older build).");
+                           "This build does not have lobby chat.");
         ImGui::PopTextWrapPos();
         return;
     }
