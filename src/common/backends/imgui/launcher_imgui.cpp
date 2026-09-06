@@ -844,7 +844,12 @@ static void np_draw_country_flag(const LauncherTheme& th, const char* cc) {
     const char a = (char)std::toupper((unsigned char)cc[0]);
     const char b = (char)std::toupper((unsigned char)cc[1]);
     if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z') return;
-    if (recomp_emoji_backend_available()) {
+    /* The sheet is the normal path; the provider only when the sheet lacks
+     * the code AND is not DirectWrite, which would draw two boxed letters. */
+    const bool provider_flags =
+        recomp_emoji_backend_available() &&
+        std::strcmp(recomp_emoji_backend_name(), "directwrite") != 0;
+    if (recomp_emoji_flags_has(a, b) || provider_flags) {
         char seq[9];
         char disp[32];
         size_t n = utf8_encode((ImWchar)(0x1F1E6 + (a - 'A')), seq);
@@ -996,8 +1001,10 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         static bool s_logged = false;
         if (!s_logged) {
             s_logged = true;
-            std::fprintf(stderr, "[rui] color emoji backend: %s\n",
-                         recomp_emoji_backend_name());
+            std::fprintf(stderr, "[rui] color emoji backend: %s; flags: %s\n",
+                         recomp_emoji_backend_name(),
+                         recomp_emoji_flags_available() ? "bundled sheet"
+                                                        : "provider");
         }
     }
     ImGui_ImplOpenGL3_DestroyFontsTexture();
@@ -11206,6 +11213,12 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     // memcard.tga is already 32-bit with real alpha (no colorkey backdrop),
     // same as pad_analog.tga/pad_digital.tga above.
     g_memcard = launcher_texture_load(asset("assets/img/memcard.tga").c_str());
+    /* Country flags come from a bundled sheet on every platform (Segoe UI
+     * Emoji has none). A missing sheet is not fatal: the OS provider is
+     * asked instead, and where that cannot draw one the UI prints letters. */
+    if (!recomp_emoji_flags_load(asset("assets/img/flags.png").c_str()))
+        std::fprintf(stderr, "[rui] no flag sheet at assets/img/flags.png; "
+                             "flags fall back to the emoji provider\n");
     launcher_boot_timing_mark("rui:textures_loaded");
 
     std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");

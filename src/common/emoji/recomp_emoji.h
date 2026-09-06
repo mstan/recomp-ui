@@ -14,6 +14,10 @@
  *             the outline glyphs. That is the fallback, and a console port
  *             lands on it with no code change.
  *
+ * FLAGS are the exception: Segoe UI Emoji has none (Windows shows two boxed
+ * letters), so a regional-indicator pair is served from a bundled sprite
+ * sheet (recomp_emoji_flags_load) on every platform, provider or not.
+ *
  * Everything here is plain C so the ImGui side and any host can call it. */
 #ifndef RECOMP_EMOJI_H
 #define RECOMP_EMOJI_H
@@ -48,7 +52,18 @@ void recomp_emoji_free(RecompEmojiBitmap* bm);
 int  recomp_emoji_scan(const char* utf8, size_t len, size_t pos,
                        size_t* start, size_t* seq_len);
 
+/* Country flags: a 26x26 sprite sheet (assets/img/flags.png, built by
+ * tools/gen_flag_sheet.py). Load it once at startup; recomp_emoji_render
+ * then serves any regional-indicator pair from it ahead of the provider.
+ * `has` says whether the sheet carries a code, so a UI can decide before
+ * drawing whether it gets a flag or should print the letters. */
+int  recomp_emoji_flags_load(const char* png_path);
+int  recomp_emoji_flags_available(void);
+int  recomp_emoji_flags_has(char first, char second);
+
 /* Providers (internal). Each returns 1 / 0 like recomp_emoji_render. */
+int  recomp_emoji_flags_code(const char* utf8, size_t len, char* first, char* second);
+int  recomp_emoji_flags_render(char first, char second, int px, RecompEmojiBitmap* out);
 int recomp_emoji_render_freetype(const char* utf8, size_t len, int px, RecompEmojiBitmap* out);
 const char* recomp_emoji_freetype_name(void);
 int recomp_emoji_render_win32(const char* utf8, size_t len, int px, RecompEmojiBitmap* out);

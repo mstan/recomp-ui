@@ -134,10 +134,14 @@ callback keep the old rule (the host's seat stays in play; the UI says so).
 `RecompLauncherCNetplayMember.country` and `RecompLauncherCNetplayLobby.host_country`
 carry ISO 3166-1 alpha-2 codes (empty = unknown / LAN). The UI draws them as
 flags before the player name in the seat tables and before the lobby name in
-the browser, through the color emoji pipeline (regional-indicator pairs); a
-build without a color provider shows a muted `[JP]` instead. Backends fill
-them from the server's `country` / `host_country` fields; LAN rooms leave
-them empty.
+the browser. The flag image comes from the bundled sheet
+`assets/img/flags.png` (staged with the common images; built from Noto Color
+Emoji by `tools/gen_flag_sheet.py`) on every platform, never from the OS
+emoji font: Segoe UI Emoji has no flag glyphs, so on Windows the provider
+would draw two boxed letters. The sheet also serves flag emoji typed into
+chat. A code the sheet lacks falls back to the provider where that can draw
+flags, and otherwise shows a muted `[JP]`. Backends fill the codes from the
+server's `country` / `host_country` fields; LAN rooms leave them empty.
 
 ### Chat callbacks
 

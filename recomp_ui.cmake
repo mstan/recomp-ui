@@ -167,6 +167,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/emoji/recomp_emoji.c
         ${RUI_SRC}/common/emoji/recomp_emoji_freetype.c
         ${RUI_SRC}/common/emoji/recomp_emoji_win32.cpp
+        ${RUI_SRC}/common/emoji/recomp_emoji_flags.c   # bundled flag sheet (all platforms)
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
         # reached when the active SystemProfile opts into the capability

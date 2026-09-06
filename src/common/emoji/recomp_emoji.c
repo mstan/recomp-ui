@@ -206,6 +206,13 @@ int recomp_emoji_backend_available(void) {
 int recomp_emoji_render(const char* utf8, size_t len, int px, RecompEmojiBitmap* out) {
     if (!utf8 || !len || px <= 0 || !out) return 0;
     memset(out, 0, sizeof(*out));
+    /* A flag comes from the sheet wherever the sheet has it; the provider is
+     * only asked for one the sheet lacks (which on Windows draws letters). */
+    {
+        char a, b;
+        if (recomp_emoji_flags_code(utf8, len, &a, &b) && recomp_emoji_flags_has(a, b))
+            return recomp_emoji_flags_render(a, b, px, out);
+    }
     probe();
 #if RECOMP_EMOJI_HAVE_WIN32
     if (g_backend == 1) return recomp_emoji_render_win32(utf8, len, px, out);
