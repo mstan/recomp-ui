@@ -132,6 +132,7 @@ typedef struct {
     int  netplay_ok;    // 1 = OK for online; 0 = TOC/cue policy failed
     char disc_fp[65];   // TOC fingerprint for lobby peer matching
     char netplay_detail[160];
+    int sbi_status; // RECOMP_SBI_* for the selected disc; zero for legacy hosts.
 } VerifyResult;
 
 typedef struct {
@@ -196,6 +197,7 @@ typedef struct {
     // When non-NULL these drive the REAL disc verdict + memcard block usage
     // (re-run on every disc/card change) instead of the placeholder synthesis.
     int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
+    int (*import_sbi_cb)(const char*, const char*, char*, size_t, char*, size_t);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
     int (*bios_verify_cb)(const char* bios_path, RecompLauncherCBiosVerify* out);
     /* Optional host flush for first-run picks (project-root bios.cfg / disc.cfg). */
