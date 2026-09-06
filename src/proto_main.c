@@ -84,8 +84,8 @@ static int demo_lobby_host  = 1;
 static int demo_lobby_in    = 1;
 static int demo_lobby_share = 1;  /* P2 offers its memory card */
 static int demo_lobby_allow = 1;  /* host allows guest cards */
-static int demo_lobby_delay = 3;
-static int demo_lobby_pred  = 7;
+static int demo_lobby_delay = 6;
+static int demo_lobby_pred  = 10;
 static int demo_lobby_rb    = 1;
 static const char* dl_default_url(void* c) { (void)c; return "ws://netplay.retcomm.net:8765"; }
 static void dl_set_lobby_url(void* c, const char* u) { (void)c; (void)u; }

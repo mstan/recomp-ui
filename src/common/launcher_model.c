@@ -503,9 +503,9 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_public_ip[0] = '\0';
     m->netplay_public_ip_resolved = false;
     m->netplay_lobby_settings_open = false;
-    m->netplay_lobby_input_delay = 2;
+    m->netplay_lobby_input_delay = 6;
     m->netplay_manual_input_delay = false; /* auto from max peer RTT at launch */
-    m->netplay_lobby_input_prediction = 6; /* P = 4 + D at default D=2 */
+    m->netplay_lobby_input_prediction = 10; /* P = 4 + D at default D=6 */
     m->netplay_manual_input_prediction = false; /* auto P from RTT when rollback */
     /* Default off so waiting-room ICE can prove a direct path; host Force
      * Online start is always lobby SFU (§108). */
@@ -789,7 +789,7 @@ void launcher_model_init(LauncherModel* m,
             m->netplay_lobby_input_delay =
                 m->netplay->input_delay_get(m->netplay->ctx);
             if (m->netplay_lobby_input_delay < 2)
-                m->netplay_lobby_input_delay = 2;
+                m->netplay_lobby_input_delay = 6;
         }
     }
 

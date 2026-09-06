@@ -6650,29 +6650,9 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
     }
     ImGui::BeginDisabled(!is_host);
     {
-        /* Disable Rollback first — gates Manual Input Prediction below. */
-        {
-            bool disable_rb = !m->netplay_rollback;
-            if (np->rollback_get)
-                disable_rb = np->rollback_get(np->ctx) == 0;
-            if (ImGui::Checkbox("Disable Rollback", &disable_rb)) {
-                m->netplay_rollback = !disable_rb;
-                if (np->rollback_set)
-                    (void)np->rollback_set(np->ctx, m->netplay_rollback ? 1 : 0);
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(px(360));
-                ImGui::TextUnformatted(
-                    "Off (default): invent missing remote inputs and correct "
-                    "with rollback episodes (match_caps.rollback=1).\n\n"
-                    "On: force delay-sync for the match. Manual Input "
-                    "Prediction is locked out; only Input Delay applies.");
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-        }
-        ImGui::Spacing();
+        /* Rollback is the match mode and is no longer a lobby toggle: it is
+         * whatever the backend reports (default on). Delay-sync stays
+         * reachable through the backend's env override for debugging. */
         ImGui::TextUnformatted("Manual Input Delay");
         ImGui::SameLine();
         ImGui::TextColored(col(th.text_muted), "(frames)");
@@ -7194,7 +7174,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
 }
 
 /* The plan summary + readiness, and the way into the picker. */
-static void draw_lobby_mods_panel(LauncherModel* m, const LauncherTheme& th,
+[[maybe_unused]] static void draw_lobby_mods_panel(LauncherModel* m, const LauncherTheme& th,
                                   const RecompLauncherCNetplayCallbacks* np,
                                   const LobbySnapshot& s) {
     if (!m->mods) return;
@@ -7568,17 +7548,8 @@ static void draw_lobby_settings_popup(LauncherModel* m, const LauncherTheme& th,
     draw_lobby_room_panel(m, th, np);
     ImGui::Dummy(ImVec2(0, px(14)));
     draw_lobby_match_settings(m, th, np, s.is_host);
-#if RECOMP_UI_ENABLE_MODS
-    if (m->mods) {
-        ImGui::Dummy(ImVec2(0, px(14)));
-        draw_lobby_mods_panel(m, th, np, s);
-        if (m->netplay_lobby_mods_open) {
-            /* The picker was asked for: hand over to it. */
-            m->netplay_lobby_settings_open = false;
-            ImGui::CloseCurrentPopup();
-        }
-    }
-#endif
+    /* Mods have their own footer button and picker; they do not repeat here. */
+    (void)s;
     ImGui::Spacing();
     if (ImGui::Button(ui_text("Close"), ImVec2(px(120), 0))) {
         m->netplay_lobby_settings_open = false;
