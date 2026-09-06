@@ -105,10 +105,13 @@ place of the old LOBBY label when the build has a mod provider.
 Lobby seat, session slot, and controller port are three different numbers.
 Players may move themselves to a free seat in either table, gallery included
 (`seat_move_self`; the server accepts any empty seat), or ask the
-occupant of a taken one to trade (`seat_swap_request`; the occupant sees the
-prompt through `seat_swap_incoming` and answers with `seat_swap_respond`),
-and the host may drag anyone anywhere, itself included. So the lobby host can
-end up in any seat. At launch, backends must keep the host as **session slot
+occupant of a taken one -- in either table -- to trade (`seat_swap_request`;
+the occupant sees the prompt through `seat_swap_incoming` and answers with
+`seat_swap_respond`), and the host may drag anyone anywhere, itself included.
+So the lobby host can end up in any seat. The UI refuses, before asking, any
+trade that would land the host in the gallery unless `host_can_spectate` says
+the backend runs the match that way. "Keep my seat" declines that ask and,
+unseen, every further ask from anyone for the next 30 seconds. At launch, backends must keep the host as **session slot
 0** regardless (`launch.slot_port_valid` + `slot_port[]`: host first, then
 the players in seat order, each driving the port of its *lobby* seat). PSX
 does this on both the online and LAN paths. A backend that maps session slot

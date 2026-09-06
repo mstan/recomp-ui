@@ -960,10 +960,16 @@ void launcher_binds_set_button_slot(LauncherModel* m, int player, int b,
     if (player < 1 || player > LNG_MAX_PLAYERS) return;
     if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
     rui_psx_binds_set_slot(keybinds_file_path(), player - 1, b, slot, scancode);
-    char* dst = (slot == 1) ? m->binds_alt[player - 1][b] : m->binds[player - 1][b];
-    size_t cap = (slot == 1) ? sizeof(m->binds_alt[player - 1][b])
-                             : sizeof(m->binds[player - 1][b]);
-    copy_str(dst, cap, scancode_label((SDL_Scancode)scancode));
+    /* The store may have taken this key away from another input of the same
+     * player; re-read every label so the page shows what will be saved. */
+    for (int i = 0; i < LNG_PSX_PAD_BUTTON_COUNT; ++i) {
+        copy_str(m->binds[player - 1][i], sizeof(m->binds[player - 1][i]),
+                 scancode_label((SDL_Scancode)rui_psx_binds_get_slot(
+                     keybinds_file_path(), player - 1, i, 0)));
+        copy_str(m->binds_alt[player - 1][i], sizeof(m->binds_alt[player - 1][i]),
+                 scancode_label((SDL_Scancode)rui_psx_binds_get_slot(
+                     keybinds_file_path(), player - 1, i, 1)));
+    }
 }
 
 void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode) {

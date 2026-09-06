@@ -90,8 +90,85 @@ static int demo_lobby_rb    = 1;
 static const char* dl_default_url(void* c) { (void)c; return "ws://netplay.retcomm.net:8765"; }
 static void dl_set_lobby_url(void* c, const char* u) { (void)c; (void)u; }
 static int  dl_connect(void* c) { (void)c; return 0; }
+/* Seats are mutable so self-moves and swaps show. Reimu watches from the
+ * gallery (base 64, two seats). Swaps: an ask of ours is accepted by the
+ * fake peer after a moment; LNG_DEMO_SWAP_ASK=<seconds> makes Reimu ask US
+ * for our seat every that-many seconds (the incoming prompt + the decline
+ * window). */
+#define DEMO_SPEC_BASE 64
+static int    demo_seats[3] = { 0, 1, DEMO_SPEC_BASE };
+static int    demo_swap_out = 0;        /* 0 idle, 1 waiting, 2 accepted, -1 declined */
+static int    demo_swap_target = -1;
+static double demo_swap_out_at = 0.0;
+static int    demo_swap_in = 0;
+static double demo_swap_ask_every = 0.0;
+static double demo_swap_next_ask = 0.0;
+static int demo_local_index(void) { return demo_lobby_host ? 0 : 1; }
+static int demo_index_at_seat(int seat) {
+    for (int i = 0; i < 3; ++i) if (demo_seats[i] == seat) return i;
+    return -1;
+}
+static void demo_swap_seats(int a, int b) {
+    if (a < 0 || b < 0 || a > 2 || b > 2) return;
+    int t = demo_seats[a]; demo_seats[a] = demo_seats[b]; demo_seats[b] = t;
+}
+static void demo_lobby_pump(void) {
+    const double now = (double)SDL_GetTicks() / 1000.0;
+    if (demo_swap_out == 1 && now >= demo_swap_out_at) {
+        demo_swap_seats(demo_local_index(), demo_index_at_seat(demo_swap_target));
+        demo_swap_out = 2;
+    }
+    if (demo_swap_ask_every > 0.0 && !demo_swap_in && now >= demo_swap_next_ask) {
+        demo_swap_in = 1;
+        demo_swap_next_ask = now + demo_swap_ask_every;
+    }
+}
+static int dl_seat_move_self(void* c, int to) {
+    (void)c;
+    if (demo_index_at_seat(to) >= 0) return -1;
+    if (!(to >= 0 && to < 4) && !(to >= DEMO_SPEC_BASE && to < DEMO_SPEC_BASE + 2)) return -1;
+    demo_seats[demo_local_index()] = to;
+    return 0;
+}
+static int dl_seat_swap_request(void* c, int to) {
+    (void)c;
+    if (demo_swap_out == 1) return -1;
+    if (demo_index_at_seat(to) < 0 || demo_index_at_seat(to) == demo_local_index()) return -1;
+    demo_swap_target = to;
+    demo_swap_out = 1;
+    demo_swap_out_at = (double)SDL_GetTicks() / 1000.0 + 1.5;
+    return 0;
+}
+static int dl_seat_swap_incoming(void* c, char* who, size_t cap, int* from) {
+    (void)c;
+    if (!demo_swap_in) return 0;
+    if (who && cap) snprintf(who, cap, "Reimu");
+    if (from) *from = demo_seats[2];
+    return 1;
+}
+static int dl_seat_swap_respond(void* c, int accept) {
+    (void)c;
+    if (!demo_swap_in) return -1;
+    demo_swap_in = 0;
+    fprintf(stderr, "[proto] swap ask answered: %s\n", accept ? "swap" : "keep");
+    if (accept) demo_swap_seats(demo_local_index(), 2);
+    return 0;
+}
+static int  dl_seat_swap_outgoing(void* c) { (void)c; return demo_swap_out; }
+static void dl_seat_swap_clear(void* c) { (void)c; if (demo_swap_out != 1) demo_swap_out = 0; }
+static int  dl_host_can_spectate(void* c) { (void)c; return 1; }
+static int  dl_lobby_allow_spectators(void* c) { (void)c; return 1; }
+static int  dl_lobby_max_spectators(void* c) { (void)c; return 2; }
+static int  dl_lobby_spectator_count(void* c) {
+    (void)c;
+    int n = 0;
+    for (int i = 0; i < 3; ++i) if (demo_seats[i] >= DEMO_SPEC_BASE) ++n;
+    return n;
+}
+static int  dl_local_is_spectator(void* c) { (void)c; return demo_seats[demo_local_index()] >= DEMO_SPEC_BASE; }
+static int  dl_spectator_slot(void* c, int index) { (void)c; return DEMO_SPEC_BASE + index; }
 static int  dl_connected(void* c) { (void)c; return 1; }
-static void dl_pump(void* c) { (void)c; }
+static void dl_pump(void* c) { (void)c; demo_lobby_pump(); }
 static void dl_set_player_name(void* c, const char* n) { (void)c; (void)n; }
 static const char* dl_player_name(void* c) { (void)c; return demo_lobby_host ? "Alex" : "Marisa"; }
 static void dl_request_list(void* c) { (void)c; }
@@ -113,11 +190,11 @@ static int  dl_is_host(void* c) { (void)c; return demo_lobby_host; }
 static int  dl_member_count(void* c) { (void)c; return 3; }
 static int  dl_member_get(void* c, int i, RecompLauncherCNetplayMember* out) {
     static const char* names[3] = { "Alex", "Marisa", "Reimu" };
-    static const int   seats[3] = { 0, 1, 3 };
     (void)c;
     if (i < 0 || i >= 3 || !out) return 0;
     memset(out, 0, sizeof(*out));
-    out->slot = seats[i];
+    out->slot = demo_seats[i];
+    out->is_spectator = demo_seats[i] >= DEMO_SPEC_BASE;
     snprintf(out->display_name, sizeof(out->display_name), "%s", names[i]);
     out->ready = 1;
     out->is_host = (i == 0);
@@ -234,6 +311,25 @@ static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_cb.memcard_offer_set = dl_memcard_offer_set;
     demo_lobby_cb.guest_memcard_get = dl_guest_memcard_get;
     demo_lobby_cb.guest_memcard_set = dl_guest_memcard_set;
+    demo_lobby_cb.seat_move_self = dl_seat_move_self;
+    demo_lobby_cb.seat_swap_request = dl_seat_swap_request;
+    demo_lobby_cb.seat_swap_incoming = dl_seat_swap_incoming;
+    demo_lobby_cb.seat_swap_respond = dl_seat_swap_respond;
+    demo_lobby_cb.seat_swap_outgoing = dl_seat_swap_outgoing;
+    demo_lobby_cb.seat_swap_clear = dl_seat_swap_clear;
+    demo_lobby_cb.host_can_spectate = dl_host_can_spectate;
+    demo_lobby_cb.lobby_allow_spectators = dl_lobby_allow_spectators;
+    demo_lobby_cb.lobby_max_spectators = dl_lobby_max_spectators;
+    demo_lobby_cb.lobby_spectator_count = dl_lobby_spectator_count;
+    demo_lobby_cb.local_is_spectator = dl_local_is_spectator;
+    demo_lobby_cb.spectator_slot = dl_spectator_slot;
+    {
+        const char* ask = SDL_getenv("LNG_DEMO_SWAP_ASK");
+        if (ask && ask[0]) {
+            demo_swap_ask_every = atof(ask);
+            demo_swap_next_ask = (double)SDL_GetTicks() / 1000.0 + demo_swap_ask_every;
+        }
+    }
     demo_lobby_cb.chat_send = dl_chat_send;
     demo_lobby_cb.chat_count = dl_chat_count;
     demo_lobby_cb.chat_get = dl_chat_get;

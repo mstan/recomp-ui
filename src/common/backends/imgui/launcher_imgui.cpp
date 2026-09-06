@@ -6002,6 +6002,11 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
  * namespace covering both, so dragging a row from one table to the other needs
  * no translation -- which is the point: a promotion IS a move, and giving it
  * its own code path is how the two end up behaving differently. */
+/* After "Keep my seat", every further ask -- from anyone -- is declined
+ * unseen until this ImGui-clock time (seconds). */
+static const double k_swap_decline_s = 30.0;
+static double s_swap_decline_until = 0.0;
+
 struct LobbySeatView {
     RecompLauncherCNetplayMember* rows; /* indexed by position within a table */
     bool* occupied;
@@ -6214,24 +6219,26 @@ static void draw_lobby_seat_row(LauncherModel* m,
                     } else if (self_drag && cross_table) {
                         /* Moving yourself between watching and playing: an
                          * EMPTY seat on the other side is yours to take; a
-                         * taken one is not -- swaps stay inside the player
-                         * table, where consent means something. Say so when
-                         * refused: a drag that silently does nothing reads
-                         * as a bug. */
+                         * taken one is a trade the occupant must agree to,
+                         * exactly as inside the player table. The one extra
+                         * rule: a trade that lands the HOST in the gallery
+                         * -- the host dragging itself there, or a spectator
+                         * asking the host for its player seat -- needs a
+                         * backend that can run the match that way. Say so
+                         * when refused: a drag that silently does nothing
+                         * reads as a bug. */
                         int rc = -1;
-                        if (is_host && np->host_can_spectate &&
-                            !np->host_can_spectate(np->ctx)) {
+                        const bool host_to_gallery =
+                            (is_host && view.spectator) ||
+                            (!is_host && occ && row.is_host && from_spectator);
+                        if (host_to_gallery &&
+                            (!np->host_can_spectate ||
+                             !np->host_can_spectate(np->ctx))) {
                             std::snprintf(m->netplay_status,
                                           sizeof(m->netplay_status),
                                           "This room cannot run the match with "
                                           "the host in the spectator table.");
-                        } else if (occ) {
-                            std::snprintf(m->netplay_status,
-                                          sizeof(m->netplay_status),
-                                          "%s%d is taken. Pick an empty seat, or "
-                                          "ask to swap inside the player table.",
-                                          view.label, pos + 1);
-                        } else {
+                        } else if (!occ) {
                             if (np->seat_move_self)
                                 rc = np->seat_move_self(np->ctx, wire);
                             if (rc != 0)
@@ -6240,6 +6247,17 @@ static void draw_lobby_seat_row(LauncherModel* m,
                                               "Could not move to %s%d (seat "
                                               "refused by the host).",
                                               view.label, pos + 1);
+                        } else if (np->seat_swap_request) {
+                            rc = np->seat_swap_request(np->ctx, wire);
+                            if (rc != 0)
+                                std::snprintf(m->netplay_status,
+                                              sizeof(m->netplay_status),
+                                              "Could not ask %s to swap seats.",
+                                              row.display_name);
+                        } else {
+                            std::snprintf(m->netplay_status,
+                                          sizeof(m->netplay_status),
+                                          "%s%d is taken.", view.label, pos + 1);
                         }
                     } else if (self_drag) {
                         /* Moving yourself: a free seat is yours to take; an
@@ -7476,6 +7494,11 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
             if (np->seat_swap_clear) np->seat_swap_clear(np->ctx);
         }
     }
+    if (ImGui::GetTime() < s_swap_decline_until) {
+        ImGui::TextColored(col(th.text_muted),
+                           "Declining seat requests for another %d s.",
+                           (int)(s_swap_decline_until - ImGui::GetTime()) + 1);
+    }
     if (s.is_host && (np->move_member || np->kick_member)) {
         ImGui::Spacing();
         ImGui::TextColored(col(th.text_muted),
@@ -7687,20 +7710,40 @@ void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
     draw_lobby_settings_popup(m, th, np, s);
 
     /* Seat trade: somebody asked to swap with this player. Modal, because
-     * agreeing moves them out of the seat they chose. */
+     * agreeing moves them out of the seat they chose. "Keep my seat" also
+     * answers every ask from ANYONE for the next while (k_swap_decline_s)
+     * without showing the prompt: one "no" should end the nagging, not
+     * invite a retry the moment the popup closes. */
     if (np->seat_swap_incoming) {
         char who[64] = {0};
         int from_slot = -1;
         if (np->seat_swap_incoming(np->ctx, who, sizeof(who), &from_slot)) {
-            ImGui::OpenPopup("Swap seats?");
+            if (ImGui::GetTime() < s_swap_decline_until) {
+                if (np->seat_swap_respond)
+                    (void)np->seat_swap_respond(np->ctx, 0);
+            } else {
+                ImGui::OpenPopup("Swap seats?");
+            }
             if (ImGui::BeginPopupModal("Swap seats?", nullptr,
                                        ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::Text("%s wants to swap seats with you.",
                             who[0] ? who : "Another player");
-                if (from_slot >= 0)
+                if (from_slot >= 0) {
+                    /* Their seat, named the way the tables name it: a
+                     * gallery seat is "S<n>", a player seat "P<n>". */
+                    const bool from_gallery =
+                        s.spectator_base > 0 && from_slot >= s.spectator_base;
+                    const int from_pos =
+                        from_gallery ? from_slot - s.spectator_base : from_slot;
                     ImGui::TextColored(col(th.text_muted),
-                                       "They are in P%d; you would move there.",
-                                       from_slot + 1);
+                                       from_gallery
+                                           ? "They are watching from S%d; you "
+                                             "would move there and they would "
+                                             "take your seat."
+                                           : "They are in P%d; you would move "
+                                             "there.",
+                                       from_pos + 1);
+                }
                 ImGui::Spacing();
                 if (ImGui::Button("Swap", ImVec2(px(120), 0))) {
                     if (np->seat_swap_respond)
@@ -7711,6 +7754,7 @@ void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
                 if (ImGui::Button("Keep my seat", ImVec2(px(140), 0))) {
                     if (np->seat_swap_respond)
                         (void)np->seat_swap_respond(np->ctx, 0);
+                    s_swap_decline_until = ImGui::GetTime() + k_swap_decline_s;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndPopup();
