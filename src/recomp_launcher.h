@@ -92,7 +92,24 @@ typedef struct RecompLauncherCNetplayLobby {
     /* Host's country, ISO 3166-1 alpha-2 (e.g. "JP"), from the server's GeoIP
      * on the host's address. Empty when unknown, private, or LAN. */
     char host_country[4];
+    /* Gallery, for the browser's Spectators column: allow_spectators 0 draws
+     * "No"; otherwise "<spectator_count>/<max_spectators>". A backend that
+     * predates the field leaves all three 0, which also reads as "No". */
+    int  allow_spectators;
+    int  max_spectators;
+    int  spectator_count;
 } RecompLauncherCNetplayLobby;
+
+/* One player connected to the lobby server, seated or just browsing -- the
+ * browser's "players online" panel. */
+typedef struct RecompLauncherCNetplayOnlinePlayer {
+    char display_name[64];
+    char country[4];     /* alpha-2 from the server's GeoIP; "" unknown */
+    char lobby_name[64]; /* room they are in; "" while browsing */
+    int  in_lobby;
+    int  hosting;
+    int  is_local;       /* this client */
+} RecompLauncherCNetplayOnlinePlayer;
 
 typedef struct RecompLauncherCNetplayMember {
     int  slot;
@@ -472,6 +489,14 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * host seated in the gallery (host_spectates above). The UI lets the host
      * drag itself into the spectator table only when this says yes. */
     int  (*host_can_spectate)(void* ctx);
+
+    /* ---- players online (optional, append-only) --------------------------
+     * Everyone connected to the lobby server (the `players` array the server
+     * sends with each lobby_list), for the browser's side panel. A backend
+     * with no server presence (LAN-only) leaves both NULL and the panel is
+     * not drawn. */
+    int  (*online_count)(void* ctx);
+    int  (*online_get)(void* ctx, int index, RecompLauncherCNetplayOnlinePlayer* out);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

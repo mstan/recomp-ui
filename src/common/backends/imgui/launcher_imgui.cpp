@@ -7907,6 +7907,69 @@ void np_join_selected(LauncherModel* m) {
     }
 }
 
+/* "PLAYERS ONLINE": everyone connected to the lobby server, flag before the
+ * name, with where they are -- a room name (hosting or seated) or nothing
+ * for a browser. Reads the backend each frame; the server refreshes the
+ * list about once a second with the lobby list. */
+static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
+                                      const RecompLauncherCNetplayCallbacks* np) {
+    (void)m;
+    const int n = np->online_count(np->ctx);
+    ImGui::TextColored(col(th.accent2), "PLAYERS ONLINE");
+    ImGui::SameLine();
+    ImGui::TextColored(col(th.text_muted), "%d", n);
+    ImGui::Spacing();
+    if (n <= 0) {
+        ImGui::TextColored(col(th.text_muted), "Nobody else is connected.");
+        return;
+    }
+    const float row_h = px(26);
+    const float text_h = ImGui::GetTextLineHeight();
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(px(8), px(3)));
+    if (ImGui::BeginTable("netplay_online_table", 2,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Where", ImGuiTableColumnFlags_WidthFixed, px(72));
+        for (int i = 0; i < n; ++i) {
+            RecompLauncherCNetplayOnlinePlayer p{};
+            if (!np->online_get(np->ctx, i, &p)) continue;
+            ImGui::PushID(i);
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, row_h);
+            ImGui::TableSetColumnIndex(0);
+            table_row_vcenter(row_h, text_h);
+            np_draw_country_flag(th, p.country);
+            char disp[96];
+            emoji_display(p.display_name[0] ? p.display_name : "Player", disp,
+                          sizeof(disp));
+            if (p.is_local) {
+                ImGui::TextColored(col(th.accent2), "%s", disp);
+                ImGui::SameLine(0, px(4));
+                ImGui::TextColored(col(th.text_muted), "(you)");
+            } else {
+                ImGui::TextUnformatted(disp);
+            }
+            ImGui::TableSetColumnIndex(1);
+            table_row_vcenter(row_h, text_h);
+            /* A word, not the room name: the panel is narrow and a name
+             * would clip. The room is the tooltip. */
+            if (p.in_lobby) {
+                ImGui::TextColored(col(p.hosting ? th.good : th.text),
+                                   p.hosting ? "Hosting" : "In lobby");
+                if (ImGui::IsItemHovered() && p.lobby_name[0]) {
+                    char where[96];
+                    emoji_display(p.lobby_name, where, sizeof(where));
+                    ImGui::SetTooltip("%s", where);
+                }
+            } else {
+                ImGui::TextColored(col(th.text_muted), "Browsing");
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+}
+
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
@@ -7939,41 +8002,50 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                       "Could not reach lobby server.");
     }
 
-    begin_container("netplay_lobbies", ImVec2(0, 0), ImGuiChildFlags_None);
+    /* Two columns when the backend reports who is online: the lobby table
+     * on the left, the players panel on the right. A LAN-only backend has
+     * no presence and keeps the full width. */
+    const bool has_online = np->online_count && np->online_get;
+    const float avail_w = ImGui::GetContentRegionAvail().x;
+    const float side_gap = px(20);
+    const float side_w = px(300);
+    const bool two_col = has_online && avail_w >= side_w + side_gap + px(560);
+    const float list_w = two_col ? avail_w - side_w - side_gap : avail_w;
+
+    begin_container("netplay_lobbies", ImVec2(list_w, 0), ImGuiChildFlags_None);
     ImGui::TextColored(col(th.accent2), "LOBBIES");
     if (m->netplay_status[0])
         ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
     ImGui::Spacing();
     int rows = np->list_count ? np->list_count(np->ctx) : 0;
-    const float lobby_row_h = px(48);
-    const float join_btn_w = px(72);
-    const float join_btn_h = px(30);
+    /* Slim rows: a browser is a list to scan, not a form. The Join button
+     * sets the floor. */
+    const float join_btn_w = px(64);
+    const float join_btn_h = px(24);
+    const float lobby_row_h = px(32);
     const float text_h = ImGui::GetTextLineHeight();
     /* Extra left inset so Lobby column text isn't flush with the panel edge. */
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(px(14), px(6)));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(px(14), px(3)));
     if (ImGui::BeginTable("netplay_lobby_table", 5,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                           ImGuiTableFlags_SizingStretchProp)) {
-        /* Lobby/Game stretch; Players/Latency/Join stay fixed to content. */
+        /* Lobby stretches; the counts, latency and Join stay fixed. The game
+         * is implied -- the list is already filtered to this title. */
         ImGui::TableSetupColumn("Lobby", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Game", ImGuiTableColumnFlags_WidthStretch, 0.7f);
-        ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthFixed, px(72));
-        ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(72));
-        ImGui::TableSetupColumn("Join", ImGuiTableColumnFlags_WidthFixed, px(88));
+        ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthFixed, px(64));
+        ImGui::TableSetupColumn("Spectators", ImGuiTableColumnFlags_WidthFixed, px(82));
+        ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(64));
+        ImGui::TableSetupColumn("Join", ImGuiTableColumnFlags_WidthFixed, px(80));
         ImGui::TableHeadersRow();
         if (rows <= 0) {
             ImGui::TableNextRow(ImGuiTableRowFlags_None, lobby_row_h);
             ImGui::TableSetColumnIndex(0);
             table_row_vcenter(lobby_row_h, text_h);
             ImGui::Text("No lobbies yet - host one.");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted("");
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted("");
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted("");
-            ImGui::TableSetColumnIndex(4);
-            ImGui::TextUnformatted("");
+            for (int c = 1; c < 5; ++c) {
+                ImGui::TableSetColumnIndex(c);
+                ImGui::TextUnformatted("");
+            }
         }
         for (int i = 0; i < rows; ++i) {
             RecompLauncherCNetplayLobby row{};
@@ -8008,11 +8080,14 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextUnformatted(lobby_label);
             ImGui::TableSetColumnIndex(1);
             table_row_vcenter(lobby_row_h, text_h);
-            ImGui::TextColored(col(th.text_muted), "%s",
-                               row.game_name[0] ? row.game_name : "—");
+            ImGui::Text("%d/%d", row.player_count, row.max_slots);
             ImGui::TableSetColumnIndex(2);
             table_row_vcenter(lobby_row_h, text_h);
-            ImGui::Text("%d / %d", row.player_count, row.max_slots);
+            /* "No" when the host opened no gallery; else watching/seats. */
+            if (row.allow_spectators && row.max_spectators > 0)
+                ImGui::Text("%d/%d", row.spectator_count, row.max_spectators);
+            else
+                ImGui::TextColored(col(th.text_muted), "No");
             ImGui::TableSetColumnIndex(3);
             table_row_vcenter(lobby_row_h, text_h);
             if (row.latency_ms >= 0)
@@ -8023,9 +8098,17 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
             {
                 ImVec2 cell = ImGui::GetCursorScreenPos();
                 const float avail_x = ImGui::GetContentRegionAvail().x;
+                /* Same origin and formula as table_row_vcenter for the text
+                 * cells, so the button and the text share one centre line. */
                 ImGui::SetCursorScreenPos(ImVec2(
                     cell.x + (avail_x - join_btn_w) * 0.5f,
-                    cell.y + (lobby_row_h - join_btn_h) * 0.5f));
+                    row_pos.y + (lobby_row_h - join_btn_h) * 0.5f));
+                /* A button shorter than text + 2*FramePadding pins its label
+                 * to the top padding instead of centring it; give the slim
+                 * button a padding that fits. */
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                    ImVec2(ImGui::GetStyle().FramePadding.x,
+                                           (join_btn_h - text_h) * 0.5f));
                 ImGui::BeginDisabled(!launcher_model_netplay_disc_ok(m));
                 if (ImGui::Button("Join", ImVec2(join_btn_w, join_btn_h))) {
                     if (!launcher_model_netplay_disc_ok(m)) {
@@ -8041,6 +8124,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                     }
                 }
                 ImGui::EndDisabled();
+                ImGui::PopStyleVar();
             }
             ImGui::PopID();
         }
@@ -8048,6 +8132,13 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     }
     ImGui::PopStyleVar();
     end_container();
+
+    if (two_col) {
+        ImGui::SameLine(0, side_gap);
+        begin_container("netplay_online", ImVec2(side_w, 0), ImGuiChildFlags_None);
+        draw_netplay_online_panel(m, th, np);
+        end_container();
+    }
 }
 
 static bool mod_text_matches(const char* search, const RecompLauncherCModPackage& package) {

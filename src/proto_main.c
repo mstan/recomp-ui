@@ -182,6 +182,22 @@ static int  dl_list_get(void* c, int i, RecompLauncherCNetplayLobby* o) {
     snprintf(o->game_name, sizeof(o->game_name), "Recomp UI Test");
     o->player_count = 1; o->max_slots = 2; o->latency_ms = 91;
     snprintf(o->host_country, sizeof(o->host_country), "JP");
+    o->allow_spectators = 1; o->max_spectators = 4; o->spectator_count = 1;
+    return 1;
+}
+/* Players online: a few names so the browser's side panel has rows. */
+static int  dl_online_count(void* c) { (void)c; return 4; }
+static int  dl_online_get(void* c, int i, RecompLauncherCNetplayOnlinePlayer* o) {
+    static const char* names[4] = { "Reimu", "Marisa", "Alex", "Sakuya" };
+    static const char* countries[4] = { "JP", "JP", "CA", "DE" };
+    (void)c;
+    if (i < 0 || i >= 4 || !o) return 0;
+    memset(o, 0, sizeof(*o));
+    snprintf(o->display_name, sizeof(o->display_name), "%s", names[i]);
+    snprintf(o->country, sizeof(o->country), "%s", countries[i]);
+    if (i == 0) { o->in_lobby = 1; o->hosting = 1; snprintf(o->lobby_name, sizeof(o->lobby_name), "Reimu's Lobby"); }
+    if (i == 1) { o->in_lobby = 1; snprintf(o->lobby_name, sizeof(o->lobby_name), "Reimu's Lobby"); }
+    o->is_local = (i == 2);
     return 1;
 }
 static int  dl_leave(void* c) { (void)c; demo_lobby_in = 0; return 0; }
@@ -287,6 +303,8 @@ static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
     demo_lobby_cb.request_list = dl_request_list;
     demo_lobby_cb.list_count = dl_list_count;
     demo_lobby_cb.list_get = dl_list_get;
+    demo_lobby_cb.online_count = dl_online_count;
+    demo_lobby_cb.online_get = dl_online_get;
     demo_lobby_cb.leave = dl_leave;
     demo_lobby_cb.in_lobby = dl_in_lobby;
     demo_lobby_cb.is_host = dl_is_host;

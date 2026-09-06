@@ -143,6 +143,19 @@ chat. A code the sheet lacks falls back to the provider where that can draw
 flags, and otherwise shows a muted `[JP]`. Backends fill the codes from the
 server's `country` / `host_country` fields; LAN rooms leave them empty.
 
+### Lobby browser columns and players online
+
+The browser lists Lobby (flag + name), Players (`2/4`), Spectators (`No`
+when the host opened no gallery, else `1/4` from
+`RecompLauncherCNetplayLobby.allow_spectators` / `spectator_count` /
+`max_spectators`), Latency, and Join. There is no Game column: the list is
+already filtered to this title. Beside it, when the backend provides
+`online_count` / `online_get`, a "Players online" panel lists everyone
+connected to the lobby server with a flag before the name and where they
+are (hosting or in a room, or browsing). The server sends that list as the
+`players` array of every `lobby_list`; a LAN-only backend leaves the two
+callbacks NULL and the panel is not drawn.
+
 ### Chat callbacks
 
 Three optional, append-only members: `chat_send(text)`, `chat_count()`,
