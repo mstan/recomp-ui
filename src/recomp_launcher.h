@@ -109,6 +109,14 @@ typedef struct RecompLauncherCNetplayMember {
      * two roles share one index namespace, so the UI never has to translate.
      * Always 0 against a host that predates spectators. */
     int  is_spectator;
+    /* Peer memory-card offer (append-only; 0 = legacy / not advertised).
+     * memcard_has_card: a slot-1 card is enabled on that peer.
+     * memcard_share: that peer opted in to bring it. Drawn on seat 2 (P2):
+     * the match uses P2's card as its slot-2 card when P2 offers it AND the
+     * host allows it (guest_memcard_get). */
+    int  memcard_offer_valid;
+    int  memcard_has_card;
+    int  memcard_share;
 } RecompLauncherCNetplayMember;
 
 typedef struct RecompLauncherCNetplayNeedMod {
@@ -185,6 +193,12 @@ typedef struct RecompLauncherCNetplayLaunch {
      * player_count / occupied_mask above stay PLAYERS ONLY. A spectator
      * counted there is a seat every peer waits on and nobody ever fills. */
     int      is_spectator;
+    /* 1 = seat 2 (P2) brings its own memory card this match: its local slot-1
+     * card is uploaded to the host at launch and becomes every peer's slot-2
+     * card. 0 = the host's slot choices only (default). Settled by the host
+     * at start and delivered to every peer with the launch, so all peers
+     * agree even if the toggle raced the start. */
+    int      guest_memcard;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -392,6 +406,20 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*lobby_spectator_count)(void* ctx);
     int  (*local_is_spectator)(void* ctx);
     int  (*spectator_slot)(void* ctx, int index);
+    /* ---- bring-your-own memory card (PSX) ------------------------------
+     * Optional (append-only).
+     *   memcard_offer_set(has_card, share): publish THIS peer's offer.
+     *       has_card = a slot-1 card is enabled locally (the UI knows; the
+     *       backend does not read launcher state). share < 0 keeps the
+     *       current opt-in; 0/1 sets it. Cheap to call every frame — the
+     *       backend re-advertises only on change.
+     *   guest_memcard_get()      : host's allow flag (1 unless the host
+     *                              turned it off; host-authoritative).
+     *   guest_memcard_set(allow) : host only; <0 refused otherwise.
+     * Effective = seat-2 offer (has_card && share) && host allow. */
+    int  (*memcard_offer_set)(void* ctx, int has_card, int share);
+    int  (*guest_memcard_get)(void* ctx);
+    int  (*guest_memcard_set)(void* ctx, int allow);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

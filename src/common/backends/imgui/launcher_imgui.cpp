@@ -5364,12 +5364,6 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextColored(col(th.text_muted),
                                "up to %d, on top of the players",
                                RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS);
-            if (allow_spec)
-                ImGui::TextColored(col(th.text_muted),
-                                   "Once the player slots are full, joiners "
-                                   "take a spectator seat. They watch in sync "
-                                   "and cannot affect the match; you can move "
-                                   "anyone in or out of play from the lobby.");
         }
         ImGui::Spacing();
         bool lan = m->netplay_lan_only;
@@ -5757,6 +5751,130 @@ static const RecompLauncherCNetplayMember* lobby_seat_lookup(
     return nullptr;
 }
 
+/* Bring-your-own memory card (PSX). -1 = not a memory-card system; else 1
+ * when a slot-1 card is enabled locally. An empty path still counts: the
+ * runtime formats <memcard_dir>/card1.mcd on demand, so the only "no card"
+ * cases are a disabled slot or a picked file that failed inspection. */
+static int np_local_memcard_has_card(const LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (!prof || !prof->id || std::strcmp(prof->id, "psx") != 0) return -1;
+    if (!m->s.memcard_enabled[0]) return 0;
+    if (m->s.memcard_path[0][0] && m->memcard_inspected[0] &&
+        !m->memcard_valid[0])
+        return 0;
+    return 1;
+}
+
+/* A little PS1 memory card: body, label band, connector strip. Vector so it
+ * reads at any DPI and in both themes (emoji fonts have uneven metrics). */
+static void np_draw_memcard_glyph(ImDrawList* dl, ImVec2 mn, ImVec2 mx,
+                                  ImU32 line, ImU32 fill, bool filled) {
+    const float w = mx.x - mn.x;
+    const float h = mx.y - mn.y;
+    const float r = h * 0.18f;
+    if (filled) dl->AddRectFilled(mn, mx, fill, r);
+    dl->AddRect(mn, mx, line, r, 0, px(1.5f));
+    const float inset = w * 0.16f;
+    /* label band */
+    dl->AddRectFilled(ImVec2(mn.x + inset, mn.y + h * 0.24f),
+                      ImVec2(mx.x - inset, mn.y + h * 0.50f), line, r * 0.5f);
+    /* connector strip along the bottom edge */
+    dl->AddRectFilled(ImVec2(mn.x + inset, mx.y - h * 0.22f),
+                      ImVec2(mn.x + inset + w * 0.42f, mx.y - px(1.5f)), line);
+}
+
+/* Seat 2's memory-card toggle, drawn beside P2's name. Lit when the match
+ * will use P2's card as its slot-2 card: P2 offered it (has a slot-1 card
+ * and opted in) AND the host allows it. P2 clicks its own opt-in; the host
+ * clicks its allow flag; both sides therefore have to agree, and the tooltip
+ * always names which side is holding it off. */
+static void draw_lobby_memcard_toggle(LauncherModel* m, const LauncherTheme& th,
+                                      const RecompLauncherCNetplayCallbacks* np,
+                                      const RecompLauncherCNetplayMember& p2,
+                                      bool is_host) {
+    const bool self_row = p2.is_local != 0;
+    const bool allow = np->guest_memcard_get
+                           ? (np->guest_memcard_get(np->ctx) != 0) : true;
+    const bool legacy = p2.memcard_offer_valid == 0;
+    const bool offered = !legacy && p2.memcard_has_card != 0;
+    const bool shared = offered && p2.memcard_share != 0;
+    const bool active = shared && allow;
+    const bool can_click =
+        (self_row && offered) || (is_host && (active || !allow));
+
+    ImGui::SameLine(0, px(10));
+    const float gw = px(26);
+    const float gh = px(18);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    pos.y += (ImGui::GetTextLineHeight() - gh) * 0.5f;
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::InvisibleButton("##p2_memcard", ImVec2(gw, gh));
+    const bool hovered = ImGui::IsItemHovered();
+    if (can_click && hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+    ImU32 line;
+    ImU32 fill = 0;
+    if (active) {
+        line = imcol(th.accent);
+        ImVec4 f = col(th.accent);
+        f.w *= hovered ? 0.55f : 0.35f;
+        fill = ImGui::GetColorU32(f);
+    } else if (offered || (!allow && !legacy)) {
+        line = imcol(hovered && can_click ? th.text : th.text_muted);
+    } else {
+        line = imcol(th.border);
+    }
+    np_draw_memcard_glyph(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(),
+                          ImGui::GetItemRectMax(), line, fill, active);
+
+    if (can_click && ImGui::IsItemClicked()) {
+        if (self_row) {
+            const int has_card = np_local_memcard_has_card(m);
+            (void)np->memcard_offer_set(np->ctx, has_card > 0 ? 1 : 0,
+                                        p2.memcard_share ? 0 : 1);
+        } else if (np->guest_memcard_set) {
+            /* active → turn off; off because of us → allow again. Off
+             * because P2 has not offered is P2's to change, not ours. */
+            (void)np->guest_memcard_set(np->ctx, active ? 0 : 1);
+        }
+    }
+    if (!hovered) return;
+    if (active) {
+        ImGui::SetTooltip(
+            "P2's memory card is in: %s brings their slot-1 card and it becomes\n"
+            "slot 2 for everyone this match. The host's slot-2 card is not used.%s",
+            p2.display_name,
+            can_click ? "\nClick to turn it off." : "");
+    } else if (!allow && !legacy) {
+        ImGui::SetTooltip(
+            "Guest memory cards are turned off by the host — the match uses the\n"
+            "host's slot choices only.%s",
+            is_host ? "\nClick to allow P2's card." : "");
+    } else if (legacy) {
+        ImGui::SetTooltip(
+            "%s's launcher cannot bring a memory card (older build).",
+            p2.display_name);
+    } else if (!offered) {
+        if (self_row)
+            ImGui::SetTooltip(
+                "No memory card enabled in your slot 1. Enable one on the\n"
+                "dashboard to bring it to the match.");
+        else
+            ImGui::SetTooltip("%s has no slot-1 memory card to bring.",
+                              p2.display_name);
+    } else if (self_row) {
+        ImGui::SetTooltip(
+            "Bring your memory card: your slot-1 card becomes slot 2 for\n"
+            "everyone this match (needed for games like Yu-Gi-Oh! where each\n"
+            "player duels from their own card). Click to turn it on.");
+    } else {
+        ImGui::SetTooltip(
+            "%s has a memory card but has not offered it. Only %s can turn\n"
+            "that on.",
+            p2.display_name, p2.display_name);
+    }
+}
+
 static void draw_lobby_seat_row(LauncherModel* m,
                                 const LauncherTheme& th,
                                 const RecompLauncherCNetplayCallbacks* np,
@@ -5878,6 +5996,11 @@ static void draw_lobby_seat_row(LauncherModel* m,
         ImGui::TextUnformatted(occ ? row.display_name
                                    : view.spectator ? "Open seat" : "Open slot");
         if (!occ) ImGui::PopStyleColor();
+        /* Seat 1 (P2) — by seat, not by who hosts: seat 0 is always the sim
+         * authority whose cards are the match cards. */
+        if (!view.spectator && wire == 1 && occ && np->memcard_offer_set &&
+            np_local_memcard_has_card(m) >= 0)
+            draw_lobby_memcard_toggle(m, th, np, row, is_host);
         ImGui::TableSetColumnIndex(3);
         table_row_vcenter(member_row_h, text_h);
         if (occ && row.is_host)
@@ -5974,6 +6097,13 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
     /* Keep membership live while the room modal is up (join/leave/move/kick). */
     if (np->pump) np->pump(np->ctx);
     np_ingest_last_error(m, np);
+    /* Bring-your-own memory card: keep the backend's view of THIS peer's
+     * slot-1 card current (the dashboard can change it while the room is
+     * open). The opt-in itself is toggled from the seat row. */
+    if (np->memcard_offer_set) {
+        const int has_card = np_local_memcard_has_card(m);
+        if (has_card >= 0) (void)np->memcard_offer_set(np->ctx, has_card, -1);
+    }
     if (np->launch_pending && np->launch_pending(np->ctx))
         np_try_launch(m);
     /* Prefer backend seat; sticky local_room alone kept kicked LAN joiners open. */
@@ -6244,6 +6374,17 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         seat_table("lobby_players",
                    spectator_seats > 0 ? "Players" : nullptr, player_view, 0,
                    max_slots);
+    }
+    /* Bring-your-own memory card summary: one line, only when it is on, so
+     * every peer sees the same thing the launch will do. */
+    if (max_slots > 1 && occupied[1] && np->memcard_offer_set &&
+        np_local_memcard_has_card(m) >= 0 && slots[1].memcard_offer_valid &&
+        slots[1].memcard_has_card && slots[1].memcard_share &&
+        (!np->guest_memcard_get || np->guest_memcard_get(np->ctx))) {
+        ImGui::TextColored(col(th.text_muted),
+                           "P2 (%s) brings their memory card — it is slot 2 for "
+                           "everyone this match.",
+                           slots[1].display_name);
     }
     if (spectator_seats > 0) {
         ImGui::Spacing();
