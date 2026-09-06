@@ -113,6 +113,30 @@ changes, so reusing 1 for the first line of a new room would leave it unscrolled
 A backend with no way to deliver a line (SNES LAN rooms today) returns nonzero
 from `chat_send`; the UI reports "Chat is not available in this room."
 
+System lines ("Marisa has joined.", "… has left.", "… was kicked.") are ordinary
+chat messages with `is_system` set and an empty `from`; the room, not the
+client, emits them (online: the server; PSX LAN: the host relay). The UI draws
+them muted.
+
+### Color emoji
+
+Chat lines draw emoji in color. `src/common/emoji/` renders each emoji
+*sequence* (skin tones, ZWJ families, flags, keycaps) to an RGBA sprite through
+the platform — DirectWrite/Direct2D on Segoe UI Emoji on Windows; FreeType on
+the system Noto Color Emoji (plus HarfBuzz for sequence shaping) elsewhere when
+the build finds them — and the ImGui side gives each sprite a private-use
+codepoint and blits it into the font atlas as a custom glyph. A string is drawn
+with those codepoints substituted (`emoji_display`), so text measuring and
+wrapping are unchanged. The atlas is static in this ImGui, so the first sight
+of a new emoji rebuilds fonts once on the next frame.
+
+Fallback is automatic: no provider (no FreeType at build time, a console port,
+a font the renderer cannot open) means nothing is substituted and the OpenMoji
+outline glyphs draw as before. `RECOMP_UI_EMOJI_FONT=/path/to/font` overrides
+the FreeType font search. The backend in use is logged at startup as
+`[rui] color emoji backend: …`. The input box still shows outline glyphs while
+typing; only the log is substituted.
+
 For layout work without a server, the prototype launcher takes
 `LNG_DEMO_LOBBY=host|guest` (a fake three-player room) and screenshots through
 `LNG_SCRIPT`, e.g. `LNG_VARIANT=psx LNG_DEMO_LOBBY=host LNG_SCRIPT="wait:40;shot:/tmp/lobby.png;quit"`.
