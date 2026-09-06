@@ -6390,9 +6390,6 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::Spacing();
         seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
                    spectator_seats);
-        ImGui::TextColored(col(th.text_muted),
-                           "Spectators watch the match in sync. Their "
-                           "controllers do not reach the game.");
         /* Said here rather than discovered at Play. The backend refuses to
          * arm a seat-less session, so without this line a spectator presses
          * Play and nothing happens -- which reads as a broken button. */
@@ -6401,10 +6398,6 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                                "You are spectating. This build cannot yet run "
                                "the match from a spectator seat — ask the host "
                                "to move you into a player slot to play.");
-        if (is_host && np->move_member)
-            ImGui::TextColored(col(th.text_muted),
-                               "Drag a row between the tables to move somebody "
-                               "in or out of play.");
     }
     /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
      * about save-state compatibility, not kernel-RAM details.
