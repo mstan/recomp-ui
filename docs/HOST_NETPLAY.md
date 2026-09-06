@@ -80,6 +80,24 @@ host change — games rely on a clean shutdown between launcher and gameplay.
 
 ---
 
+## The lobby room is a view, not a popup
+
+`LNG_VIEW_LOBBY` is the full-screen room. The launcher enters it whenever the
+backend's `in_lobby()` reports the local player seated and leaves it when that
+stops being true — there is no open/close call for hosts to make, and a
+soft-return that lands on Netplay flips into the room on the next frame by the
+same rule. The page is two columns (seat tables left; room address, match
+settings inline, mod plan right) and its actions — Leave Lobby, Mods, PLAY —
+live in the fixed footer. Every profile that opens a lobby shares it.
+
+A host therefore only needs `in_lobby()` to be truthful: a backend that keeps
+reporting seated after a kick or a dropped socket keeps the player on a room
+page that will never start.
+
+For layout work without a server, the prototype launcher takes
+`LNG_DEMO_LOBBY=host|guest` (a fake three-player room) and screenshots through
+`LNG_SCRIPT`, e.g. `LNG_VARIANT=psx LNG_DEMO_LOBBY=host LNG_SCRIPT="wait:40;shot:/tmp/lobby.png;quit"`.
+
 ## Resume room fields
 
 When soft-returning after a match, set on `RecompLauncherCGameInfo`:
@@ -92,6 +110,31 @@ showing the waiting room again (`snes_lobby_clear_launch_pending`,
 `snes_lobby_set_ready`, etc.).
 
 ---
+
+## Bring-your-own memory card (PSX)
+
+Three optional, append-only members at the end of
+`RecompLauncherCNetplayCallbacks`, plus three `RecompLauncherCNetplayMember`
+fields and `RecompLauncherCNetplayLaunch.guest_memcard`:
+
+| Callback | Who | Meaning |
+|----------|-----|---------|
+| `memcard_offer_set(has_card, share)` | every peer | Publish this peer's offer. The launcher computes `has_card` (slot 1 enabled and, if a file is picked, it inspected valid) and calls this every frame the room is open with `share = -1` (keep); the seat-row glyph calls it with `share = 0/1`. Backends re-advertise only on change. |
+| `guest_memcard_get()` | every peer | Host allow flag as this peer sees it (default 1). |
+| `guest_memcard_set(allow)` | host | Flip the allow flag; refused (<0) elsewhere. |
+
+The seat-row glyph is drawn on **seat 1** (P2) — by seat, not by who hosts:
+seat 0 is always the sim authority whose cards are the match cards. It is lit
+when `member[1].memcard_offer_valid && memcard_has_card && memcard_share &&
+guest_memcard_get()`. P2's click toggles its own `share`; the host's click
+toggles `allow`. A member with `memcard_offer_valid == 0` is an older build
+and the tooltip says so.
+
+`launch.guest_memcard` must come from the **host-settled** value delivered
+with the launch (online: `match_caps.guest_memcard_active`; LAN: the trailing
+`MOTK1 START` line), never from the local seat table — otherwise a toggle that
+races the start splits the room into peers that wait for a card and peers
+that never send one.
 
 ## Peer disconnect UX
 

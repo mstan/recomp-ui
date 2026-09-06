@@ -53,9 +53,9 @@ static const char* kHotkeyNames[LNG_HK_COUNT] = {
     "Solar level up", "Solar level down", "Resume live solar",
     "Rewind", "Save states menu"
 };
-static const char* kViewNames[7] = {
+static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
-    "Assist Tools", "Credits"
+    "Assist Tools", "Credits", "Lobby"
 };
 static const char* kSrcNames[3]  = { "None", "Keyboard", "Gamepad" };
 
@@ -765,7 +765,9 @@ void launcher_model_init(LauncherModel* m,
     }
     launcher_model_refresh_bios_status(m);
 
-    /* Soft-return from a match: land on Netplay with the room modal open. */
+    /* Soft-return from a match: land on Netplay; the frame then switches to
+     * the full-screen lobby view because the backend still reports us
+     * seated (see LNG_VIEW_LOBBY). */
     if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
         m->netplay->in_lobby && m->netplay->in_lobby(m->netplay->ctx)) {
         m->view = LNG_VIEW_NETPLAY;
@@ -1231,7 +1233,7 @@ bool launcher_model_rom_verified(const LauncherModel* m) {
 }
 
 void launcher_model_set_view(LauncherModel* m, LngView v) {
-    if (v < 0 || v > LNG_VIEW_MODS) return;
+    if (v < 0 || v > LNG_VIEW_LOBBY) return;
     /* Re-entering Netplay should rescan server + LAN lists. */
     if (m->view == LNG_VIEW_NETPLAY && v != LNG_VIEW_NETPLAY)
         m->netplay_list_fresh = false;
@@ -3815,6 +3817,6 @@ const char* launcher_hotkey_name(LngHotkey h) {
 }
 
 const char* launcher_view_name(LngView v) {
-    if (v < 0 || v > LNG_VIEW_CREDITS) return "?";
+    if (v < 0 || v > LNG_VIEW_LOBBY) return "?";
     return kViewNames[v];
 }

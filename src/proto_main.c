@@ -73,6 +73,123 @@ static int proto_prepare(const char* source_path, char* out_path, size_t out_cap
     return 1;
 }
 
+
+/* ---- LNG_DEMO_LOBBY: a fake seated lobby for layout work ------------------
+ * LNG_DEMO_LOBBY=host|guest. No network: these callbacks answer as if this
+ * client were seated in a 4-seat room with two other players (one seat
+ * open), so the full-screen lobby view can be exercised — and screenshotted
+ * through LNG_SCRIPT — without a server. Nothing here reaches the launcher
+ * unless the variable is set. */
+static int demo_lobby_host  = 1;
+static int demo_lobby_in    = 1;
+static int demo_lobby_share = 1;  /* P2 offers its memory card */
+static int demo_lobby_allow = 1;  /* host allows guest cards */
+static int demo_lobby_delay = 3;
+static int demo_lobby_pred  = 7;
+static int demo_lobby_rb    = 1;
+static const char* dl_default_url(void* c) { (void)c; return "ws://netplay.retcomm.net:8765"; }
+static void dl_set_lobby_url(void* c, const char* u) { (void)c; (void)u; }
+static int  dl_connect(void* c) { (void)c; return 0; }
+static int  dl_connected(void* c) { (void)c; return 1; }
+static void dl_pump(void* c) { (void)c; }
+static void dl_set_player_name(void* c, const char* n) { (void)c; (void)n; }
+static const char* dl_player_name(void* c) { (void)c; return demo_lobby_host ? "Alex" : "Marisa"; }
+static void dl_request_list(void* c) { (void)c; }
+static int  dl_list_count(void* c) { (void)c; return 0; }
+static int  dl_list_get(void* c, int i, RecompLauncherCNetplayLobby* o) { (void)c; (void)i; (void)o; return 0; }
+static int  dl_leave(void* c) { (void)c; demo_lobby_in = 0; return 0; }
+static int  dl_in_lobby(void* c) { (void)c; return demo_lobby_in; }
+static int  dl_is_host(void* c) { (void)c; return demo_lobby_host; }
+static int  dl_member_count(void* c) { (void)c; return 3; }
+static int  dl_member_get(void* c, int i, RecompLauncherCNetplayMember* out) {
+    static const char* names[3] = { "Alex", "Marisa", "Reimu" };
+    static const int   seats[3] = { 0, 1, 3 };
+    (void)c;
+    if (i < 0 || i >= 3 || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    out->slot = seats[i];
+    snprintf(out->display_name, sizeof(out->display_name), "%s", names[i]);
+    out->ready = 1;
+    out->is_host = (i == 0);
+    out->is_local = demo_lobby_host ? (i == 0) : (i == 1);
+    out->latency_ms = out->is_local ? -1 : 38 + i * 21;
+    out->bios_offer_valid = 1;
+    out->bios_can_scph1001 = (i != 2);
+    out->bios_prefer_openbios = 0;
+    if (i == 1) {
+        out->memcard_offer_valid = 1;
+        out->memcard_has_card = 1;
+        out->memcard_share = demo_lobby_share;
+    }
+    return 1;
+}
+static int  dl_move_member(void* c, int a, int b) { (void)c; (void)a; (void)b; return 0; }
+static int  dl_local_ready(void* c) { (void)c; return 1; }
+static int  dl_all_ready(void* c) { (void)c; return 1; }
+static int  dl_set_ready(void* c, int r) { (void)c; (void)r; return 0; }
+static int  dl_request_start(void* c, const RecompLauncherCSettings* s) { (void)c; (void)s; return -1; }
+static int  dl_launch_pending(void* c) { (void)c; return 0; }
+static void dl_clear_launch_pending(void* c) { (void)c; }
+static int  dl_fill_launch(void* c, RecompLauncherCNetplayLaunch* o) { (void)c; (void)o; return 0; }
+static int  dl_kick_member(void* c, int s) { (void)c; (void)s; return 0; }
+static int  dl_input_delay_get(void* c) { (void)c; return demo_lobby_delay; }
+static int  dl_input_delay_set(void* c, int d) { (void)c; demo_lobby_delay = d; return 0; }
+static int  dl_lobby_max_slots(void* c) { (void)c; return 4; }
+static int  dl_rollback_get(void* c) { (void)c; return demo_lobby_rb; }
+static int  dl_rollback_set(void* c, int e) { (void)c; demo_lobby_rb = e ? 1 : 0; return 0; }
+static int  dl_input_prediction_get(void* c) { (void)c; return demo_lobby_pred; }
+static int  dl_input_prediction_set(void* c, int p) { (void)c; demo_lobby_pred = p; return 0; }
+static int  dl_memcard_offer_set(void* c, int has_card, int share) {
+    (void)c; (void)has_card;
+    if (share >= 0) demo_lobby_share = share ? 1 : 0;
+    return 0;
+}
+static int  dl_guest_memcard_get(void* c) { (void)c; return demo_lobby_allow; }
+static int  dl_guest_memcard_set(void* c, int a) { (void)c; demo_lobby_allow = a ? 1 : 0; return 0; }
+static RecompLauncherCNetplayCallbacks demo_lobby_cb;
+
+static void demo_lobby_install(RecompLauncherCGameInfo* gi, const char* mode) {
+    demo_lobby_host = !(mode && strcmp(mode, "guest") == 0);
+    memset(&demo_lobby_cb, 0, sizeof(demo_lobby_cb));
+    demo_lobby_cb.default_url = dl_default_url;
+    demo_lobby_cb.set_lobby_url = dl_set_lobby_url;
+    demo_lobby_cb.connect = dl_connect;
+    demo_lobby_cb.connected = dl_connected;
+    demo_lobby_cb.pump = dl_pump;
+    demo_lobby_cb.set_player_name = dl_set_player_name;
+    demo_lobby_cb.player_name = dl_player_name;
+    demo_lobby_cb.request_list = dl_request_list;
+    demo_lobby_cb.list_count = dl_list_count;
+    demo_lobby_cb.list_get = dl_list_get;
+    demo_lobby_cb.leave = dl_leave;
+    demo_lobby_cb.in_lobby = dl_in_lobby;
+    demo_lobby_cb.is_host = dl_is_host;
+    demo_lobby_cb.member_count = dl_member_count;
+    demo_lobby_cb.member_get = dl_member_get;
+    demo_lobby_cb.move_member = dl_move_member;
+    demo_lobby_cb.local_ready = dl_local_ready;
+    demo_lobby_cb.all_ready = dl_all_ready;
+    demo_lobby_cb.set_ready = dl_set_ready;
+    demo_lobby_cb.request_start = dl_request_start;
+    demo_lobby_cb.launch_pending = dl_launch_pending;
+    demo_lobby_cb.clear_launch_pending = dl_clear_launch_pending;
+    demo_lobby_cb.fill_launch = dl_fill_launch;
+    demo_lobby_cb.kick_member = dl_kick_member;
+    demo_lobby_cb.input_delay_get = dl_input_delay_get;
+    demo_lobby_cb.input_delay_set = dl_input_delay_set;
+    demo_lobby_cb.lobby_max_slots = dl_lobby_max_slots;
+    demo_lobby_cb.rollback_get = dl_rollback_get;
+    demo_lobby_cb.rollback_set = dl_rollback_set;
+    demo_lobby_cb.input_prediction_get = dl_input_prediction_get;
+    demo_lobby_cb.input_prediction_set = dl_input_prediction_set;
+    demo_lobby_cb.memcard_offer_set = dl_memcard_offer_set;
+    demo_lobby_cb.guest_memcard_get = dl_guest_memcard_get;
+    demo_lobby_cb.guest_memcard_set = dl_guest_memcard_set;
+    gi->num_players = 4;
+    gi->netplay_supported = 1;
+    gi->netplay = &demo_lobby_cb;
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
 
@@ -299,6 +416,10 @@ int main(int argc, char** argv) {
     LauncherModel model;
     const char* rom = SDL_getenv("LNG_ROM");
     if (!rom || !rom[0]) rom = demo_msu_rom ? demo_msu_rom : "test.rom";
+    {
+        const char* demo_lobby = SDL_getenv("LNG_DEMO_LOBBY");
+        if (demo_lobby && demo_lobby[0]) demo_lobby_install(&gi, demo_lobby);
+    }
     launcher_model_init(&model, &s, &gi, rom);
     launcher_binds_load(&model, NULL, NULL);   // keybinds.ini + config.ini [KeyMap]
     fprintf(stderr, "[proto] rom=%s present=%d crc_match=%d sha_match=%d verified=%d size=%s\n",

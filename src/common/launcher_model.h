@@ -45,6 +45,11 @@ typedef enum {
     LNG_VIEW_MODS,
     LNG_VIEW_ASSIST_TOOLS,
     LNG_VIEW_CREDITS,
+    /* The netplay room, full screen. Entered and left by SEAT STATE, not by
+     * a button: the frame switches here whenever the backend reports the
+     * local player seated in a lobby, and back to Netplay when it does not.
+     * Every profile that opens a lobby goes through it. */
+    LNG_VIEW_LOBBY,
 } LngView;
 
 typedef enum {

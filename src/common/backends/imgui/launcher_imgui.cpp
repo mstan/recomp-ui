@@ -6091,51 +6091,202 @@ static void draw_lobby_seat_row(LauncherModel* m,
     ImGui::PopID();
 }
 
-void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
-    const auto* np = np_cb(m);
-    if (!np) return;
-    /* Keep membership live while the room modal is up (join/leave/move/kick). */
-    if (np->pump) np->pump(np->ctx);
-    np_ingest_last_error(m, np);
-    /* Bring-your-own memory card: keep the backend's view of THIS peer's
-     * slot-1 card current (the dashboard can change it while the room is
-     * open). The opt-in itself is toggled from the seat row. */
-    if (np->memcard_offer_set) {
-        const int has_card = np_local_memcard_has_card(m);
-        if (has_card >= 0) (void)np->memcard_offer_set(np->ctx, has_card, -1);
+/* ---- Lobby room: a full-screen view ---------------------------------------
+ *
+ * The room used to be a fixed 640px popup drawn over whatever view was up.
+ * It is now a view of its own (LNG_VIEW_LOBBY) that the frame enters and
+ * leaves by SEAT STATE — seated in a lobby means you are looking at the room,
+ * not seated means you are not — so every profile that opens a lobby gets the
+ * same full-screen page and nothing has to remember to open or close it.
+ *
+ * Layout: the body is two columns. Left, the seat tables (players, PSX-Link
+ * consoles, spectators) with the notices that belong to them. Right, the room
+ * panel (where peers connect), the match settings inline (host edits, guests
+ * see what the host chose), and the mod plan. The action row — Leave, Mods,
+ * Play — lives in the fixed footer like every other view's primary actions,
+ * so it never scrolls out of reach. Narrow windows stack the columns. */
+
+struct LobbySnapshot {
+    RecompLauncherCNetplayMember slots[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS];
+    bool occupied[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS];
+    RecompLauncherCNetplayMember specs[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS];
+    bool spec_occupied[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS];
+    int  max_slots;
+    int  spectator_seats;
+    int  spectator_base;
+    int  seated_players;
+    int  peers_not_ready;
+    char not_ready_names[160];
+    bool is_host;
+    bool link_kind;
+};
+
+/* Prefer the backend seat; sticky local_room alone kept kicked LAN joiners in
+ * the room. */
+static bool np_lobby_seated(const LauncherModel* m,
+                            const RecompLauncherCNetplayCallbacks* np) {
+    if (!np) return false;
+    return np->in_lobby ? (np->in_lobby(np->ctx) != 0) : m->netplay_local_room;
+}
+
+/* Host: the match settings panel edits model fields that mirror the backend.
+ * Seed them once per room entry (not every frame, which would clobber a value
+ * mid-edit); guests re-read every frame because theirs are read-only echoes
+ * of the host's caps. */
+static bool g_lobby_settings_synced = false;
+
+static void np_lobby_snapshot(LauncherModel* m,
+                              const RecompLauncherCNetplayCallbacks* np,
+                              LobbySnapshot* s) {
+    std::memset(s, 0, sizeof(*s));
+    s->is_host = np->is_host && np->is_host(np->ctx);
+    const int count = np->member_count ? np->member_count(np->ctx) : 0;
+    /* Prefer backend room ceiling, then sticky create/join value, then game max. */
+    int max_slots = 0;
+    if (np->lobby_max_slots) {
+        max_slots = np->lobby_max_slots(np->ctx);
+        if (max_slots >= 2) m->netplay_lobby_max_slots = max_slots;
     }
-    if (np->launch_pending && np->launch_pending(np->ctx))
-        np_try_launch(m);
-    /* Prefer backend seat; sticky local_room alone kept kicked LAN joiners open. */
-    const bool seated = np->in_lobby ? (np->in_lobby(np->ctx) != 0)
-                                     : m->netplay_local_room;
-    if (!seated) {
-        m->netplay_local_room = false;
-        m->netplay_lobby_settings_open = false;
-        m->netplay_lobby_mods_open = false;
-        /* Keep netplay_lobby_max_slots across create/join races: online create
-         * can report unseated for a few frames, and wiping this falls back to
-         * game num_players (e.g. 5P) while the list correctly shows 1/2. */
-        if (ImGui::BeginPopupModal("LOBBY", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+    if (max_slots < 2)
+        max_slots = m->netplay_lobby_max_slots > 0
+                        ? m->netplay_lobby_max_slots
+                        : np_game_max_players(m);
+    if (max_slots < 2) max_slots = 2;
+    if (max_slots > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+        max_slots = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+    s->max_slots = max_slots;
+    /* The gallery, when the CURRENT lobby has one. Gated on the lobby rather
+     * than on the callback existing: a build that supports spectators still
+     * talks to hosts and servers that do not, and there the whole section has
+     * to be absent, not empty. */
+    const bool spectators_on =
+        np->lobby_allow_spectators && np->lobby_allow_spectators(np->ctx) != 0;
+    if (spectators_on) {
+        if (np->lobby_max_spectators)
+            s->spectator_seats = np->lobby_max_spectators(np->ctx);
+        if (s->spectator_seats > RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS)
+            s->spectator_seats = RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS;
+        /* The base comes from the backend, never assumed: it is the server's
+         * namespace. Without it the two views could overlap, and a drag would
+         * resolve to the wrong row. */
+        if (np->spectator_slot) s->spectator_base = np->spectator_slot(np->ctx, 0);
+        if (s->spectator_base <= 0) s->spectator_seats = 0;
+    }
+    for (int i = 0; i < count; ++i) {
+        RecompLauncherCNetplayMember mem{};
+        if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
+        if (mem.is_spectator) {
+            const int pos = s->spectator_seats ? mem.slot - s->spectator_base : -1;
+            if (pos < 0 || pos >= s->spectator_seats) continue;
+            s->specs[pos] = mem;
+            s->spec_occupied[pos] = mem.display_name[0] != '\0';
+            continue;
         }
-        return;
+        if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
+        s->slots[mem.slot] = mem;
+        s->occupied[mem.slot] = mem.display_name[0] != '\0';
     }
+    for (int slot = 0; slot < max_slots; ++slot)
+        if (s->occupied[slot]) ++s->seated_players;
+    /* Mod readiness: a seated peer publishes ready=0 while it is still
+     * missing this lobby's mod plan, so the host can hold the launch until
+     * everyone can actually run the match. The host's own seat is covered by
+     * its local catalog (it is the source of the plan). */
+    for (int slot = 0; slot < max_slots; ++slot) {
+        if (!s->occupied[slot] || s->slots[slot].is_host) continue;
+        if (s->slots[slot].ready) continue;
+        ++s->peers_not_ready;
+        /* Name them: "somebody is missing mods" is not actionable when the
+         * player in question is looking at a green screen. */
+        const size_t used = std::strlen(s->not_ready_names);
+        std::snprintf(s->not_ready_names + used, sizeof(s->not_ready_names) - used,
+                      "%s%s", used ? ", " : "", s->slots[slot].display_name);
+    }
+    s->link_kind =
+        max_slots >= 4 &&
+        (((np->lobby_kind_get && np->lobby_kind_get(np->ctx) == 1)) ||
+         (np->link_lobby_supported && np->link_lobby_supported(np->ctx)));
+}
 
-    ImGui::OpenPopup("LOBBY");
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    /* Always recenter: content height changes as members join/leave, and
-     * ImGuiCond_Appearing left the room modal stuck off-center after join. */
-    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(px(640), 0), ImGuiCond_Always);
-    const ImGuiWindowFlags lobby_flags =
-        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove;
-    if (!ImGui::BeginPopupModal("LOBBY", nullptr, lobby_flags)) return;
+/* Host pressed Play. */
+static void np_lobby_start(LauncherModel* m,
+                           const RecompLauncherCNetplayCallbacks* np) {
+    /* Ensure engine match_caps.rollback matches UI before start. */
+    if (np->rollback_set)
+        (void)np->rollback_set(np->ctx, m->netplay_rollback ? 1 : 0);
+    const bool use_rb = m->netplay_rollback;
+    const int max_rtt = np_lobby_max_peer_rtt_ms(m, np);
+    /* Auto D: rollback uses §59 WAN-aware tiers; delay-sync uses the padded
+     * one-way formula. Manual keeps the match settings panel's value.
+     *
+     * No TURN penalty. force_turn is a delay-floor HINT that does not change
+     * online transport (§108: online is always the lobby SFU), and TURN is
+     * deployed co-located with that SFU — so relaying through it costs a
+     * localhost hop, not a second WAN leg. The old padding (RTT floored to
+     * 80ms, +40ms, then D floored at 6) compensated for a cost that is not
+     * paid: it inflated D on every relayed session, and since P = 4 + D it
+     * inflated the invent runway with it. The measured peer RTT already
+     * traverses the relay in use, so it needs no fudge. */
+    if (!m->netplay_manual_input_delay && np->input_delay_set) {
+        int delay = use_rb
+            ? np_rb_delay_frames_from_rtt_ms(max_rtt)
+            : np_delay_frames_from_rtt_ms(max_rtt);
+        m->netplay_lobby_input_delay = delay;
+        (void)np->input_delay_set(np->ctx, delay);
+    }
+    /* Auto P (rollback only): invent runway from RTT + committed D. */
+    if (use_rb && !m->netplay_manual_input_prediction &&
+        np->input_prediction_set) {
+        const int pred = np_rb_prediction_frames_from_rtt_ms(
+            max_rtt, m->netplay_lobby_input_delay);
+        m->netplay_lobby_input_prediction = pred;
+        (void)np->input_prediction_set(np->ctx, pred);
+    }
+    if (np->set_ready)
+        (void)np->set_ready(np->ctx,
+                            np->lobby_mods_missing
+                                ? (np->lobby_mods_missing(np->ctx) == 0)
+                                : 1);
+    const int rc = np->request_start ? np->request_start(np->ctx, &m->s) : -1;
+    if (rc != 0) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Could not start lobby (need at least two "
+                      "players, or server rejected start).");
+    } else {
+        m->netplay_status[0] = '\0';
+        /* LAN arms launch_pending inside request_start so host can
+         * leave this frame. Online must wait for the server's
+         * op:launch (drawn frames keep calling launch_pending) so
+         * every peer boots together — do not fill from lobby seat. */
+        if (np->launch_pending && np->launch_pending(np->ctx))
+            np_try_launch(m);
+        else
+            std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                          "Starting match…");
+    }
+}
 
-    /* Only file-backed LAN/Direct rooms show IP/Port. Server-list joins always
-     * show the lobby URL — do not use Host Lobby's LAN checkbox or a stale
-     * host_endpoint (e.g. from a prior LAN host) as a signal. */
+static void np_lobby_leave(LauncherModel* m,
+                           const RecompLauncherCNetplayCallbacks* np) {
+    m->netplay_local_room = false;
+    m->netplay_lobby_settings_open = false;
+    m->netplay_lobby_mods_open = false;
+    m->netplay_lobby_max_slots = 0;
+    if (np->leave) (void)np->leave(np->ctx);
+    /* Back to the browser now rather than on the next seat poll, so the
+     * frame that shows "left" is the frame the button was pressed on. */
+    launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+    m->netplay_list_fresh = false;
+}
+
+/* Where peers connect. Only file-backed LAN/Direct rooms show IP/Port.
+ * Server-list joins always show the lobby URL — do not use Host Lobby's LAN
+ * checkbox or a stale host_endpoint (e.g. from a prior LAN host) as a
+ * signal. Stacked, not tabular: this sits in a side column. */
+static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
+                                  const RecompLauncherCNetplayCallbacks* np) {
+    ImGui::TextColored(col(th.accent2), "ROOM");
+    ImGui::Spacing();
     const bool show_lan_endpoint = m->netplay_local_room;
     if (show_lan_endpoint) {
         char room_ip[64] = "";
@@ -6149,36 +6300,25 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
             }
         }
         np_ensure_public_ip(m);
-        if (ImGui::BeginTable("##lobby_lan_conn", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(360));
-            ImGui::TableSetupColumn("port", ImGuiTableColumnFlags_WidthFixed, px(120));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(col(th.text_muted), "LAN IP Address");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(col(th.text_muted), "Port");
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::SetNextItemWidth(-1.0f);
-            np_copyable_readonly_input("##lobby_ip", room_ip, sizeof(room_ip), th);
-            ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(-1.0f);
-            np_copyable_readonly_input("##lobby_port", room_port, sizeof(room_port),
-                                       th);
-            ImGui::EndTable();
-        }
+        const float w = ImGui::GetContentRegionAvail().x;
+        const float port_w = px(96);
+        const float gap = px(8);
+        ImGui::TextColored(col(th.text_muted), "LAN IP Address");
+        ImGui::SameLine(w - port_w);
+        ImGui::TextColored(col(th.text_muted), "Port");
+        ImGui::SetNextItemWidth(w - port_w - gap);
+        np_copyable_readonly_input("##lobby_ip", room_ip, sizeof(room_ip), th);
+        ImGui::SameLine(0, gap);
+        ImGui::SetNextItemWidth(port_w);
+        np_copyable_readonly_input("##lobby_port", room_port, sizeof(room_port), th);
         ImGui::Spacing();
         ImGui::TextColored(col(th.text_muted), "Public IP Address");
-        if (ImGui::BeginTable("##lobby_public_ip", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(440));
-            ImGui::TableSetupColumn("help", ImGuiTableColumnFlags_WidthFixed, px(36));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::SetNextItemWidth(-1.0f);
+        {
+            const float help_sz = ImGui::GetFrameHeight();
+            ImGui::SetNextItemWidth(w - help_sz - gap);
             np_copyable_readonly_input("##lobby_public_ip", m->netplay_public_ip,
                                        sizeof(m->netplay_public_ip), th);
-            ImGui::TableSetColumnIndex(1);
-            const float help_sz = ImGui::GetFrameHeight();
+            ImGui::SameLine(0, gap);
             if (ImGui::Button("?", ImVec2(help_sz, help_sz))) {
                 /* tooltip on hover only */
             }
@@ -6199,7 +6339,6 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
-            ImGui::EndTable();
         }
     } else {
         char lobby_server[256];
@@ -6208,508 +6347,238 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         std::snprintf(lobby_server, sizeof(lobby_server), "%s",
                       (url && url[0]) ? url : "lobby server");
         ImGui::TextColored(col(th.text_muted), "Lobby Server");
-        ImGui::SetNextItemWidth(px(480));
+        ImGui::SetNextItemWidth(-1.0f);
         np_copyable_readonly_input("##lobby_server", lobby_server,
                                    sizeof(lobby_server), th);
     }
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-#if RECOMP_UI_ENABLE_MODS
-    if (m->mods) {
-        /* Summarize the plan every peer will run (host-authoritative). */
-        const auto* lmods = m->mods;
-        const int lfc = lmods->feature_count ? lmods->feature_count(lmods->ctx) : 0;
-        int enabled_n = 0;
-        char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
-        for (int i = 0; i < lfc; ++i) {
-            RecompLauncherCModFeature f{};
-            if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
-            if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
-            ++enabled_n;
-        }
-        if (enabled_n == 0) {
-            ImGui::TextColored(col(th.text_muted), "Mods: vanilla match.");
-        } else if (enabled_n == 1) {
-            ImGui::TextColored(col(th.accent2), "Mods: %s", first_name);
-        } else {
-            ImGui::TextColored(col(th.accent2), "Mods: %s +%d more",
-                               first_name, enabled_n - 1);
-        }
-        ImGui::Spacing();
-    }
-#endif
-    if (m->netplay_status[0]) {
-        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
-        ImGui::Spacing();
-    }
+}
 
-    RecompLauncherCNetplayMember slots[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS]{};
-    bool occupied[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS] = {};
-    const bool is_host = np->is_host && np->is_host(np->ctx);
-    const int count = np->member_count ? np->member_count(np->ctx) : 0;
-    /* Prefer backend room ceiling, then sticky create/join value, then game max. */
-    int max_slots = 0;
-    if (np->lobby_max_slots) {
-        max_slots = np->lobby_max_slots(np->ctx);
-        if (max_slots >= 2) m->netplay_lobby_max_slots = max_slots;
-    }
-    if (max_slots < 2)
-        max_slots = m->netplay_lobby_max_slots > 0
-                        ? m->netplay_lobby_max_slots
-                        : np_game_max_players(m);
-    if (max_slots < 2) max_slots = 2;
-    if (max_slots > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
-        max_slots = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
-    /* The gallery, when the CURRENT lobby has one. Gated on the lobby rather
-     * than on the callback existing: a build that supports spectators still
-     * talks to hosts and servers that do not, and there the whole section has
-     * to be absent, not empty. */
-    const bool spectators_on =
-        np->lobby_allow_spectators && np->lobby_allow_spectators(np->ctx) != 0;
-    int spectator_seats = 0;
-    int spectator_base = 0;
-    if (spectators_on) {
-        if (np->lobby_max_spectators) spectator_seats = np->lobby_max_spectators(np->ctx);
-        if (spectator_seats > RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS)
-            spectator_seats = RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS;
-        /* The base comes from the backend, never assumed: it is the server's
-         * namespace. Without it the two views could overlap, and a drag would
-         * resolve to the wrong row. */
-        if (np->spectator_slot) spectator_base = np->spectator_slot(np->ctx, 0);
-        if (spectator_base <= 0) spectator_seats = 0;
-    }
-    RecompLauncherCNetplayMember specs[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS]{};
-    bool spec_occupied[RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS] = {};
-    for (int i = 0; i < count; ++i) {
-        RecompLauncherCNetplayMember mem{};
-        if (!np->member_get || !np->member_get(np->ctx, i, &mem)) continue;
-        if (mem.is_spectator) {
-            const int pos = spectator_seats ? mem.slot - spectator_base : -1;
-            if (pos < 0 || pos >= spectator_seats) continue;
-            specs[pos] = mem;
-            spec_occupied[pos] = mem.display_name[0] != '\0';
-            continue;
-        }
-        if (mem.slot < 0 || mem.slot >= RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS) continue;
-        slots[mem.slot] = mem;
-        occupied[mem.slot] = mem.display_name[0] != '\0';
-    }
-    int seated_players = 0;
-    for (int slot = 0; slot < max_slots; ++slot)
-        if (occupied[slot]) ++seated_players;
-    /* Mod readiness: a seated peer publishes ready=0 while it is still
-     * missing this lobby's mod plan, so the host can hold the launch until
-     * everyone can actually run the match. The host's own seat is covered by
-     * its local catalog (it is the source of the plan). */
-    int peers_not_ready = 0;
-    char not_ready_names[160] = {0};
-    for (int slot = 0; slot < max_slots; ++slot) {
-        if (!occupied[slot] || slots[slot].is_host) continue;
-        if (slots[slot].ready) continue;
-        ++peers_not_ready;
-        /* Name them: "somebody is missing mods" is not actionable when the
-         * player in question is looking at a green screen. */
-        const size_t used = std::strlen(not_ready_names);
-        std::snprintf(not_ready_names + used, sizeof(not_ready_names) - used,
-                      "%s%s", used ? ", " : "", slots[slot].display_name);
-    }
-    const bool link_kind =
-        max_slots >= 4 &&
-        (((np->lobby_kind_get && np->lobby_kind_get(np->ctx) == 1)) ||
-         (np->link_lobby_supported && np->link_lobby_supported(np->ctx)));
-    const float text_h = ImGui::GetTextLineHeight();
-    LobbySeatView views[2];
-    int nviews = 0;
-    const int player_view = nviews;
-    views[nviews++] = LobbySeatView{slots,   occupied,      max_slots,
-                                    0,               false, "P"};
-    if (spectator_seats > 0)
-        views[nviews++] = LobbySeatView{specs, spec_occupied, spectator_seats,
-                                        spectator_base,  true,  "S"};
-    const float text_h_ = text_h;
-    auto seat_table = [&](const char* id, const char* title, int vi, int lo,
-                          int hi) {
-        if (title) ImGui::TextColored(col(th.text_muted), "%s", title);
-        if (ImGui::BeginTable(id, 6,
-                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                              ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
-            ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(40));
-            ImGui::TableSetupColumn(views[vi].spectator ? "Spectator" : "Player",
-                                    ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(100));
-            ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(72));
-            ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
-            ImGui::TableHeadersRow();
-            for (int pos = lo; pos < hi; ++pos)
-                draw_lobby_seat_row(m, th, np, views[vi], pos, views, nviews,
-                                    is_host, text_h_);
-            ImGui::EndTable();
-        }
-    };
-    if (link_kind) {
-        /* PSX-Link: two consoles over the serial cable. The host can drag
-         * players between the tables; seats 0/1 race on console A, 2/3 on
-         * console B. Slot 0 (host / sim authority) stays on console A. */
-        ImGui::TextColored(col(th.accent), "PSX-Link lobby");
+/* Match settings, inline. The host edits; everyone else reads the host's
+ * choices (the getters return host-authoritative caps for guests). This used
+ * to be a "Lobby Settings" popup behind a button; with a full page there is
+ * room to keep it in view, which is where a setting that changes everyone's
+ * input lag belongs. */
+static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
+                                      const RecompLauncherCNetplayCallbacks* np,
+                                      bool is_host) {
+    ImGui::TextColored(col(th.accent2), "MATCH SETTINGS");
+    if (!is_host) {
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted),
-                           " — two linked consoles, 2 players each");
-        seat_table("lobby_players_a", "Console A — Players 1 & 2", player_view,
-                   0, 2);
-        ImGui::Spacing();
-        seat_table("lobby_players_b", "Console B — Players 3 & 4", player_view,
-                   2, max_slots < 4 ? max_slots : 4);
-        {
-            bool b_occupied = false;
-            for (int i = 2; i < 4 && i < max_slots; ++i)
-                if (occupied[i]) b_occupied = true;
-            if (!b_occupied)
-                ImGui::TextColored(col(th.text_muted),
-                    "Console B is empty — the match will start as a standard "
-                    "2-player race.");
-        }
-    } else {
-        seat_table("lobby_players",
-                   spectator_seats > 0 ? "Players" : nullptr, player_view, 0,
-                   max_slots);
-    }
-    /* Bring-your-own memory card summary: one line, only when it is on, so
-     * every peer sees the same thing the launch will do. */
-    if (max_slots > 1 && occupied[1] && np->memcard_offer_set &&
-        np_local_memcard_has_card(m) >= 0 && slots[1].memcard_offer_valid &&
-        slots[1].memcard_has_card && slots[1].memcard_share &&
-        (!np->guest_memcard_get || np->guest_memcard_get(np->ctx))) {
-        ImGui::TextColored(col(th.text_muted),
-                           "P2 (%s) brings their memory card — it is slot 2 for "
-                           "everyone this match.",
-                           slots[1].display_name);
-    }
-    if (spectator_seats > 0) {
-        ImGui::Spacing();
-        seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
-                   spectator_seats);
-    }
-    /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
-     * about save-state compatibility, not kernel-RAM details.
-     * Orange OpenBIOS override only when a peer cannot run SCPH; host retail
-     * preference otherwise settles SCPH (even if a guest prefers OpenBIOS).
-     *
-     * PSX only. A BIOS choice exists on no other console this launcher serves,
-     * and the block below reads a MISSING offer as "prefers OpenBIOS" -- which
-     * on an SNES lobby, where nobody ever sends one, printed "Host has selected
-     * OpenBIOS for this session" over a Gundam Wing seat table. The notice is
-     * derived from PSX data; where that data cannot exist, so cannot the
-     * notice. */
-    const SystemProfile* bios_prof = (const SystemProfile*)m->profile;
-    if (bios_prof && bios_prof->id && std::strcmp(bios_prof->id, "psx") == 0) {
-        int host_prefer_open = 0;
-        int host_found = 0;
-        int all_can_scph = 1;
-        int saw = 0;
-        for (int slot = 0; slot < max_slots; ++slot) {
-            if (!occupied[slot]) continue;
-            ++saw;
-            const int offer_ok = slots[slot].bios_offer_valid;
-            const int prefer_open = !offer_ok || slots[slot].bios_prefer_openbios;
-            const int can_scph = offer_ok && slots[slot].bios_can_scph1001;
-            if (slots[slot].is_host) {
-                host_found = 1;
-                host_prefer_open = prefer_open ? 1 : 0;
-            }
-            if (!can_scph) all_can_scph = 0;
-        }
-        if (saw >= 1 && host_found) {
-            ImGui::Spacing();
-            ImGui::PushTextWrapPos(0.0f);
-            if (host_prefer_open) {
-                ImGui::TextColored(
-                    col(th.good),
-                    "Host has selected OpenBIOS for this session.\n"
-                    "Note: Save states are not cross compatible with SCPH1001 "
-                    "and OpenBIOS sessions");
-            } else if (all_can_scph) {
-                ImGui::TextColored(
-                    col(th.good),
-                    "All users agree on proprietary BIOS SCPH1001.bin for this "
-                    "session.\n"
-                    "Note: Save states are not cross compatible with SCPH1001 "
-                    "and OpenBIOS sessions");
-            } else {
-                ImGui::TextColored(
-                    col(th.warn),
-                    "1 or more users lacks proprietary BIOS, using OpenBIOS for "
-                    "this session instead.\n"
-                    "Note: Save states are not cross compatible with SCPH1001 "
-                    "and OpenBIOS sessions");
-            }
-            ImGui::PopTextWrapPos();
-        }
+        ImGui::TextColored(col(th.text_muted), " (set by the host)");
     }
     ImGui::Spacing();
+    if (!is_host || !g_lobby_settings_synced) {
+        if (np->input_delay_get)
+            m->netplay_lobby_input_delay = np->input_delay_get(np->ctx);
+        if (m->netplay_lobby_input_delay < 2) m->netplay_lobby_input_delay = 2;
+        if (m->netplay_lobby_input_delay > 20) m->netplay_lobby_input_delay = 20;
+        if (np->input_prediction_get)
+            m->netplay_lobby_input_prediction = np->input_prediction_get(np->ctx);
+        if (m->netplay_lobby_input_prediction < 2)
+            m->netplay_lobby_input_prediction = 2;
+        if (m->netplay_lobby_input_prediction > 16)
+            m->netplay_lobby_input_prediction = 16;
+        if (np->rollback_get)
+            m->netplay_rollback = np->rollback_get(np->ctx) != 0;
+        if (m->netplay_local_room) {
+            m->netplay_force_input_relay = false;
+            m->netplay_force_turn = false;
+        } else {
+            if (np->force_input_relay_get)
+                m->netplay_force_input_relay =
+                    np->force_input_relay_get(np->ctx) != 0;
+            if (np->force_turn_get)
+                m->netplay_force_turn = np->force_turn_get(np->ctx) != 0;
+        }
+        g_lobby_settings_synced = true;
+    }
+    ImGui::BeginDisabled(!is_host);
     {
-        const float btn_h = px(36);
-        const float leave_w = px(130);
-        const float settings_w = px(110);
-        const float mods_w = px(110);
-        const float play_w = px(150);
-        const float gap = px(10);
-        const float row_w = ImGui::GetContentRegionAvail().x;
-        const float row_x = ImGui::GetCursorPosX();
-        const float row_y = ImGui::GetCursorPosY();
-
-        /* Leave — red, pinned left. */
-        const LngColor leave_bg = {0.72f, 0.20f, 0.24f, 1.0f};
-        const LngColor leave_hov = {0.84f, 0.28f, 0.32f, 1.0f};
-        const LngColor leave_act = {0.58f, 0.14f, 0.18f, 1.0f};
-        ImGui::SetCursorPos(ImVec2(row_x, row_y));
-        ImGui::PushStyleColor(ImGuiCol_Button, col(leave_bg));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col(leave_hov));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(leave_act));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        if (ImGui::Button("Leave Lobby", ImVec2(leave_w, btn_h))) {
-            m->netplay_local_room = false;
-            m->netplay_lobby_settings_open = false;
-            m->netplay_lobby_mods_open = false;
-            m->netplay_lobby_max_slots = 0;
-            if (np->leave) (void)np->leave(np->ctx);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::PopStyleColor(4);
-
-        if (is_host) {
-            ImGui::SetCursorPos(ImVec2(row_x + leave_w + gap, row_y));
-            if (ImGui::Button("Settings", ImVec2(settings_w, btn_h))) {
-                if (np->input_delay_get)
-                    m->netplay_lobby_input_delay = np->input_delay_get(np->ctx);
-                if (m->netplay_lobby_input_delay < 2)
-                    m->netplay_lobby_input_delay = 2;
-                if (m->netplay_lobby_input_delay > 20)
-                    m->netplay_lobby_input_delay = 20;
-                if (np->input_prediction_get)
-                    m->netplay_lobby_input_prediction =
-                        np->input_prediction_get(np->ctx);
-                if (m->netplay_lobby_input_prediction < 2)
-                    m->netplay_lobby_input_prediction = 2;
-                if (m->netplay_lobby_input_prediction > 16)
-                    m->netplay_lobby_input_prediction = 16;
-                if (np->rollback_get)
-                    m->netplay_rollback = np->rollback_get(np->ctx) != 0;
-                if (m->netplay_local_room) {
-                    m->netplay_force_input_relay = false;
-                    m->netplay_force_turn = false;
-                } else {
-                    if (np->force_input_relay_get) {
-                        m->netplay_force_input_relay =
-                            np->force_input_relay_get(np->ctx) != 0;
-                    }
-                    if (np->force_turn_get) {
-                        m->netplay_force_turn =
-                            np->force_turn_get(np->ctx) != 0;
-                    }
-                }
-                m->netplay_lobby_settings_open = true;
-            }
-        }
-
-#if RECOMP_UI_ENABLE_MODS
-        /* Mods — host picks the lobby's set; guests get the read-only view of
-         * what they will run (the host's plan is authoritative at launch). */
-        if (m->mods) {
-            ImGui::SetCursorPos(
-                ImVec2(row_x + leave_w + gap + (is_host ? settings_w + gap : 0.0f),
-                       row_y));
-            if (ImGui::Button(is_host ? "Mods" : "View Mods",
-                              ImVec2(mods_w, btn_h))) {
-                m->netplay_lobby_mods_open = true;
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::SetTooltip(is_host
-                    ? "Pick the mods everyone in this lobby will run"
-                    : "See the mods the host has enabled for this lobby");
-            }
-        }
-#endif
-
-        if (is_host) {
-            /* ▶ Play — green, pinned right. */
-            const LngColor play_bg = th.good;
-            auto clamp01 = [](float v) { return v > 1.0f ? 1.0f : v; };
-            const LngColor play_hov = {
-                clamp01(th.good.r * 1.15f),
-                clamp01(th.good.g * 1.15f),
-                clamp01(th.good.b * 1.15f),
-                1.0f};
-            const LngColor play_act = {
-                th.good.r * 0.85f, th.good.g * 0.85f, th.good.b * 0.85f, 1.0f};
-            ImGui::SetCursorPos(ImVec2(row_x + row_w - play_w, row_y));
-            ImGui::PushStyleColor(ImGuiCol_Button, col(play_bg));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col(play_hov));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(play_act));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            /* Require two seated players, without waiting for every open seat.
-             * Count only visible game slots: a host sitting alone in P2 after a
-             * seat swap must not satisfy the start gate. */
-            const bool can_start = seated_players >= 2 && peers_not_ready == 0;
-            ImGui::BeginDisabled(!can_start);
-            const char* blocked_why =
-                seated_players < 2
-                    ? "Waiting for another player to join"
-                    : (peers_not_ready > 0
-                           ? "Waiting for every player to install this "
-                             "lobby's mods"
-                           : nullptr);
-            if (ImGui::Button(u8"\u25B6 Play", ImVec2(play_w, btn_h))) {
-                /* Ensure engine match_caps.rollback matches UI before start. */
+        /* Disable Rollback first — gates Manual Input Prediction below. */
+        {
+            bool disable_rb = !m->netplay_rollback;
+            if (np->rollback_get)
+                disable_rb = np->rollback_get(np->ctx) == 0;
+            if (ImGui::Checkbox("Disable Rollback", &disable_rb)) {
+                m->netplay_rollback = !disable_rb;
                 if (np->rollback_set)
                     (void)np->rollback_set(np->ctx, m->netplay_rollback ? 1 : 0);
-                const bool use_rb = m->netplay_rollback;
-                const int max_rtt = np_lobby_max_peer_rtt_ms(m, np);
-                /* Auto D: rollback uses §59 WAN-aware tiers; delay-sync uses
-                 * the padded one-way formula. Manual keeps Lobby Settings.
-                 *
-                 * No TURN penalty. force_turn is a delay-floor HINT that does
-                 * not change online transport (§108: online is always the
-                 * lobby SFU), and TURN is deployed co-located with that SFU —
-                 * so relaying through it costs a localhost hop, not a second
-                 * WAN leg. The old padding (RTT floored to 80ms, +40ms, then
-                 * D floored at 6) compensated for a cost that is not paid: it
-                 * inflated D on every relayed session, and since P = 4 + D it
-                 * inflated the invent runway with it. The measured peer RTT
-                 * already traverses the relay in use, so it needs no fudge. */
-                if (!m->netplay_manual_input_delay && np->input_delay_set) {
-                    int delay = use_rb
-                        ? np_rb_delay_frames_from_rtt_ms(max_rtt)
-                        : np_delay_frames_from_rtt_ms(max_rtt);
-                    m->netplay_lobby_input_delay = delay;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(
+                    "Off (default): invent missing remote inputs and correct "
+                    "with rollback episodes (match_caps.rollback=1).\n\n"
+                    "On: force delay-sync for the match. Manual Input "
+                    "Prediction is locked out; only Input Delay applies.");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Manual Input Delay");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text_muted), "(frames)");
+        {
+            bool manual = m->netplay_manual_input_delay;
+            if (ImGui::Checkbox("##manual_input_delay", &manual))
+                m->netplay_manual_input_delay = manual;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(
+                    "Off (default): at match start the host sets input delay "
+                    "from the highest peer latency in the lobby.\n\n"
+                    "On: use the frame value to the right for every player.");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!m->netplay_manual_input_delay);
+            ImGui::SetNextItemWidth(px(140));
+            int delay = m->netplay_lobby_input_delay;
+            if (ImGui::InputInt("##lobby_input_delay", &delay, 1, 1)) {
+                if (delay < 2) delay = 2;
+                if (delay > 20) delay = 20;
+                m->netplay_lobby_input_delay = delay;
+                if (np->input_delay_set)
                     (void)np->input_delay_set(np->ctx, delay);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                delay = m->netplay_lobby_input_delay;
+                if (delay < 2) delay = 2;
+                if (delay > 20) delay = 20;
+                m->netplay_lobby_input_delay = delay;
+                if (np->input_delay_set)
+                    (void)np->input_delay_set(np->ctx, delay);
+            }
+            ImGui::SameLine();
+            {
+                const float help_sz = ImGui::GetFrameHeight();
+                if (ImGui::Button("?##input_delay_help", ImVec2(help_sz, help_sz))) {
                 }
-                /* Auto P (rollback only): invent runway from RTT + committed D. */
-                if (use_rb && !m->netplay_manual_input_prediction &&
-                    np->input_prediction_set) {
-                    const int pred = np_rb_prediction_frames_from_rtt_ms(
-                        max_rtt, m->netplay_lobby_input_delay);
-                    m->netplay_lobby_input_prediction = pred;
-                    (void)np->input_prediction_set(np->ctx, pred);
-                }
-                if (np->set_ready)
-                    (void)np->set_ready(np->ctx,
-                                        np->lobby_mods_missing
-                                            ? (np->lobby_mods_missing(np->ctx) == 0)
-                                            : 1);
-                const int rc = np->request_start
-                    ? np->request_start(np->ctx, &m->s) : -1;
-                if (rc != 0) {
-                    std::snprintf(m->netplay_status, sizeof(m->netplay_status),
-                                  "Could not start lobby (need at least two "
-                                  "players, or server rejected start).");
-                } else {
-                    m->netplay_status[0] = '\0';
-                    /* LAN arms launch_pending inside request_start so host can
-                     * leave this frame. Online must wait for the server's
-                     * op:launch (drawn frames keep calling launch_pending) so
-                     * every peer boots together — do not fill from lobby seat. */
-                    if (np->launch_pending && np->launch_pending(np->ctx))
-                        np_try_launch(m);
-                    else
-                        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
-                                      "Starting match…");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(px(360));
+                    ImGui::TextUnformatted(
+                        "Committed input delay D (send lead / buffer).\n\n"
+                        "With rollback (Disable Rollback off), auto D from "
+                        "max peer RTT (§59/§60 WAN-aware):\n"
+                        "  0–50 ms → 3, 50–80 → 4, 80–120 → 6,\n"
+                        "  120–160 → 7, then steps up (floor 3).\n"
+                        "Forced TURN floors at 6 (lobby RTT underestimates "
+                        "the relay path).\n\n"
+                        "With delay-sync (Disable Rollback on), auto D covers "
+                        "one-way RTT at 60 Hz plus a 3-frame jitter pad:\n"
+                        "  D = ceil(RTT_ms / 33.3) + 3  (min 3, max 20)\n\n"
+                        "Too low stalls when packets arrive late. Too high adds "
+                        "input lag for everyone.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
                 }
             }
             ImGui::EndDisabled();
-            /* Tooltips do not fire on a disabled item unless we allow it. */
-            if (blocked_why &&
-                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", blocked_why);
-            ImGui::PopStyleColor(4);
         }
-        /* Advance layout past the button row. */
-        ImGui::SetCursorPos(ImVec2(row_x, row_y + btn_h));
-        ImGui::Dummy(ImVec2(row_w, 0));
-    }
-
-#if RECOMP_UI_ENABLE_MODS
-    /* Mod readiness line: the host cannot start until every peer can run the
-     * plan, so say plainly which state the room is in — and warn about what
-     * downloading a mod actually means (it is code from another player). */
-    if (m->mods && np->lobby_mods_count) {
-        const int lobby_mod_n = np->lobby_mods_count(np->ctx);
         ImGui::Spacing();
-        if (lobby_mod_n <= 0) {
-            ImGui::TextColored(col(th.text_muted),
-                               "No mods required — vanilla match.");
-        } else if (peers_not_ready == 0) {
-            ImGui::TextColored(col(th.good),
-                               "All players have this lobby's mods installed "
-                               "and are ready.");
-        } else {
-            ImGui::TextColored(col(th.warn),
-                               "Waiting on: %s — this lobby's mods are not "
-                               "confirmed installed there yet. They can open "
-                               "'View Mods' to download them from the host. "
-                               "The match cannot start until then.",
-                               not_ready_names[0] ? not_ready_names
-                                                  : "another player");
-        }
-        if (lobby_mod_n > 0) {
-            ImGui::TextColored(col(th.text_muted),
-                               "Mods are code that runs on your machine. Only "
-                               "download them from a host you trust.");
-        }
-    }
-#endif
-
-    /* Seat trade: somebody asked to swap with this player. Modal, because
-     * agreeing moves them out of the seat they chose. */
-    if (np->seat_swap_incoming) {
-        char who[64] = {0};
-        int from_slot = -1;
-        if (np->seat_swap_incoming(np->ctx, who, sizeof(who), &from_slot)) {
-            ImGui::OpenPopup("Swap seats?");
-            if (ImGui::BeginPopupModal("Swap seats?", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("%s wants to swap seats with you.",
-                            who[0] ? who : "Another player");
-                if (from_slot >= 0)
-                    ImGui::TextColored(col(th.text_muted),
-                                       "They are in P%d; you would move there.",
-                                       from_slot + 1);
-                ImGui::Spacing();
-                if (ImGui::Button("Swap", ImVec2(px(120), 0))) {
-                    if (np->seat_swap_respond)
-                        (void)np->seat_swap_respond(np->ctx, 1);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Keep my seat", ImVec2(px(140), 0))) {
-                    if (np->seat_swap_respond)
-                        (void)np->seat_swap_respond(np->ctx, 0);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
+        ImGui::TextUnformatted("Manual Input Prediction");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text_muted), "(frames)");
+        {
+            const bool rb_on = m->netplay_rollback;
+            ImGui::BeginDisabled(!rb_on);
+            bool manual_p = m->netplay_manual_input_prediction;
+            if (ImGui::Checkbox("##manual_input_prediction", &manual_p))
+                m->netplay_manual_input_prediction = manual_p;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(
+                    "Rollback invent runway P. Off (default): host sets P from "
+                    "peer RTT at match start. On: use the frame value to the "
+                    "right.\n\n"
+                    "Locked when Disable Rollback is on (delay-sync).");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
             }
-        }
-    }
-    /* Outcome of a swap this player asked for. */
-    if (np->seat_swap_outgoing) {
-        const int st = np->seat_swap_outgoing(np->ctx);
-        if (st == 1) {
-            ImGui::TextColored(col(th.text_muted),
-                               "Waiting for the other player to accept the seat "
-                               "swap…");
-        } else if (st == -1) {
-            ImGui::TextColored(col(th.warn),
-                               "That player kept their seat.");
             ImGui::SameLine();
-            if (ImGui::SmallButton("OK##swapres") && np->seat_swap_clear)
-                np->seat_swap_clear(np->ctx);
-        } else if (st == 2) {
-            if (np->seat_swap_clear) np->seat_swap_clear(np->ctx);
+            ImGui::BeginDisabled(!rb_on || !m->netplay_manual_input_prediction);
+            ImGui::SetNextItemWidth(px(140));
+            int pred = m->netplay_lobby_input_prediction;
+            if (ImGui::InputInt("##lobby_input_prediction", &pred, 1, 1)) {
+                if (pred < 2) pred = 2;
+                if (pred > 16) pred = 16;
+                m->netplay_lobby_input_prediction = pred;
+                if (np->input_prediction_set)
+                    (void)np->input_prediction_set(np->ctx, pred);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                pred = m->netplay_lobby_input_prediction;
+                if (pred < 2) pred = 2;
+                if (pred > 16) pred = 16;
+                m->netplay_lobby_input_prediction = pred;
+                if (np->input_prediction_set)
+                    (void)np->input_prediction_set(np->ctx, pred);
+            }
+            ImGui::SameLine();
+            {
+                const float help_sz = ImGui::GetFrameHeight();
+                if (ImGui::Button("?##input_prediction_help",
+                                 ImVec2(help_sz, help_sz))) {
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(px(360));
+                    ImGui::TextUnformatted(
+                        "How far ahead of the remote tip a peer may invent "
+                        "hold-last inputs before stalling (phase_lock).\n\n"
+                        "Tip: prediction should be 4 + delay.\n\n"
+                        "Auto (checkbox off): P = 4 + D (clamped 6..16).\n"
+                        "Manual: keep the same relationship unless you are "
+                        "deliberately tuning.\n\n"
+                        "Outside this window the fast peer freezes until the "
+                        "buffer refills; sustained freezes raise delay.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+            }
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+        }
+        ImGui::Spacing();
+        if (launcher_model_multitap_analog_available(m)) {
+            bool analog_hack = m->s.multitap_analog != 0;
+            if (np->multitap_analog_get)
+                analog_hack = np->multitap_analog_get(np->ctx) != 0;
+            if (ImGui::Checkbox("Multitap analog (hack)", &analog_hack)) {
+                m->s.multitap_analog = analog_hack ? 1 : 0;
+                if (np->multitap_analog_set)
+                    (void)np->multitap_analog_set(np->ctx, analog_hack ? 1 : 0);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextUnformatted(
+                    "Host-enforced DualShock sticks on multitap tap seats for "
+                    "this match (match_caps.multitap_analog). Off = faithful "
+                    "digital taps. Peers apply the host setting at launch.");
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            ImGui::Spacing();
         }
     }
+    ImGui::EndDisabled();
+}
 
 #if RECOMP_UI_ENABLE_MODS
+/* Lobby mod picker: the HOST owns the session plan. Every peer applies the
+ * host's required-mod list at launch (match_caps.mods), so guests get a
+ * read-only view of what they are about to run. Compact by design — the full
+ * Mods page stays the place to install packages and read details. */
+static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
+                                  const RecompLauncherCNetplayCallbacks* np,
+                                  bool is_host) {
     /* Lobby mod picker: the HOST owns the session plan. Every peer applies
      * the host's required-mod list at launch (match_caps.mods), so guests get
      * a read-only view of what they are about to run. Compact by design — the
@@ -7066,192 +6935,401 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::EndPopup();
     }
+}
+
+/* The plan summary + readiness, and the way into the picker. */
+static void draw_lobby_mods_panel(LauncherModel* m, const LauncherTheme& th,
+                                  const RecompLauncherCNetplayCallbacks* np,
+                                  const LobbySnapshot& s) {
+    if (!m->mods) return;
+    ImGui::TextColored(col(th.accent2), "MODS");
+    ImGui::Spacing();
+    /* Summarize the plan every peer will run (host-authoritative). */
+    const auto* lmods = m->mods;
+    const int lfc = lmods->feature_count ? lmods->feature_count(lmods->ctx) : 0;
+    int enabled_n = 0;
+    char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
+    for (int i = 0; i < lfc; ++i) {
+        RecompLauncherCModFeature f{};
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
+        ++enabled_n;
+    }
+    if (enabled_n == 0)
+        ImGui::TextColored(col(th.text_muted), "Vanilla match.");
+    else if (enabled_n == 1)
+        ImGui::TextColored(col(th.accent2), "%s", first_name);
+    else
+        ImGui::TextColored(col(th.accent2), "%s +%d more", first_name, enabled_n - 1);
+    /* Mods — host picks the lobby's set; guests get the read-only view of
+     * what they will run (the host's plan is authoritative at launch). */
+    if (ImGui::Button(s.is_host ? "Choose mods…" : "View mods…",
+                      ImVec2(px(150), px(30))))
+        m->netplay_lobby_mods_open = true;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip(s.is_host
+            ? "Pick the mods everyone in this lobby will run"
+            : "See the mods the host has enabled for this lobby");
+    /* Readiness: the host cannot start until every peer can run the plan,
+     * so say plainly which state the room is in — and warn about what
+     * downloading a mod actually means (it is code from another player). */
+    if (np->lobby_mods_count) {
+        const int lobby_mod_n = np->lobby_mods_count(np->ctx);
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        if (lobby_mod_n <= 0) {
+            ImGui::TextColored(col(th.text_muted),
+                               "No mods required — vanilla match.");
+        } else if (s.peers_not_ready == 0) {
+            ImGui::TextColored(col(th.good),
+                               "All players have this lobby's mods installed "
+                               "and are ready.");
+        } else {
+            ImGui::TextColored(col(th.warn),
+                               "Waiting on: %s — this lobby's mods are not "
+                               "confirmed installed there yet. They can open "
+                               "'View mods' to download them from the host. "
+                               "The match cannot start until then.",
+                               s.not_ready_names[0] ? s.not_ready_names
+                                                    : "another player");
+        }
+        if (lobby_mod_n > 0) {
+            ImGui::TextColored(col(th.text_muted),
+                               "Mods are code that runs on your machine. Only "
+                               "download them from a host you trust.");
+        }
+        ImGui::PopTextWrapPos();
+    }
+}
 #endif
 
-    if (is_host && m->netplay_lobby_settings_open)
-        ImGui::OpenPopup("Lobby Settings");
-    if (ImGui::BeginPopupModal("Lobby Settings", &m->netplay_lobby_settings_open,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        /* Disable Rollback first — gates Manual Input Prediction below. */
-        {
-            bool disable_rb = !m->netplay_rollback;
-            if (np->rollback_get)
-                disable_rb = np->rollback_get(np->ctx) == 0;
-            if (ImGui::Checkbox("Disable Rollback", &disable_rb)) {
-                m->netplay_rollback = !disable_rb;
-                if (np->rollback_set)
-                    (void)np->rollback_set(np->ctx, m->netplay_rollback ? 1 : 0);
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(px(360));
-                ImGui::TextUnformatted(
-                    "Off (default): invent missing remote inputs and correct "
-                    "with rollback episodes (match_caps.rollback=1).\n\n"
-                    "On: force delay-sync for the match. Manual Input "
-                    "Prediction is locked out; only Input Delay applies.");
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-        }
-        ImGui::Spacing();
-        ImGui::TextUnformatted("Manual Input Delay");
-        ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), "(frames)");
-        {
-            bool manual = m->netplay_manual_input_delay;
-            if (ImGui::Checkbox("##manual_input_delay", &manual))
-                m->netplay_manual_input_delay = manual;
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(px(360));
-                ImGui::TextUnformatted(
-                    "Off (default): at match start the host sets input delay "
-                    "from the highest peer latency in the lobby.\n\n"
-                    "On: use the frame value to the right for every player.");
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!m->netplay_manual_input_delay);
-            ImGui::SetNextItemWidth(px(140));
-            int delay = m->netplay_lobby_input_delay;
-            if (ImGui::InputInt("##lobby_input_delay", &delay, 1, 1)) {
-                if (delay < 2) delay = 2;
-                if (delay > 20) delay = 20;
-                m->netplay_lobby_input_delay = delay;
-                if (np->input_delay_set)
-                    (void)np->input_delay_set(np->ctx, delay);
-            }
-            if (ImGui::IsItemDeactivatedAfterEdit()) {
-                delay = m->netplay_lobby_input_delay;
-                if (delay < 2) delay = 2;
-                if (delay > 20) delay = 20;
-                m->netplay_lobby_input_delay = delay;
-                if (np->input_delay_set)
-                    (void)np->input_delay_set(np->ctx, delay);
-            }
-            ImGui::SameLine();
-            {
-                const float help_sz = ImGui::GetFrameHeight();
-                if (ImGui::Button("?##input_delay_help", ImVec2(help_sz, help_sz))) {
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(px(360));
-                    ImGui::TextUnformatted(
-                        "Committed input delay D (send lead / buffer).\n\n"
-                        "With rollback (Disable Rollback off), auto D from "
-                        "max peer RTT (§59/§60 WAN-aware):\n"
-                        "  0–50 ms → 3, 50–80 → 4, 80–120 → 6,\n"
-                        "  120–160 → 7, then steps up (floor 3).\n"
-                        "Forced TURN floors at 6 (lobby RTT underestimates "
-                        "the relay path).\n\n"
-                        "With delay-sync (Disable Rollback on), auto D covers "
-                        "one-way RTT at 60 Hz plus a 3-frame jitter pad:\n"
-                        "  D = ceil(RTT_ms / 33.3) + 3  (min 3, max 20)\n\n"
-                        "Too low stalls when packets arrive late. Too high adds "
-                        "input lag for everyone.");
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            }
-            ImGui::EndDisabled();
-        }
-        ImGui::Spacing();
-        ImGui::TextUnformatted("Manual Input Prediction");
-        ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), "(frames)");
-        {
-            const bool rb_on = m->netplay_rollback;
-            ImGui::BeginDisabled(!rb_on);
-            bool manual_p = m->netplay_manual_input_prediction;
-            if (ImGui::Checkbox("##manual_input_prediction", &manual_p))
-                m->netplay_manual_input_prediction = manual_p;
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(px(360));
-                ImGui::TextUnformatted(
-                    "Rollback invent runway P. Off (default): host sets P from "
-                    "peer RTT at match start. On: use the frame value to the "
-                    "right.\n\n"
-                    "Locked when Disable Rollback is on (delay-sync).");
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!rb_on || !m->netplay_manual_input_prediction);
-            ImGui::SetNextItemWidth(px(140));
-            int pred = m->netplay_lobby_input_prediction;
-            if (ImGui::InputInt("##lobby_input_prediction", &pred, 1, 1)) {
-                if (pred < 2) pred = 2;
-                if (pred > 16) pred = 16;
-                m->netplay_lobby_input_prediction = pred;
-                if (np->input_prediction_set)
-                    (void)np->input_prediction_set(np->ctx, pred);
-            }
-            if (ImGui::IsItemDeactivatedAfterEdit()) {
-                pred = m->netplay_lobby_input_prediction;
-                if (pred < 2) pred = 2;
-                if (pred > 16) pred = 16;
-                m->netplay_lobby_input_prediction = pred;
-                if (np->input_prediction_set)
-                    (void)np->input_prediction_set(np->ctx, pred);
-            }
-            ImGui::SameLine();
-            {
-                const float help_sz = ImGui::GetFrameHeight();
-                if (ImGui::Button("?##input_prediction_help",
-                                 ImVec2(help_sz, help_sz))) {
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(px(360));
-                    ImGui::TextUnformatted(
-                        "How far ahead of the remote tip a peer may invent "
-                        "hold-last inputs before stalling (phase_lock).\n\n"
-                        "Tip: prediction should be 4 + delay.\n\n"
-                        "Auto (checkbox off): P = 4 + D (clamped 6..16).\n"
-                        "Manual: keep the same relationship unless you are "
-                        "deliberately tuning.\n\n"
-                        "Outside this window the fast peer freezes until the "
-                        "buffer refills; sustained freezes raise delay.");
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            }
-            ImGui::EndDisabled();
-            ImGui::EndDisabled();
-        }
-        ImGui::Spacing();
-        if (launcher_model_multitap_analog_available(m)) {
-            bool analog_hack = m->s.multitap_analog != 0;
-            if (np->multitap_analog_get)
-                analog_hack = np->multitap_analog_get(np->ctx) != 0;
-            if (ImGui::Checkbox("Multitap analog (hack)", &analog_hack)) {
-                m->s.multitap_analog = analog_hack ? 1 : 0;
-                if (np->multitap_analog_set)
-                    (void)np->multitap_analog_set(np->ctx, analog_hack ? 1 : 0);
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(px(360));
-                ImGui::TextUnformatted(
-                    "Host-enforced DualShock sticks on multitap tap seats for "
-                    "this match (match_caps.multitap_analog). Off = faithful "
-                    "digital taps. Peers apply the host setting at launch.");
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            ImGui::Spacing();
-        }
-        if (ImGui::Button("Close", ImVec2(px(120), 0))) {
-            m->netplay_lobby_settings_open = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+/* The seat tables and everything that hangs off them. */
+static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
+                             const RecompLauncherCNetplayCallbacks* np,
+                             LobbySnapshot& s) {
+    ImGui::TextColored(col(th.accent2), "PLAYERS");
+    ImGui::SameLine();
+    ImGui::TextColored(col(th.text_muted), "  %d / %d seated",
+                       s.seated_players, s.max_slots);
+    if (m->netplay_status[0]) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+        ImGui::PopTextWrapPos();
     }
-    ImGui::EndPopup();
+    ImGui::Spacing();
+
+    const float text_h = ImGui::GetTextLineHeight();
+    LobbySeatView views[2];
+    int nviews = 0;
+    const int player_view = nviews;
+    views[nviews++] = LobbySeatView{s.slots, s.occupied, s.max_slots, 0, false, "P"};
+    if (s.spectator_seats > 0)
+        views[nviews++] = LobbySeatView{s.specs, s.spec_occupied, s.spectator_seats,
+                                        s.spectator_base, true, "S"};
+    auto seat_table = [&](const char* id, const char* title, int vi, int lo,
+                          int hi) {
+        if (title) ImGui::TextColored(col(th.text_muted), "%s", title);
+        if (ImGui::BeginTable(id, 6,
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                              ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
+            ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(40));
+            ImGui::TableSetupColumn(views[vi].spectator ? "Spectator" : "Player",
+                                    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(100));
+            ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(72));
+            ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
+            ImGui::TableHeadersRow();
+            for (int pos = lo; pos < hi; ++pos)
+                draw_lobby_seat_row(m, th, np, views[vi], pos, views, nviews,
+                                    s.is_host, text_h);
+            ImGui::EndTable();
+        }
+    };
+    if (s.link_kind) {
+        /* PSX-Link: two consoles over the serial cable. The host can drag
+         * players between the tables; seats 0/1 race on console A, 2/3 on
+         * console B. Slot 0 (host / sim authority) stays on console A. */
+        ImGui::TextColored(col(th.accent), "PSX-Link lobby");
+        ImGui::SameLine();
+        ImGui::TextColored(col(th.text_muted),
+                           " — two linked consoles, 2 players each");
+        seat_table("lobby_players_a", "Console A — Players 1 & 2", player_view,
+                   0, 2);
+        ImGui::Spacing();
+        seat_table("lobby_players_b", "Console B — Players 3 & 4", player_view,
+                   2, s.max_slots < 4 ? s.max_slots : 4);
+        {
+            bool b_occupied = false;
+            for (int i = 2; i < 4 && i < s.max_slots; ++i)
+                if (s.occupied[i]) b_occupied = true;
+            if (!b_occupied)
+                ImGui::TextColored(col(th.text_muted),
+                    "Console B is empty — the match will start as a standard "
+                    "2-player race.");
+        }
+    } else {
+        seat_table("lobby_players",
+                   s.spectator_seats > 0 ? "Players" : nullptr, player_view, 0,
+                   s.max_slots);
+    }
+    /* Bring-your-own memory card summary: one line, only when it is on, so
+     * every peer sees the same thing the launch will do. */
+    if (s.max_slots > 1 && s.occupied[1] && np->memcard_offer_set &&
+        np_local_memcard_has_card(m) >= 0 && s.slots[1].memcard_offer_valid &&
+        s.slots[1].memcard_has_card && s.slots[1].memcard_share &&
+        (!np->guest_memcard_get || np->guest_memcard_get(np->ctx))) {
+        ImGui::TextColored(col(th.text_muted),
+                           "P2 (%s) brings their memory card — it is slot 2 for "
+                           "everyone this match.",
+                           s.slots[1].display_name);
+    }
+    if (s.spectator_seats > 0) {
+        ImGui::Spacing();
+        seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
+                   s.spectator_seats);
+    }
+    /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
+     * about save-state compatibility, not kernel-RAM details.
+     * Orange OpenBIOS override only when a peer cannot run SCPH; host retail
+     * preference otherwise settles SCPH (even if a guest prefers OpenBIOS).
+     *
+     * PSX only. A BIOS choice exists on no other console this launcher serves,
+     * and the block below reads a MISSING offer as "prefers OpenBIOS" -- which
+     * on an SNES lobby, where nobody ever sends one, printed "Host has selected
+     * OpenBIOS for this session" over a Gundam Wing seat table. The notice is
+     * derived from PSX data; where that data cannot exist, so cannot the
+     * notice. */
+    const SystemProfile* bios_prof = (const SystemProfile*)m->profile;
+    if (bios_prof && bios_prof->id && std::strcmp(bios_prof->id, "psx") == 0) {
+        int host_prefer_open = 0;
+        int host_found = 0;
+        int all_can_scph = 1;
+        int saw = 0;
+        for (int slot = 0; slot < s.max_slots; ++slot) {
+            if (!s.occupied[slot]) continue;
+            ++saw;
+            const int offer_ok = s.slots[slot].bios_offer_valid;
+            const int prefer_open = !offer_ok || s.slots[slot].bios_prefer_openbios;
+            const int can_scph = offer_ok && s.slots[slot].bios_can_scph1001;
+            if (s.slots[slot].is_host) {
+                host_found = 1;
+                host_prefer_open = prefer_open ? 1 : 0;
+            }
+            if (!can_scph) all_can_scph = 0;
+        }
+        if (saw >= 1 && host_found) {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(0.0f);
+            if (host_prefer_open) {
+                ImGui::TextColored(
+                    col(th.good),
+                    "Host has selected OpenBIOS for this session.\n"
+                    "Note: Save states are not cross compatible with SCPH1001 "
+                    "and OpenBIOS sessions");
+            } else if (all_can_scph) {
+                ImGui::TextColored(
+                    col(th.good),
+                    "All users agree on proprietary BIOS SCPH1001.bin for this "
+                    "session.\n"
+                    "Note: Save states are not cross compatible with SCPH1001 "
+                    "and OpenBIOS sessions");
+            } else {
+                ImGui::TextColored(
+                    col(th.warn),
+                    "1 or more users lacks proprietary BIOS, using OpenBIOS for "
+                    "this session instead.\n"
+                    "Note: Save states are not cross compatible with SCPH1001 "
+                    "and OpenBIOS sessions");
+            }
+            ImGui::PopTextWrapPos();
+        }
+    }
+    /* Outcome of a swap this player asked for. */
+    if (np->seat_swap_outgoing) {
+        const int st = np->seat_swap_outgoing(np->ctx);
+        if (st == 1) {
+            ImGui::TextColored(col(th.text_muted),
+                               "Waiting for the other player to accept the seat "
+                               "swap…");
+        } else if (st == -1) {
+            ImGui::TextColored(col(th.warn),
+                               "That player kept their seat.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("OK##swapres") && np->seat_swap_clear)
+                np->seat_swap_clear(np->ctx);
+        } else if (st == 2) {
+            if (np->seat_swap_clear) np->seat_swap_clear(np->ctx);
+        }
+    }
+    if (s.is_host && (np->move_member || np->kick_member)) {
+        ImGui::Spacing();
+        ImGui::TextColored(col(th.text_muted),
+                           s.spectator_seats > 0
+                               ? "Drag a row to move a player; drag between "
+                                 "the tables to move somebody in or out of play."
+                               : "Drag a row to move a player to another seat.");
+    }
+}
+
+/* The lobby view body. */
+void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    /* Keep membership live while the room is up (join/leave/move/kick). */
+    if (np->pump) np->pump(np->ctx);
+    np_ingest_last_error(m, np);
+    /* Bring-your-own memory card: keep the backend's view of THIS peer's
+     * slot-1 card current (the dashboard can change it while the room is
+     * open). The opt-in itself is toggled from the seat row. */
+    if (np->memcard_offer_set) {
+        const int has_card = np_local_memcard_has_card(m);
+        if (has_card >= 0) (void)np->memcard_offer_set(np->ctx, has_card, -1);
+    }
+    if (np->launch_pending && np->launch_pending(np->ctx))
+        np_try_launch(m);
+    if (!np_lobby_seated(m, np)) {
+        /* The frame flips the view on its next pass; say why this is blank
+         * for the frame in between rather than drawing a stale room. */
+        ImGui::TextColored(col(th.text_muted), "Leaving lobby…");
+        return;
+    }
+
+    LobbySnapshot s;
+    np_lobby_snapshot(m, np, &s);
+
+    const float avail_w = ImGui::GetContentRegionAvail().x;
+    const float gap = px(20);
+    const float side_w = px(380);
+    /* Two columns when the seat table keeps a comfortable width beside the
+     * side panel; otherwise stack, seats first. */
+    const bool two_col = avail_w >= side_w + gap + px(520);
+    const float left_w = two_col ? avail_w - side_w - gap : avail_w;
+
+    begin_container("lobby_seats", ImVec2(left_w, two_col ? 0.0f : 0.0f),
+                    two_col ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+    draw_lobby_seats(m, th, np, s);
+    end_container();
+
+    if (two_col) ImGui::SameLine(0, gap);
+    else ImGui::Dummy(ImVec2(0, px(12)));
+    begin_container("lobby_side", ImVec2(two_col ? side_w : avail_w, 0.0f),
+                    two_col ? ImGuiChildFlags_None : ImGuiChildFlags_AutoResizeY);
+    draw_lobby_room_panel(m, th, np);
+    ImGui::Dummy(ImVec2(0, px(14)));
+    draw_lobby_match_settings(m, th, np, s.is_host);
+#if RECOMP_UI_ENABLE_MODS
+    ImGui::Dummy(ImVec2(0, px(14)));
+    draw_lobby_mods_panel(m, th, np, s);
+#endif
+    end_container();
+
+    /* Seat trade: somebody asked to swap with this player. Modal, because
+     * agreeing moves them out of the seat they chose. */
+    if (np->seat_swap_incoming) {
+        char who[64] = {0};
+        int from_slot = -1;
+        if (np->seat_swap_incoming(np->ctx, who, sizeof(who), &from_slot)) {
+            ImGui::OpenPopup("Swap seats?");
+            if (ImGui::BeginPopupModal("Swap seats?", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("%s wants to swap seats with you.",
+                            who[0] ? who : "Another player");
+                if (from_slot >= 0)
+                    ImGui::TextColored(col(th.text_muted),
+                                       "They are in P%d; you would move there.",
+                                       from_slot + 1);
+                ImGui::Spacing();
+                if (ImGui::Button("Swap", ImVec2(px(120), 0))) {
+                    if (np->seat_swap_respond)
+                        (void)np->seat_swap_respond(np->ctx, 1);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Keep my seat", ImVec2(px(140), 0))) {
+                    if (np->seat_swap_respond)
+                        (void)np->seat_swap_respond(np->ctx, 0);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+    }
+#if RECOMP_UI_ENABLE_MODS
+    draw_lobby_mods_popup(m, th, np, s.is_host);
+#endif
+}
+
+/* The lobby view's footer band: Leave (left), Mods (beside it), Play (right,
+ * host only). Drawn by draw_footer in the fixed band every view shares. */
+static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
+                              ImVec2 origin, float cta_y, float play_h,
+                              float fullw) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+    LobbySnapshot s;
+    np_lobby_snapshot(m, np, &s);
+    const float leave_w = px(150);
+    const float mods_w = px(130);
+    const float play_w = px(210);
+    const float gap = px(10);
+
+    /* Leave — red, pinned left. */
+    const LngColor leave_bg = {0.72f, 0.20f, 0.24f, 1.0f};
+    const LngColor leave_hov = {0.84f, 0.28f, 0.32f, 1.0f};
+    const LngColor leave_act = {0.58f, 0.14f, 0.18f, 1.0f};
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y));
+    ImGui::PushStyleColor(ImGuiCol_Button, col(leave_bg));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col(leave_hov));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(leave_act));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    if (ImGui::Button(ui_text("Leave Lobby"), ImVec2(leave_w, play_h)))
+        np_lobby_leave(m, np);
+    ImGui::PopStyleColor(4);
+
+#if RECOMP_UI_ENABLE_MODS
+    if (m->mods) {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + leave_w + gap, cta_y));
+        if (ImGui::Button(s.is_host ? ui_text("Mods") : ui_text("View Mods"),
+                          ImVec2(mods_w, play_h)))
+            m->netplay_lobby_mods_open = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip(s.is_host
+                ? "Pick the mods everyone in this lobby will run"
+                : "See the mods the host has enabled for this lobby");
+    }
+#else
+    (void)mods_w;
+    (void)gap;
+#endif
+
+    if (s.is_host) {
+        /* Require two seated players, without waiting for every open seat.
+         * Count only visible game slots: a host sitting alone in P2 after a
+         * seat swap must not satisfy the start gate. */
+        const bool can_start = s.seated_players >= 2 && s.peers_not_ready == 0;
+        const char* blocked_why =
+            s.seated_players < 2
+                ? "Waiting for another player to join"
+                : (s.peers_not_ready > 0
+                       ? "Waiting for every player to install this "
+                         "lobby's mods"
+                       : nullptr);
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + fullw - play_w, cta_y));
+        if (neon_cta("##lobby_play", ui_text("PLAY"), ImVec2(play_w, play_h),
+                     can_start))
+            np_lobby_start(m, np);
+        /* Tooltips do not fire on a disabled item unless we allow it. */
+        else if (blocked_why &&
+                 ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", blocked_why);
+    } else {
+        ImGui::SetCursorScreenPos(ImVec2(
+            origin.x + fullw - play_w,
+            cta_y + (play_h - ImGui::GetTextLineHeight()) * 0.5f));
+        ImGui::TextColored(col(th.text_muted), "Waiting for the host to start…");
+    }
+    (void)th;
 }
 
 void np_join_selected(LauncherModel* m) {
@@ -8629,6 +8707,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         if (ImGui::Button(ui_text("Restore Defaults"), ImVec2(px(150.0f), px(34.0f))))
             launcher_model_request_restore_defaults(m);
     }
+    if (m->view == LNG_VIEW_LOBBY) {
+        draw_lobby_footer(m, th, origin, cta_y, play_h, fullw);
+        return;
+    }
     if (m->view == LNG_VIEW_NETPLAY) {
         const float action_w = px(190.0f);
         const float settings_w = px(170.0f);
@@ -9913,6 +9995,27 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleColor();
 
+    /* The lobby room is a full-screen view keyed to seat state: seated in a
+     * lobby means the room, whatever view was up before (join from the
+     * browser, or a soft-return from a match); not seated means never the
+     * room. Done here, before the header, so the header and footer draw for
+     * the view the body will actually show. */
+    if (m->netplay_supported) {
+        const auto* np = np_cb(m);
+        const bool seated = np_lobby_seated(m, np);
+        if (seated && m->view != LNG_VIEW_LOBBY) {
+            launcher_model_set_view(m, LNG_VIEW_LOBBY);
+            g_lobby_settings_synced = false;
+        } else if (!seated && m->view == LNG_VIEW_LOBBY) {
+            m->netplay_local_room = false;
+            m->netplay_lobby_settings_open = false;
+            m->netplay_lobby_mods_open = false;
+            g_lobby_settings_synced = false;
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+            m->netplay_list_fresh = false;
+        }
+    }
+
     // ---- Marquee header: brand · GAME TITLE · subtitle .......... [nav] ----
     ImVec2 hp = ImGui::GetCursorScreenPos();
     // Vertically center the brand mark against the two-line title block (game
@@ -10009,9 +10112,17 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                     m->netplay_name_modal_open = true;
                 }
             }
-            ImGui::SetCursorPos(ImVec2(right - w, y));
-            if (ImGui::Button(ui_text("< Back"), ImVec2(w, px(34))))
-                launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+            if (m->view == LNG_VIEW_LOBBY) {
+                /* No Back: you are seated, and the only way out of a seat is
+                 * the footer's Leave Lobby — a Back that quietly kept the seat
+                 * would leave a ghost in the room. */
+                ImGui::SetCursorPos(ImVec2(right - w, y));
+                ImGui::TextColored(col(th.accent2), "%s", ui_text("LOBBY"));
+            } else {
+                ImGui::SetCursorPos(ImVec2(right - w, y));
+                if (ImGui::Button(ui_text("< Back"), ImVec2(w, px(34))))
+                    launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+            }
         }
         // Absolute placement prevents three dashboard buttons from mutating
         // the title group's line state and wrapping Settings into the body.
@@ -10045,6 +10156,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         case LNG_VIEW_MODS:       draw_mods(m, th);                 break;
         case LNG_VIEW_ASSIST_TOOLS: draw_assist_tools(m, th);        break;
         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
+        case LNG_VIEW_LOBBY:        draw_lobby(m, th);               break;
     }
     end_container();
 
@@ -10061,7 +10173,6 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_netplay_host_modal(m, th);
     draw_netplay_password_modal(m, th);
     draw_netplay_direct_modal(m, th);
-    draw_netplay_room_modal(m, th);
     draw_restore_defaults_modal(m);
     // Transfer Pak config modal (N64): opened by any tile, dashboard or
     // Controller page. Drawn at root so it isn't clipped by a card child.
