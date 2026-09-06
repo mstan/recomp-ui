@@ -6390,14 +6390,6 @@ void draw_netplay_room_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::Spacing();
         seat_table("lobby_spectators", "Spectators", nviews - 1, 0,
                    spectator_seats);
-        /* Said here rather than discovered at Play. The backend refuses to
-         * arm a seat-less session, so without this line a spectator presses
-         * Play and nothing happens -- which reads as a broken button. */
-        if (np->local_is_spectator && np->local_is_spectator(np->ctx))
-            ImGui::TextColored(col(th.warn),
-                               "You are spectating. This build cannot yet run "
-                               "the match from a spectator seat — ask the host "
-                               "to move you into a player slot to play.");
     }
     /* Session BIOS notice (OpenBIOS vs SCPH1001). Keep copy plain — hosts care
      * about save-state compatibility, not kernel-RAM details.

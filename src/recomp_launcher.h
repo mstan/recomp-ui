@@ -193,6 +193,14 @@ typedef struct RecompLauncherCNetplayLaunch {
      * player_count / occupied_mask above stay PLAYERS ONLY. A spectator
      * counted there is a seat every peer waits on and nobody ever fills. */
     int      is_spectator;
+    /* Spectator only: this client's slot in the input relay's namespace,
+     * which is NOT local_slot (a lobby seat index) and NOT a player seat.
+     * It sits at or above the relay's player count, which is what makes the
+     * relay refuse to forward anything this peer sends.
+     *
+     * <= 0 with is_spectator set means the host published no relay base; the
+     * engine must refuse to launch rather than fall back to a player slot. */
+    int      spectator_wire_slot;
     /* 1 = seat 2 (P2) brings its own memory card this match: its local slot-1
      * card is uploaded to the host at launch and becomes every peer's slot-2
      * card. 0 = the host's slot choices only (default). Settled by the host
