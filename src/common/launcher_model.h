@@ -45,6 +45,11 @@ typedef enum {
     LNG_VIEW_MODS,
     LNG_VIEW_ASSIST_TOOLS,
     LNG_VIEW_CREDITS,
+    /* The netplay room, full screen. Entered and left by SEAT STATE, not by
+     * a button: the frame switches here whenever the backend reports the
+     * local player seated in a lobby, and back to Netplay when it does not.
+     * Every profile that opens a lobby goes through it. */
+    LNG_VIEW_LOBBY,
 } LngView;
 
 typedef enum {
@@ -292,6 +297,7 @@ typedef struct {
     bool has_gyro_controls;
     bool has_sharp_filter;
     bool has_affine_filter;
+    bool has_frame_blend;
     bool has_shader;
     bool netplay_supported;
     /* Host opted into first-run wizard + Generate & rebuild (GameInfo). */
@@ -533,6 +539,15 @@ typedef struct {
     int       netplay_host_max_players;
     /* Active room seat ceiling after create/join (0 = use game player_count). */
     int       netplay_lobby_max_slots;
+    /* Lobby chat: the line being typed, and the seq of the newest line the
+     * chat panel has scrolled to (so a new line scrolls the list once). */
+    char      netplay_chat_edit[256];
+    uint32_t  netplay_chat_seen_seq;
+    bool      netplay_chat_focus; /* refocus the input after Enter sends */
+    /* Server chat (per-game, on the lobby browser page): same three. */
+    char      netplay_schat_edit[256];
+    uint32_t  netplay_schat_seen_seq;
+    bool      netplay_schat_focus;
     bool      defaults_modal_open;   // confirmed full-settings reset
 
     // Selected gamepad per player (when player_src == 2). pad_id is the live
@@ -674,6 +689,7 @@ void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_cycle_scaling_filter(LauncherModel* m);
 const char* launcher_model_scaling_filter_label(const LauncherModel* m);
 void launcher_model_toggle_affine_filter(LauncherModel* m);
+void launcher_model_toggle_frame_blend(LauncherModel* m);  // gated has_frame_blend
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
 void launcher_model_toggle_adaptive_view(LauncherModel* m);  // gated; fixed aspect is retained
 /* Unified Native / fixed widescreen / Adaptive control. Compatibility fields
@@ -749,6 +765,8 @@ const char* launcher_model_rewind_interval_label(const LauncherModel* m);
 // Driver vsync at present time (gated on has_vsync): On -> Off -> Adaptive,
 // wraps. Stored in Settings.vsync as RECOMP_LAUNCHER_VSYNC_*.
 void launcher_model_cycle_vsync(LauncherModel* m);
+// Binary On/Off flip for the legacy-surface checkbox (Adaptive counts as On).
+void launcher_model_toggle_vsync(LauncherModel* m);
 const char* launcher_model_vsync_label(const LauncherModel* m);  // "On"/"Off"/"Adaptive"
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);

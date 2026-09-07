@@ -27,6 +27,18 @@ static const ButtonDef kSnesPadButtons[] = {
 };
 #define LNG_SNES_PAD_BUTTON_COUNT ((int)(sizeof(kSnesPadButtons) / sizeof(kSnesPadButtons[0])))
 
+// ---- Gamepad Bindings panel order (column-major: down, then next column) ----
+// Indices into kSnesPadButtons. Twelve buttons divide exactly into the three
+// groups a SNES pad physically has:
+//   Col1: D-pad        Col2: face        Col3: shoulders + Start/Select
+static const int kSnesGamepadBindOrder[LNG_SNES_PAD_BUTTON_COUNT] = {
+    0, 1, 2, 3,      // Up Down Left Right
+    4, 5, 6, 7,      // A B X Y
+    8, 9, 10, 11,    // L R Start Select
+};
+#define LNG_SNES_GAMEPAD_BIND_COLS 3
+#define LNG_SNES_GAMEPAD_BIND_ROWS 4
+
 // ---- panel composition --------------------------------------------------------
 static const char* const kPanelsSettingsSnes[]  = { "video", "audio", "hotkeys", NULL };
 
@@ -47,6 +59,9 @@ static const SystemProfile kSystemProfileSnes = {
         /* max_players */ 2, /* has_pad_mode */ 0,
         /* binds_per_input */ 1, /* modes */ NULL, /* mode_count */ 0,
         /* has_pad_binds */ 1,
+        /* pad_bind_order */ kSnesGamepadBindOrder,
+        /* pad_bind_cols  */ LNG_SNES_GAMEPAD_BIND_COLS,
+        /* pad_bind_rows  */ LNG_SNES_GAMEPAD_BIND_ROWS,
     },
     /* save */    { SAVE_SRAM, 1, NULL },
     /* video */   {

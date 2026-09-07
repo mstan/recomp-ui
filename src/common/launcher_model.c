@@ -54,9 +54,9 @@ static const char* kHotkeyNames[LNG_HK_COUNT] = {
     "Solar level up", "Solar level down", "Resume live solar",
     "Rewind", "Save states menu"
 };
-static const char* kViewNames[7] = {
+static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
-    "Assist Tools", "Credits"
+    "Assist Tools", "Credits", "Lobby"
 };
 static const char* kSrcNames[3]  = { "None", "Keyboard", "Gamepad" };
 
@@ -220,6 +220,7 @@ static void run_verify(LauncherModel* m);   // fwd; defined below, called from l
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
+static void lm_persist_setup_sidecars(LauncherModel* m);    // fwd; called from launcher_model_finish_setup
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -395,6 +396,7 @@ void launcher_model_init(LauncherModel* m,
         m->has_gyro_controls    = game->has_gyro_controls != 0;
         m->has_sharp_filter     = game->has_sharp_filter != 0;
         m->has_affine_filter    = game->has_affine_filter != 0;
+        m->has_frame_blend      = game->has_frame_blend != 0;
         m->has_shader           = game->has_shader != 0;
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
@@ -475,6 +477,8 @@ void launcher_model_init(LauncherModel* m,
         // first gains the three-state scaler control.
         if (m->s.linear_filter) m->s.sharp_filter = 0;
     }
+    if (m->has_frame_blend)
+        m->s.frame_blend = m->s.frame_blend ? 1 : 0;
     memset(&m->s.netplay_launch, 0, sizeof(m->s.netplay_launch));
     if (!m->s.netplay_player_name[0] && m->netplay && m->netplay->player_name) {
         safe_copy(m->s.netplay_player_name, sizeof(m->s.netplay_player_name),
@@ -501,9 +505,9 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_public_ip[0] = '\0';
     m->netplay_public_ip_resolved = false;
     m->netplay_lobby_settings_open = false;
-    m->netplay_lobby_input_delay = 2;
+    m->netplay_lobby_input_delay = 6;
     m->netplay_manual_input_delay = false; /* auto from max peer RTT at launch */
-    m->netplay_lobby_input_prediction = 6; /* P = 4 + D at default D=2 */
+    m->netplay_lobby_input_prediction = 10; /* P = 4 + D at default D=6 */
     m->netplay_manual_input_prediction = false; /* auto P from RTT when rollback */
     /* Default off so waiting-room ICE can prove a direct path; host Force
      * Online start is always lobby SFU (§108). */
@@ -763,7 +767,9 @@ void launcher_model_init(LauncherModel* m,
     }
     launcher_model_refresh_bios_status(m);
 
-    /* Soft-return from a match: land on Netplay with the room modal open. */
+    /* Soft-return from a match: land on Netplay; the frame then switches to
+     * the full-screen lobby view because the backend still reports us
+     * seated (see LNG_VIEW_LOBBY). */
     if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
         m->netplay->in_lobby && m->netplay->in_lobby(m->netplay->ctx)) {
         m->view = LNG_VIEW_NETPLAY;
@@ -785,7 +791,7 @@ void launcher_model_init(LauncherModel* m,
             m->netplay_lobby_input_delay =
                 m->netplay->input_delay_get(m->netplay->ctx);
             if (m->netplay_lobby_input_delay < 2)
-                m->netplay_lobby_input_delay = 2;
+                m->netplay_lobby_input_delay = 6;
         }
     }
 
@@ -1263,7 +1269,7 @@ bool launcher_model_rom_verified(const LauncherModel* m) {
 }
 
 void launcher_model_set_view(LauncherModel* m, LngView v) {
-    if (v < 0 || v > LNG_VIEW_MODS) return;
+    if (v < 0 || v > LNG_VIEW_LOBBY) return;
     /* Re-entering Netplay should rescan server + LAN lists. */
     if (m->view == LNG_VIEW_NETPLAY && v != LNG_VIEW_NETPLAY)
         m->netplay_list_fresh = false;
@@ -1336,6 +1342,11 @@ const char* launcher_model_scaling_filter_label(const LauncherModel* m) {
 void launcher_model_toggle_affine_filter(LauncherModel* m) {
     if (!m || !m->has_affine_filter) return;
     m->s.affine_filter = !m->s.affine_filter;
+}
+
+void launcher_model_toggle_frame_blend(LauncherModel* m) {
+    if (!m || !m->has_frame_blend) return;
+    m->s.frame_blend = !m->s.frame_blend;
 }
 
 void launcher_model_toggle_widescreen(LauncherModel* m) {
@@ -1728,6 +1739,16 @@ const char* launcher_model_vsync_label(const LauncherModel* m) {
         case RECOMP_LAUNCHER_VSYNC_ADAPTIVE: return "Adaptive";
         default:                             return "On";
     }
+}
+
+// Legacy-surface checkbox: On <-> Off only. Adaptive counts as On (checked)
+// and flips to Off — a legacy host maps this onto a boolean renderer flag,
+// so there is no third state to preserve.
+void launcher_model_toggle_vsync(LauncherModel* m) {
+    if (!m || !m->has_vsync) return;
+    m->s.vsync = (m->s.vsync == RECOMP_LAUNCHER_VSYNC_OFF)
+                     ? RECOMP_LAUNCHER_VSYNC_ON
+                     : RECOMP_LAUNCHER_VSYNC_OFF;
 }
 
 void launcher_model_toggle_skip_fmv(LauncherModel* m) {
@@ -2390,6 +2411,17 @@ bool launcher_model_netplay_disc_ok(const LauncherModel* m) {
 
 void launcher_model_finish_setup(LauncherModel* m) {
     if (!m || !launcher_model_can_finish_setup(m)) return;
+    /* The player just confirmed the picks: write them down NOW, not on PLAY.
+     *
+     * Until this call, Confirm / Continue only closed the modal. The sidecars
+     * (rom.cfg / disc.cfg / bios.cfg) and the host's persist_setup were written
+     * on a BIOS change, before Generate and after a rebuild -- every path
+     * EXCEPT the one where the player confirms a disc that needs none of
+     * those. Quit from the dashboard, or let the host relaunch, and the next
+     * start found nothing remembered and opened the same wizard again with
+     * "confirm disc" copy, asking for the pick it had already been given.
+     * A confirmation that is not recorded is not a confirmation. */
+    lm_persist_setup_sidecars(m);
     m->setup_wizard_open = false;
     m->setup_status[0] = '\0';
     m->setup_error[0] = '\0';
@@ -3821,6 +3853,6 @@ const char* launcher_hotkey_name(LngHotkey h) {
 }
 
 const char* launcher_view_name(LngView v) {
-    if (v < 0 || v > LNG_VIEW_CREDITS) return "?";
+    if (v < 0 || v > LNG_VIEW_LOBBY) return "?";
     return kViewNames[v];
 }

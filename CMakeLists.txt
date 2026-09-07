@@ -177,6 +177,25 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-setup-bios-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    # First-run wizard: Confirm disc / Continue records the pick immediately
+    # (sidecars + host persist_setup), so the next start does not ask again.
+    # Same include-the-TU shape as the setup-bios test above.
+    add_executable(recomp-ui-launcher-setup-confirm-test
+        tests/launcher_setup_confirm_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-setup-confirm-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-setup-confirm-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-setup-confirm
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-setup-confirm-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
+
     # Per-seat pad_mode resolution: a locked mode (game.toml lock_mode) must
     # survive the keyboard-has-no-sticks presentation default, because the
     # selector that could undo it is hidden. Same include-the-TU shape as the
