@@ -7519,9 +7519,33 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
 /* "Vanilla match." / "Widescreen (16:9) +1 more" — the plan every peer will
  * run (host-authoritative). False when this build has no mod provider, so
  * the caller can fall back to a plain label. */
-static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap) {
+static bool np_lobby_mods_summary(const LauncherModel* m,
+                                  const RecompLauncherCNetplayCallbacks* np,
+                                  char* out, size_t cap) {
 #if RECOMP_UI_ENABLE_MODS
-    if (!m->mods || !out || cap == 0) return false;
+    if (!out || cap == 0) return false;
+    if (np && np->lobby_mods_count) {
+        const int lobby_n = np->lobby_mods_count(np->ctx);
+        if (lobby_n <= 0) {
+            std::snprintf(out, cap, "Mods: vanilla match");
+            return true;
+        }
+        char first_name[128] = {0};
+        if (np->lobby_mods_get) {
+            RecompLauncherCNetplayLobbyMod lm{};
+            if (np->lobby_mods_get(np->ctx, 0, &lm))
+                std::snprintf(first_name, sizeof(first_name), "%s",
+                              lm.name[0] ? lm.name : lm.id);
+        }
+        if (!first_name[0]) std::snprintf(first_name, sizeof(first_name), "mods");
+        if (lobby_n == 1)
+            std::snprintf(out, cap, "Mods: %s", first_name);
+        else
+            std::snprintf(out, cap, "Mods: %s +%d more", first_name, lobby_n - 1);
+        return true;
+    }
+
+    if (!m || !m->mods) return false;
     const auto* lmods = m->mods;
     const int lfc = lmods->feature_count ? lmods->feature_count(lmods->ctx) : 0;
     int enabled_n = 0;
@@ -7540,7 +7564,7 @@ static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap)
         std::snprintf(out, cap, "Mods: %s +%d more", first_name, enabled_n - 1);
     return true;
 #else
-    (void)m; (void)out; (void)cap;
+    (void)m; (void)np; (void)out; (void)cap;
     return false;
 #endif
 }
@@ -10809,7 +10833,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                  * would leave a ghost in the room. */
                 char summary[192];
                 const char* label =
-                    np_lobby_mods_summary(m, summary, sizeof(summary))
+                    np_lobby_mods_summary(m, m->netplay, summary, sizeof(summary))
                         ? summary : ui_text("LOBBY");
                 const float tw = ImGui::CalcTextSize(label).x;
                 ImGui::SetCursorPos(ImVec2(
