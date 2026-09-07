@@ -491,6 +491,14 @@ typedef struct {
     char      setup_error[256];
     bool      netplay_name_modal_open;
     bool      netplay_name_prompted;
+    /* Why the last name was refused, shown inside the Player Name modal and
+     * cleared as soon as the player edits the field. Set by the local check
+     * (np->name_rejected) or by the server's `name_rejected` error. */
+    char      netplay_name_error[128];
+    /* The same, for the room title in the Host Lobby modal: a lobby name sits
+     * in the browser in front of everyone shopping for a game, so it is
+     * refused like a player name rather than masked. */
+    char      netplay_host_name_error[128];
     bool      netplay_host_modal_open;
     bool      netplay_network_modal_open;
     bool      netplay_password_modal_open;

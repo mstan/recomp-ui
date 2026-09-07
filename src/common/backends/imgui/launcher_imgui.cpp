@@ -673,6 +673,7 @@ static std::unordered_map<std::string, int> g_emoji_lookup;
 static bool    g_emoji_atlas_dirty = false;
 static int     g_emoji_px = 0;
 static ImFont* g_emoji_font = nullptr;
+static size_t  g_emoji_sprite_bytes = 0;
 #ifdef IMGUI_USE_WCHAR32
 static const ImWchar kEmojiPuaBase = 0xF0000;   /* Plane 15 private use */
 static const int     kEmojiPuaSlots = 0xFFFD;
@@ -680,6 +681,29 @@ static const int     kEmojiPuaSlots = 0xFFFD;
 static const ImWchar kEmojiPuaBase = 0xE000;    /* BMP private use */
 static const int     kEmojiPuaSlots = 0x1900;
 #endif
+/* The cache is fed by REMOTE text -- a chat line is whatever a peer sent --
+ * so its size is an attacker's choice unless it is bounded here. Registering
+ * a sequence costs a sprite that is never evicted (the codepoints must stay
+ * put; see emoji_atlas_reserve) AND marks the atlas dirty, which rebuilds
+ * every font and re-uploads the texture on the next frame. ZWJ and skin-tone
+ * combinations are effectively unbounded, so a peer sending novel sequences
+ * would otherwise buy one full atlas rebuild per line, forever, and grow the
+ * cache to the PUA ceiling -- 65533 sprites, hundreds of MB.
+ *
+ * Two budgets, whichever binds first. Past them registration fails, which is
+ * the SAME path as a machine with no color provider: nothing is substituted
+ * and the outline glyphs draw. No new failure mode, just the existing one.
+ * Both are far above any honest session (a chatty player sees emoji in the
+ * low hundreds), so a real user never reaches them. */
+static const size_t kEmojiMaxSprites = 1024;
+static const size_t kEmojiMaxSpriteBytes = 8u * 1024u * 1024u;
+
+static bool emoji_cache_has_room(void) {
+    const size_t ceiling = (size_t)kEmojiPuaSlots < kEmojiMaxSprites
+                               ? (size_t)kEmojiPuaSlots : kEmojiMaxSprites;
+    return g_emoji_sprites.size() < ceiling &&
+           g_emoji_sprite_bytes < kEmojiMaxSpriteBytes;
+}
 
 /* Codepoint for an emoji sequence, rendering and registering it on first
  * sight. 0 when it cannot be rendered (caller keeps the original bytes). */
@@ -691,7 +715,10 @@ static ImWchar emoji_register(const char* seq, size_t len) {
         const EmojiSprite& s = g_emoji_sprites[(size_t)it->second];
         return s.ok ? s.cp : 0;
     }
-    if ((int)g_emoji_sprites.size() >= kEmojiPuaSlots) return 0;
+    /* Full: draw the original bytes rather than remember one more sequence.
+     * Nothing is recorded, so the line costs no memory and no rebuild -- a
+     * flood of novel sequences is absorbed at a flat cost from here on. */
+    if (!emoji_cache_has_room()) return 0;
     EmojiSprite s;
     s.seq = key;
     s.cp = (ImWchar)(kEmojiPuaBase + (ImWchar)g_emoji_sprites.size());
@@ -705,6 +732,7 @@ static ImWchar emoji_register(const char* seq, size_t len) {
         s.rgba.assign(bm.rgba, bm.rgba + (size_t)bm.w * (size_t)bm.h * 4);
         s.ok = true;
         recomp_emoji_free(&bm);
+        g_emoji_sprite_bytes += s.rgba.size();
         g_emoji_atlas_dirty = true;
     }
     g_emoji_lookup[key] = (int)g_emoji_sprites.size();
@@ -872,16 +900,24 @@ static void emoji_atlas_reserve(ImFontAtlas* atlas, ImFont* font, float body) {
         /* Rendered at another size: re-render in place. The codepoints must
          * stay put — an input box may be holding them mid-edit. */
         g_emoji_px = px;
+        /* A bigger px is a bigger sprite, so the byte budget is re-measured
+         * from scratch here: a cache that fit at 16px may not at 64. Sprites
+         * past the budget stay ok=false and draw as outline glyphs, exactly
+         * as they would on a machine with no color provider. */
+        g_emoji_sprite_bytes = 0;
         for (EmojiSprite& s : g_emoji_sprites) {
             RecompEmojiBitmap bm;
             s.ok = false;
             s.rgba.clear();
+            s.rgba.shrink_to_fit();
+            if (g_emoji_sprite_bytes >= kEmojiMaxSpriteBytes) continue;
             if (recomp_emoji_render(s.seq.data(), s.seq.size(), px, &bm)) {
                 s.w = bm.w;
                 s.h = bm.h;
                 s.rgba.assign(bm.rgba, bm.rgba + (size_t)bm.w * (size_t)bm.h * 4);
                 s.ok = true;
                 recomp_emoji_free(&bm);
+                g_emoji_sprite_bytes += s.rgba.size();
             }
         }
     }
@@ -5304,7 +5340,19 @@ static void np_ensure_public_ip(LauncherModel* m) {
                   "Unavailable");
 }
 
-void draw_netplay_player_modal(LauncherModel* m) {
+/* A name the word list refuses is not masked and not silently dropped: the
+ * player is told, and asked for another one. The check belongs to the
+ * backend (it owns recomp-net's list; duplicating it here would be a second
+ * copy that cannot inherit fixes to the first), so this is a callback, and
+ * it is only the courtesy half -- the lobby server refuses the name too, and
+ * that refusal comes back through last_error into the same prompt. */
+static bool np_name_refused(LauncherModel* m, const char* name) {
+    const auto* np = np_cb(m);
+    if (!np || !np->name_rejected || !name || !name[0]) return false;
+    return np->name_rejected(np->ctx, name) != 0;
+}
+
+void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_name_modal_open) ImGui::OpenPopup("Player Name");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -5313,12 +5361,22 @@ void draw_netplay_player_modal(LauncherModel* m) {
         bool save = ImGui::InputText("##player_name", m->netplay_name_edit,
                                      sizeof(m->netplay_name_edit),
                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        /* Editing is the retry: the complaint goes away the moment the player
+         * starts typing a different name, rather than sitting under a field
+         * that no longer says what it is complaining about. */
+        if (ImGui::IsItemEdited()) m->netplay_name_error[0] = '\0';
+        if (m->netplay_name_error[0]) {
+            ImGui::PushTextWrapPos(px(320));
+            ImGui::TextColored(col(th.warn), "%s", m->netplay_name_error);
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
             const bool required_name = m->s.netplay_player_name[0] == '\0';
             std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s",
                           m->s.netplay_player_name);
             m->netplay_name_modal_open = false;
+            m->netplay_name_error[0] = '\0';
             if (required_name) {
                 m->netplay_name_prompted = false;
                 launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
@@ -5329,6 +5387,16 @@ void draw_netplay_player_modal(LauncherModel* m) {
         const bool valid_name = m->netplay_name_edit[0] != '\0';
         ImGui::BeginDisabled(!valid_name);
         if ((ImGui::Button("Save", ImVec2(px(120), 0)) || save) && valid_name) {
+            /* Refused: keep the modal open, say so, and keep the old name --
+             * the player picks another. Nothing is sent, so a refused name
+             * never reaches a peer even for the frame it took to notice. */
+            if (np_name_refused(m, m->netplay_name_edit)) {
+                std::snprintf(m->netplay_name_error, sizeof(m->netplay_name_error),
+                              "That name can't be used. Please pick another one.");
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
             char previous_default[96];
             std::snprintf(previous_default, sizeof(previous_default), "%s's Lobby",
                           m->s.netplay_player_name);
@@ -5342,6 +5410,7 @@ void draw_netplay_player_modal(LauncherModel* m) {
             const auto* np = np_cb(m);
             if (np && np->set_player_name) np->set_player_name(np->ctx, m->s.netplay_player_name);
             m->netplay_name_modal_open = false;
+            m->netplay_name_error[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
@@ -5559,6 +5628,13 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SetNextItemWidth(px(430));
         ImGui::InputText("##host_lobby_name", m->netplay_host_name,
                          sizeof(m->netplay_host_name));
+        /* Editing is the retry, as in the Player Name modal. */
+        if (ImGui::IsItemEdited()) m->netplay_host_name_error[0] = '\0';
+        if (m->netplay_host_name_error[0]) {
+            ImGui::PushTextWrapPos(px(430));
+            ImGui::TextColored(col(th.warn), "%s", m->netplay_host_name_error);
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Spacing();
         const RecompLauncherCNetplayCallbacks* np_cb_host = np_cb(m);
         const bool link_supported =
@@ -5740,7 +5816,16 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_netplay_disc_ok(m);
         ImGui::BeginDisabled(!can_create);
         if (ImGui::Button("Create Lobby", ImVec2(px(150), 0))) {
-            if (!launcher_model_netplay_disc_ok(m)) {
+            /* A room title is refused, not masked: it sits in the lobby
+             * browser in front of everyone shopping for a game. Caught here
+             * so the host renames the room before it is created, rather than
+             * after the server refuses the `create` (which it also does). */
+            if (np_name_refused(m, m->netplay_host_name)) {
+                std::snprintf(m->netplay_host_name_error,
+                              sizeof(m->netplay_host_name_error),
+                              "That lobby name can't be used. Please rename "
+                              "the lobby.");
+            } else if (!launcher_model_netplay_disc_ok(m)) {
                 std::snprintf(host_create_status, sizeof(host_create_status), "%s",
                               m->verify.netplay_detail[0]
                                   ? m->verify.netplay_detail
@@ -5923,6 +6008,44 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
     if (!m || !np || !np->last_error) return;
     const char* err = np->last_error(np->ctx);
     if (!err || !err[0]) return;
+    if (std::strcmp(err, "name_rejected") == 0) {
+        /* The server refused the display name, and it is the authority here:
+         * a modified or older client can send what the local check stops, and
+         * the word list lives with the backend, not with the UI. Reopen the
+         * prompt rather than write the status line, because the only useful
+         * next act is typing another name.
+         *
+         * The refused name is dropped from settings but LEFT in the edit box:
+         * nothing refused is kept or sent again, while the player can still
+         * see and fix what they typed. Clearing the stored name also puts the
+         * modal back on its required-name footing, so Cancel returns to the
+         * dashboard instead of leaving netplay with a name the server will
+         * refuse again on the next op. */
+        std::snprintf(m->netplay_name_error, sizeof(m->netplay_name_error),
+                      "That name can't be used. Please pick another one.");
+        m->s.netplay_player_name[0] = '\0';
+        m->netplay_name_prompted = true;
+        m->netplay_name_modal_open = true;
+        if (np->clear_last_error) np->clear_last_error(np->ctx);
+        return;
+    }
+    if (std::strcmp(err, "lobby_name_rejected") == 0) {
+        /* The server refused the room title. Reopen Host Lobby with the name
+         * still in the field so the host can rename it; nothing was created,
+         * so there is nothing else to undo. */
+        std::snprintf(m->netplay_host_name_error, sizeof(m->netplay_host_name_error),
+                      "That lobby name can't be used. Please rename the lobby.");
+        m->netplay_host_modal_open = true;
+        if (np->clear_last_error) np->clear_last_error(np->ctx);
+        return;
+    }
+    if (std::strcmp(err, "password_invalid") == 0) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "That password can't be used. Use a shorter one without "
+                      "control characters.");
+        if (np->clear_last_error) np->clear_last_error(np->ctx);
+        return;
+    }
     if (std::strcmp(err, "need_players") == 0)
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Need two players before starting.");
@@ -10866,7 +10989,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_fmv_timing_confirm_modal(m, th);
     draw_standalone_builtin_rom_picker(m, th);
     draw_skip_modal(m);
-    draw_netplay_player_modal(m);
+    draw_netplay_player_modal(m, th);
     draw_netplay_network_modal(m, th);
     draw_netplay_host_modal(m, th);
     draw_netplay_password_modal(m, th);
