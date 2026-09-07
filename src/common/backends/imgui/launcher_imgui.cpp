@@ -3910,8 +3910,17 @@ void settings_pad_label(int binding, char* out, size_t capacity) {
 void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
                                 const char* table_id, int action_limit,
                                 bool show_reset) {
-    if (!m->settings_bindings || m->assist_binding_count <= 0 ||
-        !m->assist_binding_labels)
+    /*
+     * A host that only wants a few NAMED extra actions should not have to
+     * take over the per-player button chips to get them.  `settings_bindings`
+     * does both: it also swaps those chips onto the host-owned
+     * player_key_bind/player_pad_bind arrays, which is a much larger promise
+     * than "give me one more row".  Naming actions is enough on its own.
+     *
+     * Nothing else changes for existing games: a host that names no actions
+     * has assist_binding_count == 0 and still renders nothing here.
+     */
+    if (m->assist_binding_count <= 0 || !m->assist_binding_labels)
         return;
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::TextUnformatted(m->has_assist_tools ? "ASSIST CONTROLS" : "HOST SHORTCUTS");
@@ -5019,7 +5028,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         } end_panel();
     }
 
-    if (m->settings_bindings) {
+    /* Named host actions stand on their own; see the note in
+     * draw_assist_binding_editor. */
+    if (m->assist_binding_count > 0 && m->assist_binding_labels) {
         if (begin_panel("cfg_assist_binds", 0)) {
             draw_controller_assist_shortcuts(m, th);
         } end_panel();
@@ -10936,7 +10947,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     // axis push (past a dead threshold) commits. PSX only accepts events from
     // the player's selected Input source device.
     if (m->capturing && m->capture_pad) {
-        if (m->settings_bindings && m->capture_assist) {
+        if (m->capture_assist) {
             if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 const int button = (int)LNG_EVGBTN(ev);
                 uint32_t mask = launcher_input_gamepad_button_mask(
@@ -11181,7 +11192,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
         // (capture_slot is always 0 for them).
         const SystemProfile* prof = (const SystemProfile*)m->profile;
-        if (m->settings_bindings && m->capture_assist)
+        if (m->capture_assist)
             launcher_model_set_captured_key(m, (int)LNG_EVSCAN(ev));
         else if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
             launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
