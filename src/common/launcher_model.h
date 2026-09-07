@@ -331,6 +331,10 @@ typedef struct {
     bool settings_bindings;
     const char* const* assist_binding_labels;
     int assist_binding_count;
+    /* Mirrors GameInfo.assist_bindings_per_player: 0 = one shared host-level
+     * binding per action, 1 = each player binds the action themselves and the
+     * rows live inside that player's INPUT BINDINGS block. */
+    int assist_bindings_per_player;
     const char* credits_text;
     int assist_fast_forward_min;
     int assist_fast_forward_max;
@@ -576,7 +580,14 @@ typedef struct {
     bool      capture_mouse_armed;
     bool      camera_capturing;  // capturing an enabled Voxel camera key
     int       capture_camera;    // LNG_CAMERA_* index
-    bool      capture_assist;      // capture_btn indexes assist bindings
+    /* capture_btn indexes assist bindings rather than console buttons.
+     *
+     * The two are separate namespaces sharing one cursor, so every "is this
+     * chip listening?" test has to consult this flag as well: Shield is
+     * action 0 and Up is button 0, and a test on capture_btn alone lights up
+     * both. That was invisible while assist capture could only be started
+     * from its own separate table. */
+    bool      capture_assist;
     bool      hk_capturing;      // capturing a system hotkey
     LngHotkey capture_hk;
     // Per-player bind-label display strings, indexed like capture_btn.

@@ -928,8 +928,22 @@ struct RecompLauncherCSettings {
     // ABI stability.
     int  assist_fast_forward_multiplier;
 
-    int assist_key_bind[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
-    int assist_pad_bind[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    /* Named extra actions, per player.
+     *
+     * These were a single global binding each, on the theory that a host
+     * naming one or two extra actions wanted host shortcuts. That is right
+     * for a debug or assist tool, and wrong for anything a *player* performs:
+     * a fighting game's shield is part of player two's controls just as much
+     * as their jump, and one global chip cannot express that. Indexing by
+     * player makes an extra action an extension of the ordinary per-player
+     * bindings, which is where a player-facing action belongs.
+     *
+     * Hosts that name only host-level actions can keep using player 0 and
+     * ignore the rest; see GameInfo.assist_bindings_per_player. */
+    int assist_key_bind[RECOMP_LAUNCHER_MAX_PLAYERS]
+                       [RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
+    int assist_pad_bind[RECOMP_LAUNCHER_MAX_PLAYERS]
+                       [RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
 
     /* Local rewind snap-ring capacity (PSX). UI offers 50/100/150/200;
      * 0 = unset -> model seeds 50. See RECOMP_LAUNCHER_HAS_REWIND_DEPTH. */
@@ -1504,6 +1518,19 @@ typedef struct RecompLauncherCGameInfo {
     int settings_bindings;
     const char* const* assist_binding_labels;
     int assist_binding_count;
+    /* Where those named actions belong.
+     *
+     * 0 (default, and what every existing host gets): host-level shortcuts.
+     * One binding each, shared by everyone, rendered in their own table --
+     * the right shape for Rewind or Fast-forward, which act on the emulator
+     * rather than on a character.
+     *
+     * 1: player controls. Each player binds the action on their own device,
+     * and the rows render inside that player's INPUT BINDINGS block as an
+     * extension of the ordinary buttons. Use this when the action is
+     * something a player performs in the game -- a shield, a taunt -- and
+     * the console's pad has no button left to carry it. */
+    int assist_bindings_per_player;
 
     /* ---- online identity (opt-in, appended additively) ------------------
      * has_player_name: the game supports an online display name (a console

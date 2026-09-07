@@ -3922,6 +3922,7 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
      */
     if (m->assist_binding_count <= 0 || !m->assist_binding_labels)
         return;
+    if (m->assist_bindings_per_player) return;   /* rendered per player */
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::TextUnformatted(m->has_assist_tools ? "ASSIST CONTROLS" : "HOST SHORTCUTS");
     ImGui::PopStyleColor();
@@ -3952,14 +3953,14 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
                                !m->capture_pad && m->capture_btn == action;
             if (ImGui::Button(
                     capture_key ? "[ press a key... ]" :
-                        settings_key_label(m->s.assist_key_bind[action]),
+                        settings_key_label(m->s.assist_key_bind[0][action]),
                     ImVec2(px(170), 0)))
                 launcher_model_begin_assist_capture(m, action, false);
             ImGui::TableSetColumnIndex(2);
             bool capture_pad = m->capturing && m->capture_assist &&
                                m->capture_pad && m->capture_btn == action;
             char pad[48];
-            settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
+            settings_pad_label(m->s.assist_pad_bind[0][action], pad, sizeof pad);
             if (ImGui::Button(
                     capture_pad ? "[ press a button... ]" : pad,
                     ImVec2(px(170), 0)))
@@ -3976,8 +3977,74 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
         ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
 }
 
+/* Named extra actions for one player, drawn under that player's button grid.
+ *
+ * The console profile names a fixed set of buttons and cannot grow a
+ * thirteenth without changing the page for every title sharing the profile.
+ * These rows are the additive way in, and because the action belongs to a
+ * player rather than to the emulator, they follow the same chip and capture
+ * conventions as the buttons above them -- one row per action, bound on the
+ * device that player is using. */
+void draw_player_assist_bindings(LauncherModel* m, const LauncherTheme& th,
+                                 int player, bool pad_src) {
+    if (!m->assist_bindings_per_player) return;
+    if (m->assist_binding_count <= 0 || !m->assist_binding_labels) return;
+    if ((unsigned)player >= RECOMP_LAUNCHER_MAX_PLAYERS) return;
+
+    ImGui::Spacing();
+    ImGui::TextColored(col(th.text_muted), "EXTRA CONTROLS");
+    if (!ImGui::BeginTable("player_assist_binds", 2,
+                           ImGuiTableFlags_SizingFixedFit)) return;
+    /* Wide enough for the longest action label a host is likely to name
+     * ("Stick Right"); a narrower column clipped it against the chip. */
+    ImGui::TableSetupColumn("act", ImGuiTableColumnFlags_WidthFixed, px(96));
+    ImGui::TableSetupColumn("bind", ImGuiTableColumnFlags_WidthFixed, px(150));
+    for (int action = 0; action < m->assist_binding_count; ++action) {
+        /* The capture cursor is shared, so a row is only "listening" when it
+         * is this player's page AND this action AND the right device. */
+        const bool live = m->capturing && m->capture_assist &&
+                          m->capture_btn == action &&
+                          m->cfg_player == player;
+        char pad[48];
+        ImGui::PushID(action);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(m->assist_binding_labels[action]);
+        ImGui::TableSetColumnIndex(1);
+        if (pad_src) {
+            settings_pad_label(m->s.assist_pad_bind[player][action],
+                               pad, sizeof pad);
+            if (ImGui::Button(live && m->capture_pad
+                                  ? "[ press a button... ]" : pad,
+                              ImVec2(px(140), 0))) {
+                /* The capture cursor resolves the player through cfg_player,
+                 * and every player's block is on screen at once, so point it
+                 * at the block that was actually clicked. */
+                m->cfg_player = player;
+                launcher_model_begin_assist_capture(m, action, true);
+            }
+        } else {
+            if (ImGui::Button(
+                    live && !m->capture_pad ? "[ press a key... ]"
+                        : settings_key_label(
+                              m->s.assist_key_bind[player][action]),
+                    ImVec2(px(140), 0))) {
+                m->cfg_player = player;
+                launcher_model_begin_assist_capture(m, action, false);
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+}
+
+/* Per-player named actions render with that player's buttons instead; see
+ * draw_player_assist_bindings. Drawing both would offer two chips for one
+ * action and leave the player guessing which one the game reads. */
 void draw_controller_assist_shortcuts(LauncherModel* m,
                                       const LauncherTheme& th) {
+    if (m->assist_bindings_per_player) return;
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::TextUnformatted(m->has_assist_tools ? "ASSIST SHORTCUTS" : "HOST SHORTCUTS");
     ImGui::PopStyleColor();
@@ -4007,14 +4074,14 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
                                !m->capture_pad && m->capture_btn == action;
             if (ImGui::Button(
                     capture_key ? "[ key... ]" :
-                        settings_key_label(m->s.assist_key_bind[action]),
+                        settings_key_label(m->s.assist_key_bind[0][action]),
                     ImVec2(-FLT_MIN, 0)))
                 launcher_model_begin_assist_capture(m, action, false);
             ImGui::TableSetColumnIndex(2);
             bool capture_pad = m->capturing && m->capture_assist &&
                                m->capture_pad && m->capture_btn == action;
             char pad[48];
-            settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
+            settings_pad_label(m->s.assist_pad_bind[0][action], pad, sizeof pad);
             if (ImGui::Button(capture_pad ? "[ button... ]" : pad,
                               ImVec2(-FLT_MIN, 0)))
                 launcher_model_begin_assist_capture(m, action, true);
@@ -4554,7 +4621,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             ImGui::TextColored(col(th.text_muted), "%s",
                                                spec.buttons[b].label);
                             ImGui::SameLine(label_col_w);
-                            const bool cap = m->capturing && !m->capture_pad &&
+                            const bool cap = m->capturing && !m->capture_assist &&
+                                             !m->capture_pad &&
                                              m->capture_btn == b;
                             const bool cap_alt = cap && m->capture_slot == 1;
                             const char* lbl = m->binds[p][b];
@@ -4665,7 +4733,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             ImGui::TextColored(col(th.text_muted), "%s",
                                                spec.buttons[b].label);
                             ImGui::SameLine(label_col_w);
-                            const bool cap = m->capturing && m->capture_pad &&
+                            const bool cap = m->capturing && !m->capture_assist &&
+                                             m->capture_pad &&
                                              m->capture_btn == b;
                             const bool wait_rel = cap && m->map_all_wait_release;
                             const char* pl = m->pad_binds[p][b][0]
@@ -4862,7 +4931,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     for (int slot = 0; slot < bpi; ++slot) {
                         if (slot) ImGui::SameLine(0, chip_gap);
                         ImGui::PushID(slot);
-                        const bool cap = m->capturing && m->capture_btn == b
+                        const bool cap = m->capturing && !m->capture_assist &&
+                                         m->capture_btn == b
                                                       && m->capture_slot == slot;
                         const char* txt = cap
                             ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
@@ -4877,7 +4947,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     // GAMEPAD chip only: the player's source is a pad, so a key
                     // bind on this row would map something nothing reads.
                     ImGui::PushID("pad");
-                    const bool cap_pad = m->capturing && m->capture_pad && m->capture_btn == b;
+                    const bool cap_pad = m->capturing && !m->capture_assist &&
+                                         m->capture_pad && m->capture_btn == b;
                     char settings_pad[48];
                     settings_pad_label(m->s.player_pad_bind[p][b],
                                        settings_pad, sizeof settings_pad);
@@ -4893,7 +4964,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 } else {
                     // KEY chip only: keyboard is the source (or the console has
                     // no pad binds at all).
-                    const bool cap_key = m->capturing && !m->capture_pad && m->capture_btn == b;
+                    const bool cap_key = m->capturing && !m->capture_assist &&
+                                         !m->capture_pad && m->capture_btn == b;
                     if (cap_key) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                     const char* key_text = settings_player_binds
                         ? settings_key_label(m->s.player_key_bind[p][b])
@@ -4906,6 +4978,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::EndTable();
         }
+        /* Extra named actions belong to this player, so they sit with this
+         * player's buttons rather than in a separate host table. */
+        draw_player_assist_bindings(m, th, p, pad_src);
         ImGui::Spacing();
 
         /* ---- Auto Map All -------------------------------------------------

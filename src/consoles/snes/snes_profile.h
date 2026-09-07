@@ -56,7 +56,15 @@ static const SystemProfile kSystemProfileSnes = {
     /* controller */ {
         kSnesPadButtons, LNG_SNES_PAD_BUTTON_COUNT,
         "pad.tga", NULL, NULL,
-        /* max_players */ 2, /* has_pad_mode */ 0,
+        /* max_players */ 8, /* dual Super Multitap ceiling; game num_players
+                              * may be lower. Two ports is the bare console,
+                              * not the ceiling: a Hudson HUD-101 in one port
+                              * carries five seats and one in each carries
+                              * eight, which the runner emulates. Leaving this
+                              * at 2 silently clamped a four-player title back
+                              * to two configurable controllers. Same reasoning
+                              * as the PSX profile above. */
+        /* has_pad_mode */ 0,
         /* binds_per_input */ 1, /* modes */ NULL, /* mode_count */ 0,
         /* has_pad_binds */ 1,
         /* pad_bind_order */ kSnesGamepadBindOrder,

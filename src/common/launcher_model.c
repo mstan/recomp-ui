@@ -376,6 +376,7 @@ void launcher_model_init(LauncherModel* m,
         m->assist_binding_count =
             clampi(game->assist_binding_count, 0,
                    RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS);
+        m->assist_bindings_per_player = game->assist_bindings_per_player != 0;
         m->credits_text         = game->credits_text;
         m->assist_fast_forward_min = game->assist_fast_forward_min > 0
             ? game->assist_fast_forward_min : 2;
@@ -456,16 +457,20 @@ void launcher_model_init(LauncherModel* m,
                sizeof m->default_assist_key_bind);
         memcpy(m->default_assist_pad_bind, game->assist_default_pad_bind,
                sizeof m->default_assist_pad_bind);
-        for (int i = 0; i < m->assist_binding_count; ++i) {
-            if (m->s.assist_key_bind[i] == 0)
-                m->s.assist_key_bind[i] = m->default_assist_key_bind[i];
-            if (m->s.assist_pad_bind[i] == 0)
-                m->s.assist_pad_bind[i] = m->default_assist_pad_bind[i];
+        /* One default per action, seeded into every player: a host declares
+         * what the action's natural binding is, not what each player's is. */
+        for (int p = 0; p < RECOMP_LAUNCHER_MAX_PLAYERS; ++p) {
+            for (int i = 0; i < m->assist_binding_count; ++i) {
+                if (m->s.assist_key_bind[p][i] == 0)
+                    m->s.assist_key_bind[p][i] = m->default_assist_key_bind[i];
+                if (m->s.assist_pad_bind[p][i] == 0)
+                    m->s.assist_pad_bind[p][i] = m->default_assist_pad_bind[i];
+            }
         }
     } else {
-        memcpy(m->default_assist_key_bind, m->s.assist_key_bind,
+        memcpy(m->default_assist_key_bind, m->s.assist_key_bind[0],
                sizeof m->default_assist_key_bind);
-        memcpy(m->default_assist_pad_bind, m->s.assist_pad_bind,
+        memcpy(m->default_assist_pad_bind, m->s.assist_pad_bind[0],
                sizeof m->default_assist_pad_bind);
     }
     if (m->has_sharp_filter) {
@@ -3691,8 +3696,14 @@ void launcher_model_map_all_advance(LauncherModel* m) {
 }
 void launcher_model_begin_assist_capture(LauncherModel* m, int action,
                                          bool gamepad) {
-    if (!m->settings_bindings || action < 0 ||
-        action >= m->assist_binding_count)
+    /* Naming actions is enough on its own -- exactly what the note above
+     * draw_assist_binding_editor promises. Requiring settings_bindings here
+     * contradicted it: that flag means the host has taken over the per-player
+     * button chips as well, a much larger commitment than "give me one more
+     * row", and a host that had not made it got rows it could look at but
+     * never bind. The captured value lands in assist_key_bind/assist_pad_bind
+     * either way, which is storage the player chips do not share. */
+    if (action < 0 || action >= m->assist_binding_count)
         return;
     m->hk_capturing = false;
     m->capturing = true;
@@ -3704,9 +3715,13 @@ void launcher_model_begin_assist_capture(LauncherModel* m, int action,
 void launcher_model_set_captured_key(LauncherModel* m, int scancode) {
     if (!m || !m->capturing || m->capture_pad) return;
     if (m->capture_assist) {
+        /* A per-player action is bound for the player whose page is open; a
+         * host-level one has a single set, kept at index 0. */
+        const int p = m->assist_bindings_per_player ? m->cfg_player : 0;
         if (m->capture_btn >= 0 &&
-            m->capture_btn < m->assist_binding_count)
-            m->s.assist_key_bind[m->capture_btn] = scancode;
+            m->capture_btn < m->assist_binding_count &&
+            (unsigned)p < RECOMP_LAUNCHER_MAX_PLAYERS)
+            m->s.assist_key_bind[p][m->capture_btn] = scancode;
     } else {
         int buttons = launcher_model_active_button_count(m, m->cfg_player);
         if (m->capture_btn >= 0 && m->capture_btn < buttons)
@@ -3716,9 +3731,11 @@ void launcher_model_set_captured_key(LauncherModel* m, int scancode) {
 void launcher_model_set_captured_pad(LauncherModel* m, int encoded_binding) {
     if (!m || !m->capturing || !m->capture_pad) return;
     if (m->capture_assist) {
+        const int p = m->assist_bindings_per_player ? m->cfg_player : 0;
         if (m->capture_btn >= 0 &&
-            m->capture_btn < m->assist_binding_count)
-            m->s.assist_pad_bind[m->capture_btn] = encoded_binding;
+            m->capture_btn < m->assist_binding_count &&
+            (unsigned)p < RECOMP_LAUNCHER_MAX_PLAYERS)
+            m->s.assist_pad_bind[p][m->capture_btn] = encoded_binding;
     } else {
         int buttons = launcher_model_active_button_count(m, m->cfg_player);
         if (m->capture_btn >= 0 && m->capture_btn < buttons)
@@ -3737,11 +3754,25 @@ void launcher_model_reset_player_bindings(LauncherModel* m, int player) {
            sizeof m->s.player_pad_bind[player]);
 }
 void launcher_model_reset_assist_bindings(LauncherModel* m) {
-    if (!m || !m->settings_bindings) return;
-    memcpy(m->s.assist_key_bind, m->default_assist_key_bind,
-           sizeof m->s.assist_key_bind);
-    memcpy(m->s.assist_pad_bind, m->default_assist_pad_bind,
-           sizeof m->s.assist_pad_bind);
+    if (!m) return;
+    /* Per-player actions reset only the player being edited, matching the
+     * ordinary per-player Reset to Defaults beside them. Host-level actions
+     * are shared, so there is only one set to reset. */
+    if (m->assist_bindings_per_player) {
+        const int p = m->cfg_player;
+        if ((unsigned)p >= RECOMP_LAUNCHER_MAX_PLAYERS) return;
+        memcpy(m->s.assist_key_bind[p], m->default_assist_key_bind,
+               sizeof m->s.assist_key_bind[p]);
+        memcpy(m->s.assist_pad_bind[p], m->default_assist_pad_bind,
+               sizeof m->s.assist_pad_bind[p]);
+        return;
+    }
+    for (int p = 0; p < RECOMP_LAUNCHER_MAX_PLAYERS; ++p) {
+        memcpy(m->s.assist_key_bind[p], m->default_assist_key_bind,
+               sizeof m->s.assist_key_bind[p]);
+        memcpy(m->s.assist_pad_bind[p], m->default_assist_pad_bind,
+               sizeof m->s.assist_pad_bind[p]);
+    }
 }
 void launcher_model_cancel_capture(LauncherModel* m) {
     m->capturing      = false;
