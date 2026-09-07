@@ -1850,7 +1850,6 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
 // chrome + width). Vertical stack so nothing crowds at a controller-narrow
 // width: icon + label, block count, then a Browse/New button pair.
 void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
-    const SystemProfile* prof = (const SystemProfile*)m->profile;
     ImGui::PushID(slot);
 
     const bool enabled = m->s.memcard_enabled[slot] != 0;
@@ -1859,18 +1858,9 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     const float start_x = ImGui::GetCursorPosX();
     const float top_y   = ImGui::GetCursorPosY();
 
-    // Block usage source, most-authoritative first: a host memcard_inspect
-    // callback (REAL card contents) → a card we just formatted blank (0) → a
-    // SystemProfile SaveProbeFn → a representative placeholder pattern.
-    uint16_t used;
-    if (m->memcard_inspected[slot])
-        used = m->memcard_blocks_used[slot];
-    else if (m->memcard_freshly_formatted[slot])
-        used = 0;
-    else if (prof && prof->save.probe && prof->save.probe(m, slot))
-        used = m->memcard_blocks_used[slot];
-    else
-        used = (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
+    // Block usage source is decided by the model (real inspect result first;
+    // see launcher_model_memcard_blocks_used for the fallback order).
+    const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
 

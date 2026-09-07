@@ -806,8 +806,11 @@ struct RecompLauncherCSettings {
     char memcard_path[2][512];
     // Per-slot enable/disable (mirrors the legacy PSX launcher's per-card
     // "Enabled" switch / SIO-port concept: a disabled slot reports no card
-    // present). 0 = unset (host predates this field) -> the model defaults it
-    // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
+    // present). Tri-state on the way IN: 1 = enabled, -1 = disabled, 0 = unset
+    // (host predates this field) -> the model defaults it to enabled at init.
+    // The model normalizes to 0/1 and hands back 0/1; hosts should read the
+    // result as `> 0` so a -1 passed through an older launcher still reads as
+    // off. Appended additively; see launcher_model_toggle_memcard().
     int  memcard_enabled[2];
 
     // ---- audio output device (GameInfo.audio_device_labels consoles) --------

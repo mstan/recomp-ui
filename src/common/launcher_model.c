@@ -219,6 +219,12 @@ static void lm_bind_disc_selection(LauncherModel* m) {
 static void run_verify(LauncherModel* m);   // fwd; defined below, called from launcher_model_set_rom
 static void update_msu1_patch_available(LauncherModel* m);   // fwd; called from launcher_model_set_rom
 static void lm_inspect_memcard(LauncherModel* m, int slot); // fwd; host memcard_inspect callback
+
+// Host-facing tri-state -> model 0/1 (see RecompLauncherCSettings.memcard_enabled).
+static int lm_memcard_enabled_from_host(int v) {
+    if (v == 0) return 1;   /* unset: host predates the field -> legacy default, on */
+    return v > 0 ? 1 : 0;   /* 1 on, -1 off */
+}
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 static void lm_persist_setup_sidecars(LauncherModel* m);    // fwd; called from launcher_model_finish_setup
 
@@ -533,11 +539,13 @@ void launcher_model_init(LauncherModel* m,
     m->s.adaptive_view =
         (m->adaptive_view_supported && m->s.adaptive_view) ? 1 : 0;
 
-    // ---- memory-card slots default to enabled (0 == "unset": a host struct
-    // that predates this field, or was zero-initialized, reads as both cards
-    // plugged in — matching the legacy launcher's default) ----
-    if (!m->s.memcard_enabled[0]) m->s.memcard_enabled[0] = 1;
-    if (!m->s.memcard_enabled[1]) m->s.memcard_enabled[1] = 1;
+    // ---- memory-card slots: tri-state in (1 on, -1 off, 0 == "unset": a host
+    // struct that predates this field, or was zero-initialized, reads as both
+    // cards plugged in — matching the legacy launcher's default), 0/1 from here
+    // on. Without the -1 form a host could never show a slot the user had
+    // switched off; it re-armed as on and was persisted that way. ----
+    for (int slot = 0; slot < 2; ++slot)
+        m->s.memcard_enabled[slot] = lm_memcard_enabled_from_host(m->s.memcard_enabled[slot]);
 
     // ---- infer the SystemProfile this game belongs to (panel composition +
     // per-system specs) from the ABI caps launcher_profile_apply() already set ----
@@ -2933,6 +2941,26 @@ static void lm_inspect_memcard(LauncherModel* m, int slot) {
     m->memcard_blocks_used[slot] = bits;
     m->memcard_valid[slot]       = mc.valid != 0;
     m->memcard_inspected[slot]   = true;
+}
+
+// Which of the 15 blocks the panel paints as occupied, most-authoritative
+// source first: a host memcard_inspect callback (REAL card contents) -> a card
+// we just formatted blank (0) -> a SystemProfile SaveProbeFn -> a
+// representative placeholder pattern. The placeholder exists for the proto
+// launcher, which has no card image to read. A host that DOES inspect real
+// cards is authoritative: an inspection that never happened (no path bound,
+// or the callback declined) means there is no card to show, so the slot draws
+// blank rather than a pattern the player could mistake for foreign saves —
+// which is exactly what a launcher reopened after a netplay match looked like.
+uint16_t launcher_model_memcard_blocks_used(const LauncherModel* m, int slot) {
+    if (!m || slot < 0 || slot > 1) return 0;
+    if (m->memcard_inspected[slot]) return m->memcard_blocks_used[slot];
+    if (m->memcard_freshly_formatted[slot]) return 0;
+    if (m->memcard_inspect_cb) return 0;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->save.probe && prof->save.probe(m, slot))
+        return m->memcard_blocks_used[slot];
+    return (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
 }
 
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path) {
