@@ -25,6 +25,7 @@ set(_expected_fonts
 set(_expected_images
     brand_mark.tga
     brand_psx.tga
+    flags.png
     memcard.tga
     pad_analog.tga
     pad_digital.tga
