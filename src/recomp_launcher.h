@@ -506,6 +506,27 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*server_chat_send)(void* ctx, const char* text);
     int  (*server_chat_count)(void* ctx);
     int  (*server_chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
+
+    /* ---- name policy (optional, append-only) ------------------------------
+     * 1 when `name` may not be used -- it trips the same word list the chat
+     * filter uses (recomp-net's rnet_chat_filter). Asked for BOTH a player's
+     * display name and a room title.
+     *
+     * Unlike a chat line, a refused name is NOT masked: a line is a moment
+     * and a mask reads as one, while a player name sits in the seat table and
+     * in front of every line that player sends, and a room title sits in the
+     * lobby browser in front of everyone shopping for a game. Masking either
+     * just publishes the same word with stars in it, so the client is asked
+     * for a different one instead.
+     *
+     * The UI asks BEFORE it accepts a name, so the answer is immediate and
+     * works in a LAN room with no server. This is a courtesy check, not the
+     * gate: the lobby server refuses the name itself (a modified or older
+     * client can send what this would stop) and answers `name_rejected` /
+     * `lobby_name_rejected`, which arrive through last_error and reopen the
+     * matching prompt. NULL leaves the local check off and the server's
+     * refusal still lands. */
+    int  (*name_rejected)(void* ctx, const char* name);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------

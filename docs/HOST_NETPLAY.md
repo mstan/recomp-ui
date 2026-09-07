@@ -179,6 +179,56 @@ older servers are covered too. The UI never sees an unmasked line and needs
 no filter of its own. `RNET_CHAT_FILTER=0` in a client's environment turns
 its local pass off (developer use).
 
+### Names: refused, not masked
+
+A name is not a chat line. A line is a moment and a mask reads as one. A
+player name sits in the seat table, in the players-online panel, and in front
+of every line that player sends; a room title sits in the lobby browser in
+front of everyone shopping for a game. Masking either just publishes the same
+word with stars in it, for as long as it exists — so a name that trips the
+list is **refused**, and the client is asked for a different one.
+
+The lobby server is the authority. `ws_lobby.rs` gates every client-supplied
+string once, at the deserialization boundary, so `hello`, `create`, `join`
+and anything added later inherit it instead of having to remember it:
+
+| Field | Policy |
+| --- | --- |
+| `display_name` | control characters dropped, capped, trimmed; **refused** (`name_rejected`) if it trips the list |
+| `name` (room title) | same, **refused** as `lobby_name_rejected` |
+| `game_name` | hygiene only — it is a **scoping key**, matched by string equality, so touching it would split one game into two sets of rooms |
+| `password` | **validated, never rewritten** — see below |
+| `text` (chat) | masked, as before |
+
+A refused message is **not dispatched**: a bad name cannot ride in on a
+`create` only to be refused after the room exists. The cap is 32 characters
+*and* 63 bytes, because clients store these in a fixed 64-byte field
+(`PSX_LOBBY_NAME_LEN`); cutting on a character boundary here is what stops a
+client cutting mid-sequence.
+
+recomp-ui reopens the matching prompt when the refusal arrives through
+`last_error` — Player Name for `name_rejected` (dropping the refused name
+from settings but leaving it in the edit box to fix), Host Lobby for
+`lobby_name_rejected`.
+
+`name_rejected(ctx, name)` is the optional local half: a backend that owns the
+word list (recomp-net's `rnet_chat_filter`) answers 1 for a name it would
+refuse, and the UI says so on Save or Create without a round trip — which is
+also what covers a LAN room with no server. It is a courtesy, not the gate;
+leave it NULL and the server's refusal still lands.
+
+### Passwords: validated, never rewritten
+
+A password is never filtered and never edited. Silently dropping a character
+would leave the host holding a password that is not the one they typed, and
+both sides would then disagree about a secret. It is also never shown to
+anyone — only `has_password` is published, and the value is salted and hashed
+before it is stored — so the word list has no business in it.
+
+What is checked is only what no honest client can produce: control characters,
+and a length over 128 bytes. Either refuses the whole message with
+`password_invalid`.
+
 ### Chat callbacks
 
 Three optional, append-only members: `chat_send(text)`, `chat_count()`,
