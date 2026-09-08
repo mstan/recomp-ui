@@ -5475,9 +5475,16 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::Spacing();
         if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
-            const bool required_name = m->s.netplay_player_name[0] == '\0';
+            /* "Do they still have no name?" must ask the EFFECTIVE name. A
+             * signed-in player's name is the account handle; s.netplay_player_name
+             * is only the guest/LAN fallback and is routinely empty for them. Asking
+             * the fallback made Cancel read as "no name yet, netplay is not usable"
+             * and bounce them to the dashboard — losing the lobby page behind the
+             * modal — even though they were signed in as someone. */
+            const char* effective = np_effective_name(m);
+            const bool required_name = !effective || effective[0] == '\0';
             std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s",
-                          m->s.netplay_player_name);
+                          effective ? effective : "");
             m->netplay_name_modal_open = false;
             m->netplay_name_error[0] = '\0';
             if (required_name) {
@@ -5513,6 +5520,16 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::EndPopup();
                     return;
                 }
+                /* Tell the lobby too. account_set_handle only changes what the
+                 * ACCOUNT server holds; the players-online list is lobby presence,
+                 * which keeps the name from the first hello until something
+                 * re-announces it. snes_lobby_set_display_name re-queues hello
+                 * exactly for this, but nothing on this path ever called it, so a
+                 * signed-in rename showed the new name in this dialog and the old
+                 * one in the list beside it until reconnect. The guest branch below
+                 * has always done this; only the signed-in early-return skipped it. */
+                if (npa && npa->set_player_name)
+                    npa->set_player_name(npa->ctx, m->netplay_name_edit);
                 m->netplay_name_modal_open = false;
                 m->netplay_name_error[0] = '\0';
                 ImGui::CloseCurrentPopup();
