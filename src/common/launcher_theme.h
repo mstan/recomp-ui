@@ -208,6 +208,28 @@ static inline LauncherTheme launcher_theme_nes(void) {
     return t;
 }
 
+// Virtual Boy: black optical housing, crimson surfaces and bright red LEDs.
+// Warm text/focus and flat surfaces distinguish it from NES graphite/orange-red.
+static inline LauncherTheme launcher_theme_vb(void) {
+    LauncherTheme t = launcher_theme_default();
+    t.background      = lng_rgba(0.024f, 0.012f, 0.020f, 1.0f);
+    t.background2     = lng_rgba(0.071f, 0.020f, 0.031f, 1.0f);
+    t.panel           = lng_rgba(0.082f, 0.035f, 0.051f, 1.0f);
+    t.panel_hovered   = lng_rgba(0.145f, 0.051f, 0.071f, 1.0f);
+    t.control         = lng_rgba(0.192f, 0.075f, 0.102f, 1.0f);
+    t.control_hovered = lng_rgba(0.267f, 0.094f, 0.129f, 1.0f);
+    t.border          = lng_rgba(0.333f, 0.129f, 0.165f, 1.0f);
+    t.accent          = lng_rgba(1.000f, 0.204f, 0.278f, 1.0f);
+    t.accent_dim      = lng_rgba(0.902f, 0.227f, 0.263f, 1.0f);
+    t.accent_text     = lng_rgba(0.031f, 0.008f, 0.012f, 1.0f);
+    t.accent2         = lng_rgba(1.000f, 0.573f, 0.600f, 1.0f);
+    t.text            = lng_rgba(1.000f, 0.929f, 0.937f, 1.0f);
+    t.text_muted      = lng_rgba(0.741f, 0.576f, 0.600f, 1.0f);
+    t.focus_ring      = lng_rgba(1.000f, 0.843f, 0.855f, 1.0f);
+    t.scanlines       = 0;
+    return t;
+}
+
 // "Sega Genesis" theme. The 16-bit cartridge/CRT-arcade era: a cool blue-black
 // ground and ONE bold Sega azure accent for brand + primary action, distinctly
 // more cyan than the PSX royal blue so the two never read alike. CRT scanlines
@@ -284,6 +306,9 @@ static inline LauncherTheme launcher_theme_gbc(void) {
 // anything else -> default CRT). Note the "gb*" order: match "gba" and "gbc"
 // (3rd char) BEFORE the bare "gb" fallback.
 static inline LauncherTheme launcher_theme_by_name(const char* name) {
+    if (name && (name[0] == 'v' || name[0] == 'V') &&
+        (name[1] == 'b' || name[1] == 'B') && name[2] == '\0')
+        return launcher_theme_vb();
     if (name && (name[0] == 'p' || name[0] == 'P') &&
         (name[1] == 's' || name[1] == 'S'))
         return launcher_theme_psx();
