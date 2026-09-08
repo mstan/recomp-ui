@@ -2773,6 +2773,32 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
     return out;
 }
 
+static bool has_display_aspect_row(const LauncherModel* m) {
+    return m && ((m->aspect_labels && m->num_aspect_labels > 0) ||
+                 m->aspect_mask != 0);
+}
+
+static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th,
+                            float col_w = 0.0f) {
+    if (!has_display_aspect_row(m)) return;
+    row_label(m->aspect_setting_label && m->aspect_setting_label[0]
+                  ? m->aspect_setting_label
+                  : "Aspect ratio",
+              th, col_w);
+    ImGui::PushID("aspect_ratio");
+    if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+        launcher_model_cycle_aspect(m);
+    if (m->aspect_experimental) {
+        ImGui::SameLine(0, px(8));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.warn), "EXPERIMENTAL");
+    }
+    if (m->aspect_setting_help && m->aspect_setting_help[0] &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip("%s", m->aspect_setting_help);
+    ImGui::PopID();
+}
+
 // True when this game exposes ANY of the deeper PSX-style DISPLAY controls.
 // SNES (and any console leaving every has_* flag 0) takes the legacy-only
 // branch below and gets the fixed-band DISPLAY card. Fullscreen is NOT part
@@ -2801,6 +2827,7 @@ bool any_deep_display(const LauncherModel* m) {
 // the fixed height (byte-identical to before this console existed).
 bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
+    if (has_display_aspect_row(m)) return true;
     if (m->has_shader) return true;
     if (m->has_sharp_filter || m->has_affine_filter) return true;
     if (m->has_frame_blend || m->has_vsync) return true;
@@ -2898,6 +2925,14 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             float t = ImGui::CalcTextSize("Shader").x;
             if (t > cw) cw = t;
         }
+        if (has_display_aspect_row(m)) {
+            const char* aspect_label =
+                m->aspect_setting_label && m->aspect_setting_label[0]
+                    ? m->aspect_setting_label
+                    : "Aspect ratio";
+            float t = ImGui::CalcTextSize(aspect_label).x;
+            if (t > cw) cw = t;
+        }
         if (m->has_integer_scale) { float t = ImGui::CalcTextSize("Integer scaling").x; if (t > cw) cw = t; }
         cw += px(18.0f);
         row_label("Window scale", th, cw);
@@ -2921,6 +2956,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 launcher_model_cycle_display_layout(m);
             ImGui::PopID();
         }
+        draw_aspect_row(m, th, cw);
         if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
             row_label("Integer scaling", th, cw);
             bool is = m->s.integer_scale != 0;
@@ -3060,6 +3096,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_display_layout(m);
         ImGui::PopID();
     }
+    draw_aspect_row(m, th);
 
     if (m->has_sharp_filter) {
         row_label("Scaling filter", th);
