@@ -82,7 +82,16 @@ static const SystemProfile kSystemProfileSnes = {
                                     * LoadState slots on SNES), so this row
                                     * shows "(unbound)" until a player picks a
                                     * key or a port's config.ini names one. */
-                                   (1u << LNG_HK_SAVE_STATE_MENU)),
+                                   (1u << LNG_HK_SAVE_STATE_MENU) |
+                                   /* Rewind: added now that snes_rewind.c
+                                    * exists behind it. It was deliberately
+                                    * withheld while there was nothing to
+                                    * bind, on the same principle as
+                                    * n64_profile.h's debug-tools note -- a
+                                    * control that does nothing is worse than
+                                    * an absent one. Unbound by default here
+                                    * too: F8 is LoadState slot 8. */
+                                   (1u << LNG_HK_REWIND)),
     /* panels_dashboard  */ kPanelsDashboardCommon,
     /* panels_settings   */ kPanelsSettingsSnes,
     /* panels_controller */ kPanelsControllerCommon,
