@@ -166,15 +166,110 @@ const LauncherTheme* volatile g_th = nullptr;
 
 namespace {
 
-// ImGui coordinates are already DPI-independent: the SDL2 platform reports the
-// window in points and the GL backend applies DisplayFramebufferScale when it
-// submits vertices to the (Retina/HiDPI) drawable. Scaling widget geometry here
-// too would DOUBLE every size on HiDPI (and make labels collide with their
-// controls), so keep all layout tokens in logical units. Fonts are logical-
-// sized as well; the renderer scales their atlas with the framebuffer.
+// ImGui coordinates are DPI-independent: the platform layer reports the window
+// in LOGICAL units and the GL backend applies DisplayFramebufferScale when it
+// submits vertices to the (Retina/HiDPI) drawable. Where the OS has no
+// point/pixel split of its own (Windows, X11) that split is synthesized —
+// see apply_logical_display below — so this holds on every platform.
+// Scaling widget geometry here too would DOUBLE every size on HiDPI (and make
+// labels collide with their controls), so keep all layout tokens logical.
+// Font SIZES are logical too; only their raster density follows the display
+// (see apply_scale).
 // (Ported from launcher_ng's "Fix launcher DPI layout and text alignment".)
 float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
+
+/* ---- HiDPI: window coordinates <-> logical units ---------------------------
+ *
+ * The platform layer hands us a logical size and a pixel size (see
+ * launcher_platform_refresh_metrics). Where SDL reports no point/pixel split
+ * of its own — Windows, X11 — it synthesizes one from the display scale, and
+ * p->input_scale is then the number of SDL window coordinates per logical
+ * unit. Everything below is a no-op at input_scale 1.0, which is every
+ * platform that carries its density in the pixel size (macOS retina, Wayland).
+ */
+
+/* SDL2 spells mouse coordinates Sint32 and SDL3 spells them float; one
+ * template covers both without an #if at each field. */
+template <typename T> inline void div_coord(T& v, float s) {
+    v = (T)((float)v / s);
+}
+
+/* Mouse input arrives in window coordinates. Move it into the logical units
+ * the UI is laid out in, before ImGui or the bind-capture path sees it. */
+void scale_mouse_event(SDL_Event& e, float coords) {
+    if (coords == 1.0f) return;
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_MOTION:
+        div_coord(e.motion.x, coords);
+        div_coord(e.motion.y, coords);
+        div_coord(e.motion.xrel, coords);
+        div_coord(e.motion.yrel, coords);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        div_coord(e.button.x, coords);
+        div_coord(e.button.y, coords);
+        break;
+#if defined(LNG_SDL3)
+    case SDL_EVENT_MOUSE_WHEEL:
+        div_coord(e.wheel.mouse_x, coords);
+        div_coord(e.wheel.mouse_y, coords);
+        break;
+#endif
+    default:
+        break;
+    }
+}
+
+/* True where the SDL backend re-asserts the cursor from the global mouse
+ * state every frame (the same driver whitelist it uses). Elsewhere — Wayland —
+ * there is no global cursor and motion events are the only source, so asking
+ * for one would pin the pointer to the window origin. */
+bool sdl_has_global_mouse(void) {
+    const char* drv = SDL_GetCurrentVideoDriver();
+    static const char* kWhitelist[] = {"windows", "cocoa", "x11", "DIVE", "VMAN"};
+    if (!drv) return false;
+    for (const char* w : kWhitelist)
+        if (std::strncmp(drv, w, std::strlen(w)) == 0) return true;
+    return false;
+}
+
+/* Install the logical coordinate space for the frame about to be built.
+ *
+ * Runs after the SDL backend's NewFrame — which fills io.DisplaySize with the
+ * WINDOW size and queues an unscaled cursor position — and before
+ * ImGui::NewFrame(), so the values here are the ones that take effect. The GL
+ * backend multiplies DisplaySize by FramebufferScale for its viewport and
+ * scissor rects, which is what turns a logical-sized layout into a
+ * pixel-resolution frame. */
+void apply_logical_display(const LauncherPlatform* p) {
+    if (!p || !p->window || p->input_scale == 1.0f) return;
+    if (p->logical_w <= 0 || p->logical_h <= 0) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (SDL_GetWindowFlags(p->window) & SDL_WINDOW_MINIMIZED) {
+        io.DisplaySize = ImVec2(0.0f, 0.0f);   // as the backend would have it
+        return;
+    }
+    io.DisplaySize = ImVec2((float)p->logical_w, (float)p->logical_h);
+    io.DisplayFramebufferScale = ImVec2(p->display_scale, p->display_scale);
+
+    if (sdl_has_global_mouse() && SDL_GetKeyboardFocus() == p->window) {
+        int wx = 0, wy = 0;
+        SDL_GetWindowPosition(p->window, &wx, &wy);
+#if defined(LNG_SDL3)
+        float gx = 0.0f, gy = 0.0f;
+        SDL_GetGlobalMouseState(&gx, &gy);
+#else
+        int gxi = 0, gyi = 0;
+        SDL_GetGlobalMouseState(&gxi, &gyi);
+        const float gx = (float)gxi, gy = (float)gyi;
+#endif
+        io.AddMousePosEvent((gx - (float)wx) / p->input_scale,
+                            (gy - (float)wy) / p->input_scale);
+    }
+}
 
 /* Auto Map All run state.
  *
@@ -949,9 +1044,21 @@ static void emoji_atlas_blit(ImFontAtlas* atlas) {
                         (size_t)(s.w < (int)r->Width ? s.w : (int)r->Width) * 4);
     }
 }
+/* Rasterize glyphs at the display's pixel density while keeping their LOGICAL
+ * point size: the layout stays DPI-independent and text comes out genuinely
+ * sharper instead of a magnified 100% atlas. RasterizerDensity landed in ImGui
+ * 1.90.6; a host reusing an older copy (see the version shims at the top)
+ * still scales, just from a magnified atlas. */
+static void set_raster_density(ImFontConfig& cfg, float density) {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19060
+    cfg.RasterizerDensity = (density > 0.0f) ? density : 1.0f;
+#else
+    (void)cfg; (void)density;
+#endif
+}
 
 // Merge an optional TTF over the active font when the file exists.
-static void merge_font_if_present(const char* path, float size,
+static void merge_font_if_present(const char* path, float size, float density,
                                   const ImWchar* ranges) {
     if (!path || !path[0] || !ranges) return;
     if (FILE* f = fopen(path, "rb")) {
@@ -961,6 +1068,7 @@ static void merge_font_if_present(const char* path, float size,
         cfg.OversampleV = 2;
         cfg.MergeMode = true;
         cfg.PixelSnapH = true;
+        set_raster_density(cfg, density);
         ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &cfg, ranges);
     }
 }
@@ -972,7 +1080,12 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig cfg; cfg.OversampleH = 2; cfg.OversampleV = 2;
-    (void)scale;   // DPI is handled by the framebuffer scale, not by re-scaling layout/fonts
+    // Glyph SIZES stay logical (the layout is DPI-independent); only the
+    // raster density follows the display, so text is sharp rather than a
+    // magnified 100% atlas. Style is not re-scaled either — the frame is,
+    // via io.DisplayFramebufferScale (see apply_logical_display).
+    const float density = (scale > 0.0f) ? scale : 1.0f;
+    set_raster_density(cfg, density);
     const float body = th.font_body;
     // Cover Basic Latin + Latin-1 AND General Punctuation so em/en dashes and
     // curly quotes used in the game notes render as glyphs, not "?" tofu.
@@ -996,6 +1109,7 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         if (FILE* jf = fopen(jp_font_path, "rb")) {
             fclose(jf);
             ImFontConfig jcfg; jcfg.OversampleH = 2; jcfg.OversampleV = 2;
+            set_raster_density(jcfg, density);
             jcfg.MergeMode = true;
             io.Fonts->AddFontFromFileTTF(jp_font_path, body, &jcfg,
                                          io.Fonts->GetGlyphRangesJapanese());
@@ -1022,13 +1136,16 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         0x1F900, 0x1F9FF, // Supplemental Symbols and Pictographs (incl. 🥾)
         0,
     };
-    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
-    merge_font_if_present(emoji_font_path, body, kEmojiRanges);
+    merge_font_if_present(symbols_font_path, body, density, kSymbolRanges);
+    merge_font_if_present(emoji_font_path, body, density, kEmojiRanges);
 #else
-    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
+    merge_font_if_present(symbols_font_path, body, density, kSymbolRanges);
     (void)emoji_font_path;
 #endif
-    /* Color emoji sprites ride in the same atlas as custom glyphs. */
+    /* Color emoji sprites ride in the same atlas as custom glyphs. They stay
+     * at LOGICAL resolution: a custom atlas rect draws at its texel size, so
+     * rendering them denser would make them bigger, not sharper. Correct size,
+     * a little soft on a HiDPI display — the one thing density cannot fix. */
     emoji_atlas_reserve(io.Fonts, base_font, body);
     io.Fonts->Build();
     emoji_atlas_blit(io.Fonts);
@@ -11534,13 +11651,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     long smoke_frames = 0, frame = 0;
     if (const char* sf = SDL_getenv("LNG_SMOKE_FRAMES")) smoke_frames = SDL_atoi(sf);
 
-    // Test hook: LNG_FORCE_SCALE simulates a HiDPI display (see the platform
-    // layer, which enlarges the window and reports a logical/pixel split). When
-    // active, feed that split to ImGui so it renders at pixel density over a
-    // logical-sized layout — validating the DPI-independent layout on any OS.
-    // Unset => stock ImGui behavior (the SDL/GL backend's own framebuffer scale).
-    const char* force_scale_env = SDL_getenv("LNG_FORCE_SCALE");
-    const bool force_dpi = force_scale_env && force_scale_env[0] && SDL_atof(force_scale_env) > 1.0;
+    // HiDPI is driven by the platform layer's logical/pixel split, which is
+    // real on macOS/Wayland and synthesized from the display scale on Windows
+    // and X11 (see launcher_platform_refresh_metrics). LNG_FORCE_SCALE pins
+    // that scale so the path can be exercised on a 100% display; nothing here
+    // reads the env var any more.
     bool first_present_marked = false;
 
     while (m->action == LNG_ACTION_NONE && !p->should_quit) {
@@ -11548,6 +11663,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         SDL_Event ev;
         if (SDL_WaitEventTimeout(&ev, 16)) do {
+            /* Window coordinates -> logical units, before anything reads the
+             * event. No-op unless the platform layer synthesized the split. */
+            scale_mouse_event(ev, p->input_scale);
             if (ev.type == SDL_EVENT_QUIT) p->should_quit = true;
             if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) p->should_quit = true;
             if (try_capture(m, ev)) continue;
@@ -11677,11 +11795,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         }
         LNG_ImplSDL_NewFrame();
-        if (force_dpi) {   // Windows has no native point/pixel split — inject it
-            ImGuiIO& io = ImGui::GetIO();
-            io.DisplaySize = ImVec2((float)p->logical_w, (float)p->logical_h);
-            io.DisplayFramebufferScale = ImVec2(p->display_scale, p->display_scale);
-        }
+        apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
         draw_ui(m, *th, p->logical_w, p->logical_h);
         ImGui::Render();
