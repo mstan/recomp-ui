@@ -8398,6 +8398,10 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
 }
 
 /* The sign-in page. Only ever reached on the way to online play. */
+/* When the current "waiting for Discord" began, so the page can offer a way
+ * out if it drags. Zero means "not waiting". */
+static double s_signin_waiting_since = 0.0;
+
 void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     /* Same reason as the chooser, plus this page needs the backend live to
@@ -8431,13 +8435,36 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
     ImGui::Dummy(ImVec2(0, px(16)));
 
     if (st == RECOMP_LAUNCHER_ACCOUNT_WAITING) {
+        /* Offer a way out after a few seconds, but keep waiting underneath:
+         * a person needs longer than this to actually sign in, so the button
+         * is an escape from a login that went wrong, not a deadline. */
+        const double now = ImGui::GetTime();
+        if (s_signin_waiting_since <= 0.0) s_signin_waiting_since = now;
+        const bool stalled = now - s_signin_waiting_since > 10.0;
+
         ImGui::TextColored(col(th.accent2), "Waiting for Discord…");
         ImGui::PushTextWrapPos(wrap);
         ImGui::TextColored(col(th.text_muted),
                            "Finish signing in on the page that opened in your "
                            "browser. This screen will move on by itself.");
+        if (stalled) {
+            ImGui::Spacing();
+            ImGui::TextColored(col(th.text_muted),
+                               "Still waiting. If the browser never opened, or "
+                               "you closed the page, start again:");
+        }
         ImGui::PopTextWrapPos();
+        if (stalled) {
+            ImGui::Spacing();
+            if (ImGui::Button("Retry Discord Sign In", ImVec2(px(240), px(36))) &&
+                np && np->account_login_begin) {
+                s_signin_waiting_since = now; /* the new attempt gets its own clock */
+                np->account_login_begin(np->ctx);
+            }
+        }
     } else {
+        /* Not waiting: reset the clock so the next attempt starts fresh. */
+        s_signin_waiting_since = 0.0;
         if (ImGui::Button("Sign in with Discord", ImVec2(px(240), px(40))) &&
             np && np->account_login_begin) {
             np->account_login_begin(np->ctx);
