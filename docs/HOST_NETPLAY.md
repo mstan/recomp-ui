@@ -283,6 +283,16 @@ Clear launch-pending / re-arm ready in the game’s lobby callbacks before
 showing the waiting room again (`snes_lobby_clear_launch_pending`,
 `snes_lobby_set_ready`, etc.).
 
+The soft-return `RecompLauncherCSettings` is a fresh struct, so every field the
+first-boot seed fills must be filled again here. For PSX that includes
+`memcard_path[]` and `memcard_enabled[]` (1 on, -1 off): point them at the
+player's **personal** cards, not the match-time netplay sandbox files. Left
+empty, the Save panel has nothing to inspect; with a `memcard_inspect`
+callback wired it then draws both cards blank, which is wrong for a player who
+has saves — and hosts that also fold the launcher's card choices back in for
+the rematch (as they do at first boot) must do that here too, or the rematch
+replays the pre-match slot config.
+
 ---
 
 ## Bring-your-own memory card (PSX)

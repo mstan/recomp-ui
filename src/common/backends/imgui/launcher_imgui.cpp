@@ -1521,7 +1521,8 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     // Checklist: Serial / Region / ISO header. Before a disc is chosen, show
     // em-dashes with no pass/fail marks so the layout still reserves the rows.
     if (ImGui::BeginTable("verdict_checklist", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
+        const float label_width = std::max(px(96), ImGui::CalcTextSize(ui_text("ISO header")).x + px(18));
+        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, label_width);
         ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("m", ImGuiTableColumnFlags_WidthFixed, px(28));
         const char* dash = "\xE2\x80\x94";
@@ -1531,6 +1532,11 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
                th, !pending, v.region[0] != '\0');
         kv_row("ISO header", pending ? dash : (v.iso_ok ? "OK" : "Mismatch"),
                th, !pending, v.iso_ok);
+        const char* sbi_text = v.sbi_status == RECOMP_SBI_OK ? "OK" :
+                              v.sbi_status == RECOMP_SBI_MISSING ? "Missing" : "N/A";
+        kv_row("SBI File", pending ? dash : sbi_text,
+               th, !pending && v.sbi_status != RECOMP_SBI_NA,
+               v.sbi_status == RECOMP_SBI_OK);
         // TOC fingerprinting is a netplay capability, not part of ordinary
         // offline disc identification. Never expose it for offline titles,
         // even if a host accidentally leaves stale netplay fields populated.
@@ -1636,6 +1642,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     else
         snprintf(change_label, sizeof(change_label), "%s %s",
                  ui_text("Browse For"), ui_text(noun));
+    if (m->import_sbi_cb)
+        std::strncat(change_label, " / SBI", sizeof(change_label) - std::strlen(change_label) - 1);
     if (ImGui::Button(change_label, ImVec2(availw, px(34)))) {
         // Native file dialog filter comes from the active console's
         // SystemProfile.rom_filter — never a hardcoded per-system set. Every
@@ -1648,13 +1656,19 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (disc_no > 0)
             snprintf(title, sizeof(title), "Select %s %d", noun, disc_no);
         else
-            snprintf(title, sizeof(title), "Select %s", noun);
+            snprintf(title, sizeof(title), "Select %s%s", noun, m->import_sbi_cb ? " / SBI" : "");
         if (prof && prof->rom_filter.patterns && prof->rom_filter.pattern_count > 0)
             request_rom_picker(m, title, prof->rom_filter.patterns,
                                prof->rom_filter.pattern_count,
                                prof->rom_filter.desc, false);
         else
             request_rom_picker(m, title, NULL, 0, NULL, false);
+    }
+
+    if (m->setup_error[0]) {
+        ImGui::PushTextWrapPos();
+        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::PopTextWrapPos();
     }
 
     // MSU-1 patch-available sub-block: this game ships an IPS patch that
@@ -1836,7 +1850,6 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
 // chrome + width). Vertical stack so nothing crowds at a controller-narrow
 // width: icon + label, block count, then a Browse/New button pair.
 void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
-    const SystemProfile* prof = (const SystemProfile*)m->profile;
     ImGui::PushID(slot);
 
     const bool enabled = m->s.memcard_enabled[slot] != 0;
@@ -1845,18 +1858,9 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     const float start_x = ImGui::GetCursorPosX();
     const float top_y   = ImGui::GetCursorPosY();
 
-    // Block usage source, most-authoritative first: a host memcard_inspect
-    // callback (REAL card contents) → a card we just formatted blank (0) → a
-    // SystemProfile SaveProbeFn → a representative placeholder pattern.
-    uint16_t used;
-    if (m->memcard_inspected[slot])
-        used = m->memcard_blocks_used[slot];
-    else if (m->memcard_freshly_formatted[slot])
-        used = 0;
-    else if (prof && prof->save.probe && prof->save.probe(m, slot))
-        used = m->memcard_blocks_used[slot];
-    else
-        used = (uint16_t)(slot == 0 ? 0x0025u : 0x0009u);
+    // Block usage source is decided by the model (real inspect result first;
+    // see launcher_model_memcard_blocks_used for the fallback order).
+    const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
     int used_count = 0;
     for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
 
@@ -3946,8 +3950,17 @@ void settings_pad_label(int binding, char* out, size_t capacity) {
 void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
                                 const char* table_id, int action_limit,
                                 bool show_reset) {
-    if (!m->settings_bindings || m->assist_binding_count <= 0 ||
-        !m->assist_binding_labels)
+    /*
+     * A host that only wants a few NAMED extra actions should not have to
+     * take over the per-player button chips to get them.  `settings_bindings`
+     * does both: it also swaps those chips onto the host-owned
+     * player_key_bind/player_pad_bind arrays, which is a much larger promise
+     * than "give me one more row".  Naming actions is enough on its own.
+     *
+     * Nothing else changes for existing games: a host that names no actions
+     * has assist_binding_count == 0 and still renders nothing here.
+     */
+    if (m->assist_binding_count <= 0 || !m->assist_binding_labels)
         return;
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
     ImGui::TextUnformatted(m->has_assist_tools ? "ASSIST CONTROLS" : "HOST SHORTCUTS");
@@ -5055,7 +5068,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         } end_panel();
     }
 
-    if (m->settings_bindings) {
+    /* Named host actions stand on their own; see the note in
+     * draw_assist_binding_editor. */
+    if (m->assist_binding_count > 0 && m->assist_binding_labels) {
         if (begin_panel("cfg_assist_binds", 0)) {
             draw_controller_assist_shortcuts(m, th);
         } end_panel();
@@ -11059,7 +11074,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     // axis push (past a dead threshold) commits. PSX only accepts events from
     // the player's selected Input source device.
     if (m->capturing && m->capture_pad) {
-        if (m->settings_bindings && m->capture_assist) {
+        if (m->capture_assist) {
             if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 const int button = (int)LNG_EVGBTN(ev);
                 uint32_t mask = launcher_input_gamepad_button_mask(
@@ -11304,7 +11319,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
         // (capture_slot is always 0 for them).
         const SystemProfile* prof = (const SystemProfile*)m->profile;
-        if (m->settings_bindings && m->capture_assist)
+        if (m->capture_assist)
             launcher_model_set_captured_key(m, (int)LNG_EVSCAN(ev));
         else if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
             launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,

@@ -137,6 +137,7 @@ typedef struct {
     int  netplay_ok;    // 1 = OK for online; 0 = TOC/cue policy failed
     char disc_fp[65];   // TOC fingerprint for lobby peer matching
     char netplay_detail[160];
+    int sbi_status; // RECOMP_SBI_* for the selected disc; zero for legacy hosts.
 } VerifyResult;
 
 typedef struct {
@@ -182,10 +183,10 @@ typedef struct {
 
     // ---- PSX memory-card block usage (SAVE_MEMCARD; see launcher_system.h) ----
     // Per-slot bitmask over the 15 PS1 card blocks (bit i = block i occupied).
-    // Populated by a SystemProfile's SaveSpec.probe hook (SaveProbeFn) once a
-    // host wires one up; left zeroed/unused while probe is NULL (every profile
-    // today), in which case the Save panel renders a representative placeholder
-    // grid instead of reading this field.
+    // Populated by the host memcard_inspect callback (lm_inspect_memcard) or a
+    // SystemProfile's SaveSpec.probe hook (SaveProbeFn). Read through
+    // launcher_model_memcard_blocks_used(), which decides when this field is
+    // authoritative and when the panel shows blank / a proto placeholder.
     uint16_t    memcard_blocks_used[2];
     // Set true by launcher_model_new_memcard() right after it formats+adopts
     // a blank card for that slot, cleared as soon as the slot's path changes
@@ -201,6 +202,7 @@ typedef struct {
     // When non-NULL these drive the REAL disc verdict + memcard block usage
     // (re-run on every disc/card change) instead of the placeholder synthesis.
     int (*disc_verify_cb)(const char* disc_path, RecompLauncherCDiscVerify* out);
+    int (*import_sbi_cb)(const char*, const char*, char*, size_t, char*, size_t);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
     int (*bios_verify_cb)(const char* bios_path, RecompLauncherCBiosVerify* out);
     /* Optional host flush for first-run picks (project-root bios.cfg / disc.cfg). */
@@ -807,6 +809,10 @@ void launcher_model_clear_sram(LauncherModel* m);
 
 // ---- PSX memory-card slots (SAVE_MEMCARD only; no-op guarded by slot range) ----
 void launcher_model_set_memcard_path(LauncherModel* m, int slot, const char* path);
+// Block bitmask (bit i = block i occupied) the Save panel paints for one slot:
+// real inspect result, else blank for a freshly formatted card or for any slot
+// on a host that inspects real cards, else the SaveProbeFn / placeholder path.
+uint16_t launcher_model_memcard_blocks_used(const LauncherModel* m, int slot);
 // Enable/disable one card slot (mirrors the legacy launcher's per-card switch;
 // a disabled slot's SIO port reports no card present to the host once wired).
 void launcher_model_toggle_memcard(LauncherModel* m, int slot);
