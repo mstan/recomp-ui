@@ -529,6 +529,10 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*name_rejected)(void* ctx, const char* name);
 
     /* ---- Discord account (optional, append-only) --------------------------
+     * A host compiles against whatever recomp-ui its game pins, which may
+     * predate these fields. RECOMP_LAUNCHER_HAS_ACCOUNT (below the struct)
+     * lets a host wire them up when they exist and compile clean when they do
+     * not, so a runner and a UI can be updated in either order.
      * Sign-in is OPTIONAL, always. A build with these NULL, a lobby server
      * that offers no logins, and a player who never signs in are all ordinary
      * supported cases: the launcher keeps its locally-typed player name and
@@ -571,6 +575,11 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*account_sign_out)(void* ctx);
     int         (*account_set_handle)(void* ctx, const char* handle);
 } RecompLauncherCNetplayCallbacks;
+
+/* Present since the account callbacks were added. A host guards its wiring
+ * with `#ifdef RECOMP_LAUNCHER_HAS_ACCOUNT` so it builds against an older
+ * recomp-ui too -- the runner and the UI then land in either order. */
+#define RECOMP_LAUNCHER_HAS_ACCOUNT 1
 
 /* account_state() values. Guest is not an error and not a lesser state: it is
  * the launcher's original behaviour, and most players will sit in it. */
