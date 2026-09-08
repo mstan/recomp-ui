@@ -69,6 +69,9 @@ recomp_target_launcher_ui(recomp-ui-launcher CONSOLE all)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(recomp-ui-vb-profile-test tests/vb_profile_test.c)
+    target_include_directories(recomp-ui-vb-profile-test PRIVATE src src/common)
+    add_test(NAME recomp-ui-vb-profile COMMAND $<TARGET_FILE:recomp-ui-vb-profile-test>)
     add_executable(recomp-ui-ips-patch-test
         tests/ips_patch_test.c
         src/common/ips_patch.c

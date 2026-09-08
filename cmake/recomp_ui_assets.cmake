@@ -59,7 +59,9 @@ set(_RUI_CONSOLE_ASSETS_nds
     "${RUI_ASSETS}/consoles/nds/img/pad_nds.tga"
     "${RUI_ASSETS}/consoles/nds/img/brand_nds.tga")
 
-set(_RUI_CONSOLE_IDS snes psx gba n64 nes genesis gb nds)
+# Virtual Boy uses the common assets and its own dual-D-pad vocabulary.
+set(_RUI_CONSOLE_ASSETS_vb)
+set(_RUI_CONSOLE_IDS snes psx gba n64 nes genesis gb nds vb)
 set(_RUI_ACCEPTED_CONSOLE_IDS ${_RUI_CONSOLE_IDS} gbc)
 
 function(_recomp_ui_resolve_console_assets OUT_VAR CONSOLE)

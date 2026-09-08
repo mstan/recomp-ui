@@ -4392,7 +4392,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         } end_panel();
     }
 
-    if (m->settings_bindings) {
+    if (m->settings_bindings && m->assist_binding_count > 0) {
         if (begin_panel("cfg_assist_binds", 0)) {
             draw_controller_assist_shortcuts(m, th);
         } end_panel();
@@ -9281,6 +9281,12 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     if (!m->capturing && !m->hk_capturing &&
         !m->camera_capturing)
         return false;
+    const SystemProfile* capture_profile = (const SystemProfile*)m->profile;
+    const bool capture_psx = capture_profile && capture_profile->id &&
+        !strcmp(capture_profile->id, "psx");
+    // Settings-backed player rows must write the same settings they display.
+    // PSX player bindings use its separate two-slot store; assists still use settings.
+    const bool capture_settings = m->settings_bindings && (m->capture_assist || !capture_psx);
 
     // ESC cancels any capture — keyboard, pad, or hotkey.
     if (ev.type == SDL_EVENT_KEY_DOWN && LNG_EVKEY(ev) == SDLK_ESCAPE) {
@@ -9304,7 +9310,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     // axis push (past a dead threshold) commits. PSX only accepts events from
     // the player's selected Input source device.
     if (m->capturing && m->capture_pad) {
-        if (m->settings_bindings && m->capture_assist) {
+        if (capture_settings) {
             if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 const int button = (int)LNG_EVGBTN(ev);
                 uint32_t mask = launcher_input_gamepad_button_mask(
@@ -9317,7 +9323,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
                     launcher_model_cancel_capture(m);
                     return true;
                 }
-                if (settings_pad_button_is_select(button))
+                if (m->capture_assist && settings_pad_button_is_select(button))
                     return true;
                 launcher_model_set_captured_pad(
                     m, RECOMP_LAUNCHER_PAD_BUTTON(button));
@@ -9515,7 +9521,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
         // (capture_slot is always 0 for them).
         const SystemProfile* prof = (const SystemProfile*)m->profile;
-        if (m->settings_bindings && m->capture_assist)
+        if (capture_settings)
             launcher_model_set_captured_key(m, (int)LNG_EVSCAN(ev));
         else if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
             launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,

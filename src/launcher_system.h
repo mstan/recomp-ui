@@ -35,6 +35,7 @@
 #include "consoles/genesis/genesis_profile.h"
 #include "consoles/gb/gb_profile.h"
 #include "consoles/nds/nds_profile.h"
+#include "consoles/vb/vb_profile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,7 +59,6 @@ extern "C" {
     }
 
 LNG_STUB_PROFILE(smsgg,  "MASTER SYSTEM",      "ROM");
-LNG_STUB_PROFILE(vb,     "VIRTUAL BOY",        "ROM");
 
 #undef LNG_STUB_PROFILE
 
