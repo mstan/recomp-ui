@@ -8411,9 +8411,9 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
                        "other that uses it.");
     ImGui::Spacing();
     ImGui::TextColored(col(th.text_muted),
-                       "It is optional. You can play online as a guest and pick "
-                       "a name yourself — you will just get a new identity every "
-                       "time you reconnect.");
+                       "Online play on this server needs an account. LAN and "
+                       "Direct IP do not — go back and pick those to play "
+                       "without signing in.");
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(16)));
 
@@ -8441,9 +8441,10 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
     }
 
     ImGui::Dummy(ImVec2(0, px(20)));
-    if (ImGui::Button("Continue as guest", ImVec2(px(200), px(34))))
-        np_enter_netplay(m, 2);
-    ImGui::SameLine(0, px(12));
+    /* No "continue as guest". Online play means signing in, when this server
+     * offers sign-in at all -- a server with no Discord configured never
+     * reaches this page, because the chooser sends it straight through. Back
+     * is the way out, and it leads to LAN, which needs no account. */
     if (ImGui::Button("Back", ImVec2(px(120), px(34))))
         launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
 }
