@@ -5444,6 +5444,10 @@ static bool draw_account_section(LauncherModel* m, const LauncherTheme& th) {
     return signed_in;
 }
 
+/* Defined with the other account helpers, below; used from here on. */
+static const char* np_effective_name(LauncherModel* m);
+static void np_open_name_modal(LauncherModel* m);
+
 void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_name_modal_open) ImGui::OpenPopup("Player Name");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -5451,16 +5455,8 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginPopupModal("Player Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const bool signed_in = draw_account_section(m, th);
         /* Signed in, the field edits the handle the SERVER owns; as a guest it
-         * edits the local player name, exactly as before. Seed it from the
-         * server's handle the first time, so the box shows what peers see. */
-        if (signed_in && !m->netplay_handle_seeded) {
-            const auto* npa = np_cb(m);
-            const char* h = (npa && npa->account_handle) ? npa->account_handle(npa->ctx) : "";
-            if (h && h[0])
-                std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s", h);
-            m->netplay_handle_seeded = true;
-        }
-        if (!signed_in) m->netplay_handle_seeded = false;
+         * edits the local player name. The box is seeded by whoever opened
+         * this (np_open_name_modal), so it always starts on the right one. */
         ImGui::TextColored(col(th.text_muted),
                            signed_in ? "Display name (other players see this)"
                                      : "Player name");
@@ -5533,7 +5529,7 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
                           m->netplay_name_edit);
             if (update_lobby_name)
                 std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
-                              "%s's Lobby", m->s.netplay_player_name);
+                              "%s's Lobby", np_effective_name(m));
             const auto* np = np_cb(m);
             if (np && np->set_player_name) np->set_player_name(np->ctx, m->s.netplay_player_name);
             m->netplay_name_modal_open = false;
@@ -8277,6 +8273,39 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
  * play, so a LAN player is never asked for a Discord account, and neither is
  * anyone whose server offers no logins. */
 
+/* The name other players actually see for THIS client -- and it is not one
+ * value.
+ *
+ * Online it is the handle the SERVER owns, tied to the Discord account and
+ * defaulted from the Discord name; that is what appears in the seat table,
+ * the players-online panel and every chat line, because the server publishes
+ * it rather than trusting whatever the client sent. On LAN there is no
+ * account and no server, so it is the locally typed player name.
+ *
+ * Keeping them apart is the point: signing in must not overwrite the name
+ * somebody uses for LAN games, and renaming for LAN must not rename the
+ * account. The online one is stored server-side rather than here, which is
+ * also what lets it follow the player to another device with their key. */
+static const char* np_effective_name(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (np && np->account_state && np->account_handle &&
+        np->account_state(np->ctx) == RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN) {
+        const char* h = np->account_handle(np->ctx);
+        if (h && h[0]) return h;
+    }
+    return m->s.netplay_player_name;
+}
+
+/* Open the name editor seeded from whichever name it is about to edit. The
+ * openers used to stuff the LAN name in unconditionally, so a signed-in
+ * player opening it saw their LAN name over the top of their account. */
+static void np_open_name_modal(LauncherModel* m) {
+    std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s",
+                  np_effective_name(m));
+    m->netplay_name_error[0] = '\0';
+    m->netplay_name_modal_open = true;
+}
+
 /* True when the player is already signed in, so the sign-in page is skipped. */
 static bool np_account_signed_in(LauncherModel* m) {
     const auto* np = np_cb(m);
@@ -8498,9 +8527,13 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
         np_load_network_settings(m);
         np_refresh_host_ip(m);
     }
-    if (!m->s.netplay_player_name[0] && !m->netplay_name_modal_open && !m->netplay_name_prompted) {
+    /* Only nag for a name when there is genuinely none. A signed-in player
+     * already has one -- the server's -- so asking them to invent a second is
+     * the bug this used to cause. */
+    if (!np_effective_name(m)[0] && !m->netplay_name_modal_open &&
+        !m->netplay_name_prompted) {
         m->netplay_name_prompted = true;
-        m->netplay_name_modal_open = true;
+        np_open_name_modal(m);
     }
     if (!m->netplay_list_fresh)
         np_refresh_lobby_list(m);
@@ -9896,8 +9929,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 std::snprintf(m->netplay_status, sizeof(m->netplay_status), "%s", why);
                 return;
             }
-            if (!m->s.netplay_player_name[0]) {
-                m->netplay_name_modal_open = true;
+            if (!np_effective_name(m)[0]) {
+                np_open_name_modal(m);
                 return;
             }
             np_connect_and_list(m);
@@ -9905,7 +9938,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             np_refresh_host_ip(m);
             if (!m->netplay_host_name[0]) {
                 std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
-                              "%s's Lobby", m->s.netplay_player_name);
+                              "%s's Lobby", np_effective_name(m));
             }
             m->netplay_host_password[0] = '\0';
             m->netplay_host_modal_open = true;
@@ -11270,14 +11303,14 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
             if ((m->view == LNG_VIEW_NETPLAY ||
                  m->view == LNG_VIEW_NETPLAY_MODE) && m->netplay_supported) {
                 ImGui::SetCursorPos(ImVec2(right - w - name_w - gap, y));
-                const char* player_label = m->s.netplay_player_name[0]
-                    ? m->s.netplay_player_name : ui_text("Set player name");
-                if (ImGui::Button(player_label, ImVec2(name_w, px(34)))) {
-                    std::snprintf(m->netplay_name_edit,
-                                  sizeof(m->netplay_name_edit), "%s",
-                                  m->s.netplay_player_name);
-                    m->netplay_name_modal_open = true;
-                }
+                /* Signed in, this is the account's handle, not the LAN name:
+                 * it is what other players are actually seeing. */
+                const char* eff = np_effective_name(m);
+                char lbl[96];
+                emoji_display(eff && eff[0] ? eff : ui_text("Set player name"),
+                              lbl, sizeof(lbl));
+                if (ImGui::Button(lbl, ImVec2(name_w, px(34))))
+                    np_open_name_modal(m);
             }
             if (m->view == LNG_VIEW_LOBBY) {
                 /* No Back: you are seated, and the only way out of a seat is
