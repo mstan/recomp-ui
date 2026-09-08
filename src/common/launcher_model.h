@@ -50,6 +50,19 @@ typedef enum {
      * local player seated in a lobby, and back to Netplay when it does not.
      * Every profile that opens a lobby goes through it. */
     LNG_VIEW_LOBBY,
+    /* The fork the NETPLAY button lands on: LAN / Direct IP, or online. Its
+     * own view rather than a modal because the choice decides what the whole
+     * netplay page then means, and because a controller has to be able to
+     * make it. */
+    LNG_VIEW_NETPLAY_MODE,
+    /* Signing in, full screen. Only reached on the way to ONLINE play, and
+     * skipped entirely when this client is already signed in or when the
+     * server offers no logins -- see draw_netplay_mode_page. */
+    LNG_VIEW_NETPLAY_SIGNIN,
+    /* Keep last. launcher_model_set_view validates against this rather than
+     * against the last real view, which is what silently swallowed the two
+     * views above when they were first added. */
+    LNG_VIEW__COUNT,
 } LngView;
 
 typedef enum {
@@ -508,6 +521,11 @@ typedef struct {
     bool      netplay_network_modal_open;
     bool      netplay_password_modal_open;
     bool      netplay_local_room;
+    /* Which kind of netplay the player picked on LNG_VIEW_NETPLAY_MODE.
+     * 0 = not chosen yet, 1 = LAN / Direct IP, 2 = online. The netplay page
+     * reads it to decide whether the lobby-server half of itself is drawn at
+     * all: a LAN player should not be looking at an online lobby list. */
+    int       netplay_mode;
     int       netplay_selected_lobby;
     char      netplay_name_edit[64];
     char      netplay_lobby_url[256];

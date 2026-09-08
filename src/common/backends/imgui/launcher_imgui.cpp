@@ -8267,6 +8267,187 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
     ImGui::PopStyleVar();
 }
 
+/* ---- the netplay fork --------------------------------------------------
+ * NETPLAY lands here, not on the lobby browser. The two kinds of netplay
+ * want different things and always did -- a LAN player has no use for a
+ * lobby list, and an online player has no use for a direct-IP box -- but the
+ * page used to show both to everyone and let them work it out.
+ *
+ * Signing in belongs on THIS side of the fork: it is only needed for online
+ * play, so a LAN player is never asked for a Discord account, and neither is
+ * anyone whose server offers no logins. */
+
+/* True when the player is already signed in, so the sign-in page is skipped. */
+static bool np_account_signed_in(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    return np && np->account_state &&
+           np->account_state(np->ctx) == RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN;
+}
+
+/* True when this build and this server can sign anybody in at all. When they
+ * cannot, ONLINE still works -- as a guest, exactly as it always has. */
+static bool np_account_offered(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    return np && np->account_state && np->account_login_begin &&
+           np->account_available && np->account_available(np->ctx);
+}
+
+/* Go to the lobby browser, in the mode the player chose. */
+static void np_enter_netplay(LauncherModel* m, int mode) {
+    m->netplay_mode = mode;
+    m->netplay_list_fresh = false;
+    if (mode == 2) {
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Connecting to lobby server…");
+    } else {
+        m->netplay_status[0] = '\0';
+    }
+    launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+}
+
+/* One big choice card. Sized to be hit with a controller, not just a mouse. */
+static bool np_mode_card(const LauncherTheme& th, const char* id, const char* title,
+                         const char* body, float w, bool accent) {
+    ImGui::PushID(id);
+    const float h = px(150);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool pressed = ImGui::InvisibleButton("##card", ImVec2(w, h));
+    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h),
+                      imcol(hot ? th.panel_hovered : th.panel), px(10));
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h),
+                imcol(hot ? (accent ? th.accent : th.focus_ring) : th.border),
+                px(10), 0, hot ? 2.0f : 1.0f);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + px(20), p.y + px(18)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(accent ? th.accent2 : th.text));
+    ImGui::PushFont(nullptr);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    ImGui::PopStyleColor();
+    ImGui::SetCursorScreenPos(ImVec2(p.x + px(20), p.y + px(50)));
+    ImGui::PushTextWrapPos(p.x + w - px(20));
+    ImGui::TextColored(col(th.text_muted), "%s", body);
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + px(14)));
+    ImGui::PopID();
+    return pressed;
+}
+
+void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
+    const float avail_w = ImGui::GetContentRegionAvail().x;
+    const float card_w = avail_w > px(900) ? px(420) : (avail_w - px(30)) * 0.5f;
+
+    ImGui::TextColored(col(th.accent2), "NETPLAY");
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(avail_w > px(760) ? px(760) : avail_w);
+    ImGui::TextColored(col(th.text_muted),
+                       "How do you want to play? You can change this any time "
+                       "by coming back here.");
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(18)));
+
+    const ImVec2 row = ImGui::GetCursorScreenPos();
+    if (np_mode_card(th, "lan", "LAN / Direct IP",
+                     "Play with someone on your network, or connect straight to "
+                     "an address they give you. No account, no lobby server.",
+                     card_w, false)) {
+        np_enter_netplay(m, 1);
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(row.x + card_w + px(24), row.y));
+    const bool offered = np_account_offered(m);
+    if (np_mode_card(th, "online", "Online Netplay",
+                     offered
+                       ? "Find players on the lobby server. Sign in with Discord "
+                         "so your name is yours across sessions."
+                       : "Find players on the lobby server. This server does not "
+                         "offer sign-in, so you will play as a guest.",
+                     card_w, true)) {
+        /* Skip the sign-in page when there is nothing to sign in to, or when
+         * this machine is already signed in -- which is the normal case after
+         * the first time, because the stored device key is redeemed silently
+         * at startup. */
+        if (!offered || np_account_signed_in(m)) {
+            np_enter_netplay(m, 2);
+        } else {
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY_SIGNIN);
+        }
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + px(190)));
+    if (offered && np_account_signed_in(m)) {
+        const auto* np = np_cb(m);
+        const char* h = np->account_handle ? np->account_handle(np->ctx) : "";
+        char disp[128];
+        emoji_display(h && h[0] ? h : "", disp, sizeof(disp));
+        ImGui::TextColored(col(th.text_muted), "Signed in as");
+        ImGui::SameLine(0, px(6));
+        ImGui::TextColored(col(th.good), "%s", disp);
+    }
+}
+
+/* The sign-in page. Only ever reached on the way to online play. */
+void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    const int st = (np && np->account_state) ? np->account_state(np->ctx)
+                                             : RECOMP_LAUNCHER_ACCOUNT_GUEST;
+    const float wrap = px(640);
+
+    /* Signed in -- by this page, or by the device key redeeming in the
+     * background while the player was reading it. Either way there is nothing
+     * left to do here. */
+    if (st == RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN) {
+        np_enter_netplay(m, 2);
+        return;
+    }
+
+    ImGui::TextColored(col(th.accent2), "SIGN IN");
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(wrap);
+    ImGui::TextColored(col(th.text),
+                       "Signing in with Discord gives you a name that is yours "
+                       "across sessions and devices, on this server and any "
+                       "other that uses it.");
+    ImGui::Spacing();
+    ImGui::TextColored(col(th.text_muted),
+                       "It is optional. You can play online as a guest and pick "
+                       "a name yourself — you will just get a new identity every "
+                       "time you reconnect.");
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, px(16)));
+
+    if (st == RECOMP_LAUNCHER_ACCOUNT_WAITING) {
+        ImGui::TextColored(col(th.accent2), "Waiting for Discord…");
+        ImGui::PushTextWrapPos(wrap);
+        ImGui::TextColored(col(th.text_muted),
+                           "Finish signing in on the page that opened in your "
+                           "browser. This screen will move on by itself.");
+        ImGui::PopTextWrapPos();
+    } else {
+        if (ImGui::Button("Sign in with Discord", ImVec2(px(240), px(40))) &&
+            np && np->account_login_begin) {
+            np->account_login_begin(np->ctx);
+        }
+        if (st == RECOMP_LAUNCHER_ACCOUNT_FAILED && np && np->account_error) {
+            const char* e = np->account_error(np->ctx);
+            if (e && e[0]) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(wrap);
+                ImGui::TextColored(col(th.warn), "%s", e);
+                ImGui::PopTextWrapPos();
+            }
+        }
+    }
+
+    ImGui::Dummy(ImVec2(0, px(20)));
+    if (ImGui::Button("Continue as guest", ImVec2(px(200), px(34))))
+        np_enter_netplay(m, 2);
+    ImGui::SameLine(0, px(12));
+    if (ImGui::Button("Back", ImVec2(px(120), px(34))))
+        launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
+}
+
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
@@ -8302,7 +8483,12 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     /* Two columns when the backend reports who is online: the lobby table
      * on the left, the players panel on the right. A LAN-only backend has
      * no presence and keeps the full width. */
-    const bool has_online = np->online_count && np->online_get;
+    /* A LAN player picked LAN. The lobby server's half of this page -- the
+     * players-online panel and the per-game server chat -- is about people on
+     * a server they are not using, so it is not drawn. The lobby list, Host
+     * Lobby and Join Direct stay: those are how a LAN room is made. */
+    const bool lan_mode = m->netplay_mode == 1;
+    const bool has_online = !lan_mode && np->online_count && np->online_get;
     const float avail_w = ImGui::GetContentRegionAvail().x;
     const float side_gap = px(20);
     const float side_w = px(300);
@@ -8310,7 +8496,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const float list_w = two_col ? avail_w - side_w - side_gap : avail_w;
     /* The per-game server chat takes a band across the bottom; the list and
      * the players panel share what is above it. */
-    const bool has_schat = np_server_chat_available(np);
+    const bool has_schat = !lan_mode && np_server_chat_available(np);
     const float schat_h = px(230);
     const float schat_gap = px(10);
     const float avail_h = ImGui::GetContentRegionAvail().y;
@@ -9760,12 +9946,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         const float net_w = px(170.0f);
         ImGui::SetCursorScreenPos(ImVec2(play_x - net_w - px(12.0f), cta_y));
         if (ImGui::Button(ui_text("NETPLAY"), ImVec2(net_w, play_h))) {
-            /* Open the page immediately; connect/list runs on first draw
-             * (and continues off-thread) so Windows DNS/TCP never freezes UI. */
-            m->netplay_list_fresh = false;
-            std::snprintf(m->netplay_status, sizeof(m->netplay_status),
-                          "Connecting to lobby server…");
-            launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+            /* The fork first. Connecting used to start here, which meant a LAN
+             * player dialled a lobby server they were never going to use --
+             * np_enter_netplay does it now, and only for online. */
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
         }
     }
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
@@ -11042,7 +11226,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         } else {
             const float w = px(110.0f);
             const float name_w = px(170.0f);
-            if (m->view == LNG_VIEW_NETPLAY && m->netplay_supported) {
+            if ((m->view == LNG_VIEW_NETPLAY ||
+                 m->view == LNG_VIEW_NETPLAY_MODE) && m->netplay_supported) {
                 ImGui::SetCursorPos(ImVec2(right - w - name_w - gap, y));
                 const char* player_label = m->s.netplay_player_name[0]
                     ? m->s.netplay_player_name : ui_text("Set player name");
@@ -11068,8 +11253,16 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                 (void)w;
             } else {
                 ImGui::SetCursorPos(ImVec2(right - w, y));
-                if (ImGui::Button(ui_text("< Back"), ImVec2(w, px(34))))
-                    launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+                if (ImGui::Button(ui_text("< Back"), ImVec2(w, px(34)))) {
+                    /* Retrace the netplay fork rather than dropping to the
+                     * dashboard from the middle of it: the browser and the
+                     * sign-in page were both reached through the chooser. */
+                    if (m->view == LNG_VIEW_NETPLAY ||
+                        m->view == LNG_VIEW_NETPLAY_SIGNIN)
+                        launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
+                    else
+                        launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
+                }
             }
         }
         // Absolute placement prevents three dashboard buttons from mutating
@@ -11101,6 +11294,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         case LNG_VIEW_SETTINGS:   draw_settings(m, th);             break;
         case LNG_VIEW_CONTROLLER: draw_controller(m, th);           break;
         case LNG_VIEW_NETPLAY:    draw_netplay(m, th);              break;
+        case LNG_VIEW_NETPLAY_MODE:   draw_netplay_mode_page(m, th);   break;
+        case LNG_VIEW_NETPLAY_SIGNIN: draw_netplay_signin_page(m, th); break;
         case LNG_VIEW_MODS:       draw_mods(m, th);                 break;
         case LNG_VIEW_ASSIST_TOOLS: draw_assist_tools(m, th);        break;
         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
