@@ -8413,13 +8413,45 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
 
     ImGui::SetCursorScreenPos(ImVec2(row.x + card_w + px(24), row.y));
     const bool offered = np_account_offered(m);
-    if (np_mode_card(th, "online", "Online Netplay",
-                     offered
-                       ? "Find players on the lobby server. Sign in with Discord "
-                         "so your name is yours across sessions."
-                       : "Find players on the lobby server. This server does not "
-                         "offer sign-in, so you will play as a guest.",
-                     card_w, true)) {
+    const auto* npa = np_cb(m);
+    const int acct = (npa && npa->account_state) ? npa->account_state(npa->ctx)
+                                                 : RECOMP_LAUNCHER_ACCOUNT_GUEST;
+
+    /* Hold ONLINE until the quiet sign-in has actually answered.
+     *
+     * The pump above redeems a stored netplay_secret in the background, and
+     * that takes a round-trip. Clicking during it read as "not signed in" and
+     * sent the player to the Discord sign-in page -- to sign in again, on a
+     * machine that already had a valid credential and was a moment away from
+     * using it. WAITING is exactly "an answer is coming"; GUEST after the
+     * pump means there was no secret to redeem, and that needs no wait.
+     *
+     * Bounded, because an unanswerable network must not lock anyone out of
+     * netplay entirely. Five seconds is generous for one HTTP round-trip with
+     * nobody in the loop -- unlike the sign-in page's ten, which is waiting on
+     * a human in a browser. After that the card unlocks and says the sign-in
+     * is still going; the player can go on as a guest, and if it lands later
+     * the lobby picks up the name from the pump anyway. */
+    static double quiet_signin_since = 0.0;
+    const double now_t = ImGui::GetTime();
+    const bool awaiting = offered && acct == RECOMP_LAUNCHER_ACCOUNT_WAITING;
+    if (!awaiting) quiet_signin_since = 0.0;
+    else if (quiet_signin_since <= 0.0) quiet_signin_since = now_t;
+    const bool stalled = awaiting && (now_t - quiet_signin_since > 5.0);
+    const bool hold_online = awaiting && !stalled;
+
+    const char* online_body =
+        !offered ? "Find players on the lobby server. This server does not "
+                   "offer sign-in, so you will play as a guest."
+        : hold_online ? "Checking your saved sign-in\u2026"
+        : "Find players on the lobby server. Sign in with Discord "
+          "so your name is yours across sessions.";
+
+    ImGui::BeginDisabled(hold_online);
+    const bool online_hit = np_mode_card(th, "online", "Online Netplay",
+                                         online_body, card_w, true);
+    ImGui::EndDisabled();
+    if (online_hit) {
         /* Skip the sign-in page when there is nothing to sign in to, or when
          * this machine is already signed in -- which is the normal case after
          * the first time, because the stored device key is redeemed silently
@@ -8431,15 +8463,30 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
         }
     }
 
+    /* Say which of the three it is, rather than only the happy one. A player
+     * who is a guest because the redemption FAILED was previously told
+     * nothing at all, and had no way to tell that apart from never having
+     * signed in. */
     ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + px(190)));
-    if (offered && np_account_signed_in(m)) {
-        const auto* np = np_cb(m);
-        const char* h = np->account_handle ? np->account_handle(np->ctx) : "";
+    if (offered && acct == RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN) {
+        const char* h = npa->account_handle ? npa->account_handle(npa->ctx) : "";
         char disp[128];
         emoji_display(h && h[0] ? h : "", disp, sizeof(disp));
         ImGui::TextColored(col(th.text_muted), "Signed in as");
         ImGui::SameLine(0, px(6));
         ImGui::TextColored(col(th.good), "%s", disp);
+    } else if (awaiting) {
+        ImGui::TextColored(col(th.text_muted),
+                           stalled ? "Still checking your saved sign-in \u2014 you can "
+                                     "continue as a guest."
+                                   : "Checking your saved sign-in\u2026");
+    } else if (offered && acct == RECOMP_LAUNCHER_ACCOUNT_FAILED) {
+        const char* err = npa->account_error ? npa->account_error(npa->ctx) : "";
+        ImGui::PushTextWrapPos(px(760));
+        ImGui::TextColored(col(th.warn), "Not signed in%s%s",
+                           (err && err[0]) ? " \u2014 " : "",
+                           (err && err[0]) ? err : "");
+        ImGui::PopTextWrapPos();
     }
 }
 
