@@ -497,6 +497,9 @@ typedef struct {
      * cleared as soon as the player edits the field. Set by the local check
      * (np->name_rejected) or by the server's `name_rejected` error. */
     char      netplay_name_error[128];
+    /* The name box has been seeded from the server-owned handle for this
+     * sign-in. Reset on sign-out so the next sign-in re-seeds. */
+    bool      netplay_handle_seeded;
     /* The same, for the room title in the Host Lobby modal: a lobby name sits
      * in the browser in front of everyone shopping for a game, so it is
      * refused like a player name rather than masked. */

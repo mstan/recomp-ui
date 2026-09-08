@@ -527,7 +527,59 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * matching prompt. NULL leaves the local check off and the server's
      * refusal still lands. */
     int  (*name_rejected)(void* ctx, const char* name);
+
+    /* ---- Discord account (optional, append-only) --------------------------
+     * Sign-in is OPTIONAL, always. A build with these NULL, a lobby server
+     * that offers no logins, and a player who never signs in are all ordinary
+     * supported cases: the launcher keeps its locally-typed player name and
+     * plays as a guest, which is what it has always done. Nothing in the seat
+     * table, the lobby list or the match path may be made to require an
+     * account.
+     *
+     * The host owns the HTTP: the launcher only opens a URL in a browser and
+     * asks the host how it is going. The flow, as the lobby server implements
+     * it (POST /auth/discord/start, GET /auth/discord/callback, POST
+     * /auth/discord/poll), is:
+     *
+     *   account_login_begin()  -> host asks the server to start a login, gets
+     *                             back a URL, and opens it in the player's
+     *                             browser. 0 = started; <0 = could not, and
+     *                             account_error says why.
+     *   account_state()        -> polled every frame while the modal is open.
+     *   account_handle()       -> the seat name the SERVER owns once signed in.
+     *   account_username()     -> the Discord @handle, shown as the
+     *                             disambiguator when two players present the
+     *                             same handle (Discord display names are not
+     *                             unique).
+     *   account_error()        -> one line for a human, when state is FAILED.
+     *   account_sign_out()     -> forget the stored session. Returns to guest;
+     *                             never fails in a way the player cares about.
+     *   account_set_handle()   -> ask the server to change the presentational
+     *                             handle. 0 = accepted; <0 = refused (it trips
+     *                             the word list), and the player picks another.
+     *
+     * account_available() reports whether the CONFIGURED lobby server offers
+     * logins at all -- the server answers 503 to a start when its operator has
+     * not set up Discord. Draw no sign-in affordance when this says no, rather
+     * than offering a button that cannot work. */
+    int         (*account_available)(void* ctx);
+    int         (*account_login_begin)(void* ctx);
+    int         (*account_state)(void* ctx); /* RecompLauncherCAccountState */
+    const char* (*account_handle)(void* ctx);
+    const char* (*account_username)(void* ctx);
+    const char* (*account_error)(void* ctx);
+    int         (*account_sign_out)(void* ctx);
+    int         (*account_set_handle)(void* ctx, const char* handle);
 } RecompLauncherCNetplayCallbacks;
+
+/* account_state() values. Guest is not an error and not a lesser state: it is
+ * the launcher's original behaviour, and most players will sit in it. */
+enum {
+    RECOMP_LAUNCHER_ACCOUNT_GUEST = 0,
+    RECOMP_LAUNCHER_ACCOUNT_WAITING = 1, /* browser open, polling */
+    RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN = 2,
+    RECOMP_LAUNCHER_ACCOUNT_FAILED = 3   /* account_error() has one line */
+};
 
 /* ---- schema-driven mods --------------------------------------------------
  * The host owns package parsing, persistence, dependency resolution, and

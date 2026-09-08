@@ -5367,11 +5367,103 @@ static bool np_name_refused(LauncherModel* m, const char* name) {
     return np->name_rejected(np->ctx, name) != 0;
 }
 
+/* Signing in is optional, and this draws the whole of it.
+ *
+ * A build with no account callbacks, a lobby server whose operator never set
+ * Discord up, and a player who simply does not sign in are all ordinary cases:
+ * the section is not drawn, the name field below is the locally-typed player
+ * name, and everything behaves as it did before Discord existed. Guest is not
+ * a lesser state here -- it is the original one.
+ *
+ * Returns true when the player is signed in, which is what decides whether the
+ * name field edits a LOCAL name or the server-owned handle. */
+static bool draw_account_section(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    if (!np || !np->account_state || !np->account_available) return false;
+    /* The server answers 503 to a login start when its operator has not
+     * configured Discord. Offering a button that cannot work is worse than
+     * offering none. */
+    if (!np->account_available(np->ctx)) return false;
+
+    const int st = np->account_state(np->ctx);
+    const bool signed_in = st == RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN;
+
+    if (signed_in) {
+        const char* handle = np->account_handle ? np->account_handle(np->ctx) : "";
+        const char* uname = np->account_username ? np->account_username(np->ctx) : "";
+        char disp[128];
+        emoji_display(handle && handle[0] ? handle : "Signed in", disp, sizeof(disp));
+        ImGui::TextColored(col(th.text_muted), "Signed in as");
+        ImGui::SameLine(0, px(6));
+        ImGui::TextColored(col(th.good), "%s", disp);
+        if (uname && uname[0]) {
+            /* Discord display names are NOT unique, so the @handle is what
+             * tells two players with the same name apart. */
+            ImGui::SameLine(0, px(6));
+            ImGui::TextColored(col(th.text_muted), "@%s", uname);
+        }
+        if (ImGui::Button("Sign out", ImVec2(px(120), 0)) && np->account_sign_out) {
+            np->account_sign_out(np->ctx);
+            m->netplay_name_error[0] = '\0';
+        }
+    } else if (st == RECOMP_LAUNCHER_ACCOUNT_WAITING) {
+        ImGui::TextColored(col(th.accent2), "Waiting for Discord…");
+        ImGui::PushTextWrapPos(px(360));
+        ImGui::TextColored(col(th.text_muted),
+                           "Finish signing in on the page that opened in your "
+                           "browser, then come back here.");
+        ImGui::PopTextWrapPos();
+    } else {
+        ImGui::PushTextWrapPos(px(360));
+        ImGui::TextColored(col(th.text_muted),
+                           "Sign in with Discord so your name is yours across "
+                           "sessions. Optional — you can play as a guest.");
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("Sign in with Discord", ImVec2(px(200), 0)) &&
+            np->account_login_begin) {
+            if (np->account_login_begin(np->ctx) != 0) {
+                const char* e = np->account_error ? np->account_error(np->ctx) : nullptr;
+                std::snprintf(m->netplay_name_error, sizeof(m->netplay_name_error),
+                              "%s", e && e[0] ? e : "Could not start the sign-in.");
+            } else {
+                m->netplay_name_error[0] = '\0';
+            }
+        }
+        if (st == RECOMP_LAUNCHER_ACCOUNT_FAILED && np->account_error) {
+            const char* e = np->account_error(np->ctx);
+            if (e && e[0]) {
+                ImGui::PushTextWrapPos(px(360));
+                ImGui::TextColored(col(th.warn), "%s", e);
+                ImGui::PopTextWrapPos();
+            }
+        }
+    }
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    return signed_in;
+}
+
 void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_name_modal_open) ImGui::OpenPopup("Player Name");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Player Name", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool signed_in = draw_account_section(m, th);
+        /* Signed in, the field edits the handle the SERVER owns; as a guest it
+         * edits the local player name, exactly as before. Seed it from the
+         * server's handle the first time, so the box shows what peers see. */
+        if (signed_in && !m->netplay_handle_seeded) {
+            const auto* npa = np_cb(m);
+            const char* h = (npa && npa->account_handle) ? npa->account_handle(npa->ctx) : "";
+            if (h && h[0])
+                std::snprintf(m->netplay_name_edit, sizeof(m->netplay_name_edit), "%s", h);
+            m->netplay_handle_seeded = true;
+        }
+        if (!signed_in) m->netplay_handle_seeded = false;
+        ImGui::TextColored(col(th.text_muted),
+                           signed_in ? "Display name (other players see this)"
+                                     : "Player name");
         ImGui::SetNextItemWidth(px(320));
         bool save = ImGui::InputText("##player_name", m->netplay_name_edit,
                                      sizeof(m->netplay_name_edit),
@@ -5408,6 +5500,26 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
             if (np_name_refused(m, m->netplay_name_edit)) {
                 std::snprintf(m->netplay_name_error, sizeof(m->netplay_name_error),
                               "That name can't be used. Please pick another one.");
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            if (signed_in) {
+                /* The server owns an account's name, so this is a request, not
+                 * a local write: it can be refused for the same reason a typed
+                 * name is, and the player picks another. */
+                const auto* npa = np_cb(m);
+                if (npa && npa->account_set_handle &&
+                    npa->account_set_handle(npa->ctx, m->netplay_name_edit) != 0) {
+                    std::snprintf(m->netplay_name_error, sizeof(m->netplay_name_error),
+                                  "That name can't be used. Please pick another one.");
+                    ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
+                }
+                m->netplay_name_modal_open = false;
+                m->netplay_name_error[0] = '\0';
+                ImGui::CloseCurrentPopup();
                 ImGui::EndDisabled();
                 ImGui::EndPopup();
                 return;
