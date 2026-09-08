@@ -8335,6 +8335,16 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
 }
 
 void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
+    /* Pump here too, not only on the browser page. The backend does its own
+     * lazy setup from the pump -- parsing the lobby host, loading a stored
+     * device key, redeeming it -- and this page asks it questions ("is
+     * sign-in offered?", "are we signed in?") before the browser page has
+     * ever been drawn. Without this the first visit answered from an
+     * uninitialised backend. */
+    {
+        const auto* npp = np_cb(m);
+        if (npp && npp->pump) npp->pump(npp->ctx);
+    }
     const float avail_w = ImGui::GetContentRegionAvail().x;
     const float card_w = avail_w > px(900) ? px(420) : (avail_w - px(30)) * 0.5f;
 
@@ -8390,6 +8400,9 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
 /* The sign-in page. Only ever reached on the way to online play. */
 void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
+    /* Same reason as the chooser, plus this page needs the backend live to
+     * notice the sign-in completing. */
+    if (np && np->pump) np->pump(np->ctx);
     const int st = (np && np->account_state) ? np->account_state(np->ctx)
                                              : RECOMP_LAUNCHER_ACCOUNT_GUEST;
     const float wrap = px(640);
