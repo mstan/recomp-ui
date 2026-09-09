@@ -177,6 +177,35 @@ typedef struct RecompLauncherCNetplayLobbyMod {
 /* One lobby chat line, oldest first. Backends keep a short ring (the last
  * 64 or so); the UI redraws the whole ring every frame, so `seq` only has to
  * be monotonic so the UI can notice a new line and scroll to it. */
+/* One automatch queue type, as the server advertises it. The caps summary is
+ * a short human line the server builds ("Delay 2 - Rollback on"), NOT a
+ * parsed settings blob: the launcher shows what the player is signing up for
+ * and the server remains the only thing that writes match_caps. */
+typedef struct RecompLauncherCNetplayRuleset {
+    char id[48];
+    char label[64];
+    char caps_summary[128];
+    /* Empty when the ruleset accepts any release. */
+    char game_version[48];
+    int  max_slots;
+} RecompLauncherCNetplayRuleset;
+
+/* The opponent offered at the accept gate. */
+typedef struct RecompLauncherCNetplayFound {
+    char handle[64];
+    /* Discord @handle, shown small under the name -- display names are not
+     * unique, so this is the disambiguator. Empty when unknown. */
+    char username[64];
+    /* ISO 3166-1 alpha-2, drawn as a flag. Empty when the server has none. */
+    char country[4];
+    char ruleset_label[64];
+    /* Round-trip estimate through the relay, summed for both peers. <0 when
+     * the server did not offer one. */
+    int  est_rtt_ms;
+    /* Seconds left to answer. Counts down; 0 means it is about to lapse. */
+    int  accept_secs_left;
+} RecompLauncherCNetplayFound;
+
 typedef struct RecompLauncherCNetplayChatMessage {
     char     from[64];   /* display name; empty for a system line */
     char     text[256];
@@ -574,12 +603,60 @@ typedef struct RecompLauncherCNetplayCallbacks {
     const char* (*account_error)(void* ctx);
     int         (*account_sign_out)(void* ctx);
     int         (*account_set_handle)(void* ctx, const char* handle);
+
+    /* ---- automatch (optional, append-only) --------------------------------
+     * Server-run pairing: two players who want a match and do not care which
+     * lobby it happens in. The server creates the room, owns its match_caps
+     * (a named ruleset, not a host's settings) and is its host. Protocol:
+     * recomp-net-server `docs/AUTOMATCH.md`.
+     *
+     * automatch_available() reports whether the CONFIGURED server offers it --
+     * a deployment with no rulesets loaded has automatch off, and a signed-out
+     * player cannot queue at all, because the dodge cost the accept gate
+     * charges has to survive a reconnect and an ephemeral connection id does
+     * not. Online netplay draws the ⚡ Automatch button from this answer.
+     *
+     * The queue / accept callbacks land with the flow itself; this one is
+     * here first so the button is gated on a real capability rather than
+     * offered and then found not to work. */
+    int         (*automatch_available)(void* ctx);
+    /* The queue types this server offers for this title. Zero is a valid
+     * answer and means the same as automatch_available saying no. */
+    int         (*automatch_ruleset_count)(void* ctx);
+    int         (*automatch_ruleset_get)(void* ctx, int index,
+                                         RecompLauncherCNetplayRuleset* out);
+    /* Join the queue for `ruleset_id` (NULL / "" = the first one). 0 =
+     * queued; <0 = refused and automatch_error() has the line to show. The
+     * launcher builds the opted-in title list, not the host: standalone
+     * recomp-ui offers the running game and nothing else, and a multi-title
+     * launcher offers what the player ticked. */
+    int         (*automatch_queue)(void* ctx, const char* ruleset_id);
+    int         (*automatch_cancel)(void* ctx);
+    /* RecompLauncherCAutomatchState. Polled every frame while the page is up. */
+    int         (*automatch_state)(void* ctx);
+    /* Seconds this ticket has been waiting, and how many others are in the
+     * same bucket. The population is what makes a wait legible rather than
+     * indistinguishable from a broken feature, so show it. */
+    int         (*automatch_queued_secs)(void* ctx);
+    int         (*automatch_pool)(void* ctx);
+    /* 1 when a pair is on offer and `out` was filled. */
+    int         (*automatch_found_get)(void* ctx, RecompLauncherCNetplayFound* out);
+    /* Answer the accept gate. Declining (or letting it lapse) costs a queue
+     * cooldown that survives a reconnect, which is why automatch needs an
+     * account at all -- so the button says "Decline", not "Skip". */
+    int         (*automatch_accept)(void* ctx, int accept);
+    /* One line for a human when state is FAILED, or after a refused queue. */
+    const char* (*automatch_error)(void* ctx);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since the account callbacks were added. A host guards its wiring
  * with `#ifdef RECOMP_LAUNCHER_HAS_ACCOUNT` so it builds against an older
  * recomp-ui too -- the runner and the UI then land in either order. */
 #define RECOMP_LAUNCHER_HAS_ACCOUNT 1
+
+/* Present since automatch_available was added. Guarded the same way, for
+ * the same reason: a game pins a recomp-ui and the two move separately. */
+#define RECOMP_LAUNCHER_HAS_AUTOMATCH 1
 
 /* account_state() values. Guest is not an error and not a lesser state: it is
  * the launcher's original behaviour, and most players will sit in it. */
@@ -588,6 +665,16 @@ enum {
     RECOMP_LAUNCHER_ACCOUNT_WAITING = 1, /* browser open, polling */
     RECOMP_LAUNCHER_ACCOUNT_SIGNED_IN = 2,
     RECOMP_LAUNCHER_ACCOUNT_FAILED = 3   /* account_error() has one line */
+};
+
+/* automatch_state() values. IDLE is the resting state and covers "this build
+ * has no automatch" -- a page that never queues sits in it forever. */
+enum {
+    RECOMP_LAUNCHER_AUTOMATCH_IDLE = 0,
+    RECOMP_LAUNCHER_AUTOMATCH_QUEUED = 1,   /* waiting for a pair */
+    RECOMP_LAUNCHER_AUTOMATCH_FOUND = 2,    /* accept gate open; found_get fills */
+    RECOMP_LAUNCHER_AUTOMATCH_ACCEPTED = 3, /* answered, waiting on the peer */
+    RECOMP_LAUNCHER_AUTOMATCH_FAILED = 4    /* automatch_error() has one line */
 };
 
 /* ---- schema-driven mods --------------------------------------------------

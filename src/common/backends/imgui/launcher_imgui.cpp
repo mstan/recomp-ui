@@ -5671,6 +5671,147 @@ static int np_clamp_host_max_players(LauncherModel* m) {
     return n;
 }
 
+/* Join the queue. A refusal lands in netplay_status the way every other
+ * lobby op's does -- the server's own line when it gave one (need_account,
+ * cooldown, mods_not_pooled), because it says more than "failed" can. */
+static void np_automatch_queue(LauncherModel* m, const char* ruleset_id) {
+    const auto* np = np_cb(m);
+    if (!np || !np->automatch_queue) return;
+    if (np->automatch_queue(np->ctx, ruleset_id ? ruleset_id : "") == 0) {
+        m->netplay_status[0] = '\0';
+        return;
+    }
+    const char* why = np->automatch_error ? np->automatch_error(np->ctx) : nullptr;
+    std::snprintf(m->netplay_status, sizeof(m->netplay_status), "%s",
+                  why && why[0] ? why : "Could not join the automatch queue.");
+}
+
+static int np_automatch_state(const RecompLauncherCNetplayCallbacks* np) {
+    return (np && np->automatch_state) ? np->automatch_state(np->ctx)
+                                       : RECOMP_LAUNCHER_AUTOMATCH_IDLE;
+}
+
+/* The accept gate, and the queue-type picker when a server offers more than
+ * one. Both live here rather than in the footer so they draw at root and are
+ * not clipped by the page's child windows. */
+void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
+    const auto* np = np_cb(m);
+    if (!np) return;
+
+    /* ---- queue-type picker ---------------------------------------------- */
+    if (m->netplay_automatch_picker_open) ImGui::OpenPopup("Automatch");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Automatch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped(
+            "Pick a queue. The server owns these settings for the whole match "
+            "-- both players agreed to them by queueing here, so neither side "
+            "can change them once a pair is found.");
+        ImGui::Spacing();
+        const int n = np->automatch_ruleset_count ? np->automatch_ruleset_count(np->ctx) : 0;
+        for (int i = 0; i < n; ++i) {
+            RecompLauncherCNetplayRuleset r;
+            std::memset(&r, 0, sizeof(r));
+            if (!np->automatch_ruleset_get || !np->automatch_ruleset_get(np->ctx, i, &r))
+                continue;
+            ImGui::PushID(i);
+            if (ImGui::Button(r.label[0] ? r.label : r.id, ImVec2(px(280), px(34)))) {
+                np_automatch_queue(m, r.id);
+                m->netplay_automatch_picker_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            if (r.caps_summary[0])
+                ImGui::TextColored(col(th.text_muted), "%s", r.caps_summary);
+            if (r.game_version[0])
+                ImGui::TextColored(col(th.text_muted), "Release %s", r.game_version);
+            ImGui::PopID();
+            ImGui::Spacing();
+        }
+        if (n == 0)
+            ImGui::TextColored(col(th.warn), "This server has no automatch queues.");
+        if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+            m->netplay_automatch_picker_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    /* ---- accept gate ----------------------------------------------------
+     * Opened and closed by automatch_state, not by a click: a peer that
+     * declines, or a deadline that lapses, has to take this down on its own.
+     * The flag only stops OpenPopup being called every frame. */
+    const int st = np_automatch_state(np);
+    const bool gate = st == RECOMP_LAUNCHER_AUTOMATCH_FOUND ||
+                      st == RECOMP_LAUNCHER_AUTOMATCH_ACCEPTED;
+    if (gate && !m->netplay_automatch_gate_open) {
+        m->netplay_automatch_gate_open = true;
+        ImGui::OpenPopup("Match found");
+    }
+    if (!gate) m->netplay_automatch_gate_open = false;
+
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Match found", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (!gate) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
+        RecompLauncherCNetplayFound f;
+        std::memset(&f, 0, sizeof(f));
+        const bool have = np->automatch_found_get &&
+                          np->automatch_found_get(np->ctx, &f);
+
+        if (have) {
+            np_draw_country_flag(th, f.country);
+            ImGui::TextUnformatted(f.handle[0] ? f.handle : "Opponent");
+            /* Discord display names are not unique. The @handle is the
+             * disambiguator, which is the whole reason it is carried. */
+            if (f.username[0])
+                ImGui::TextColored(col(th.text_muted), "@%s", f.username);
+            ImGui::Spacing();
+            if (f.ruleset_label[0])
+                ImGui::TextColored(col(th.text_muted), "Queue: %s", f.ruleset_label);
+            /* An estimate, and labelled as one: it is each peer's round trip
+             * to the relay added together, not a measured peer-to-peer ping. */
+            if (f.est_rtt_ms >= 0)
+                ImGui::TextColored(col(th.text_muted), "Estimated latency: ~%d ms",
+                                   f.est_rtt_ms);
+            else
+                ImGui::TextColored(col(th.text_muted), "Estimated latency: unknown");
+        } else {
+            ImGui::TextUnformatted("An opponent is ready.");
+        }
+        ImGui::Spacing();
+
+        if (st == RECOMP_LAUNCHER_AUTOMATCH_ACCEPTED) {
+            ImGui::TextColored(col(th.accent2), "Waiting for %s to accept...",
+                               have && f.handle[0] ? f.handle : "the other player");
+            ImGui::Spacing();
+            ImGui::TextColored(col(th.text_muted),
+                               "If they decline you go back to the front of the "
+                               "queue, not the back.");
+        } else {
+            if (have)
+                ImGui::TextColored(f.accept_secs_left <= 5 ? col(th.warn) : col(th.text),
+                                   "Accepting in %ds", f.accept_secs_left);
+            ImGui::Spacing();
+            if (ImGui::Button("Accept", ImVec2(px(140), px(34)))) {
+                if (np->automatch_accept) np->automatch_accept(np->ctx, 1);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Decline", ImVec2(px(140), px(34)))) {
+                if (np->automatch_accept) np->automatch_accept(np->ctx, 0);
+            }
+            /* Say the cost before it is paid. Declining is allowed; being
+             * surprised by the cooldown afterwards is what is not. */
+            ImGui::TextColored(col(th.text_muted),
+                               "Declining or letting this lapse puts you on a "
+                               "short queue cooldown.");
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_direct_modal_open) ImGui::OpenPopup("Join Direct");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -10002,6 +10143,67 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         return;
     }
     if (m->view == LNG_VIEW_NETPLAY) {
+        /* Same split as draw_netplay's page body (netplay_mode: 1 = LAN /
+         * Direct IP, 2 = online). Join Direct is how a LAN room is reached
+         * and stays there; online replaces it with Automatch, which is the
+         * online-only way to reach a room without picking one. */
+        const bool lan_mode = m->netplay_mode == 1;
+        const auto* np_am = np_cb(m);
+        const bool automatch_ok = np_am && np_am->automatch_available &&
+                                  np_am->automatch_available(np_am->ctx);
+        const int am_state = np_automatch_state(np_am);
+        const bool am_queued = am_state == RECOMP_LAUNCHER_AUTOMATCH_QUEUED;
+        /* While the accept gate is up the modal owns the interaction; the
+         * footer must not offer a second way to leave underneath it. */
+        const bool am_gated = am_state == RECOMP_LAUNCHER_AUTOMATCH_FOUND ||
+                              am_state == RECOMP_LAUNCHER_AUTOMATCH_ACCEPTED;
+        const int am_pool = (np_am && np_am->automatch_pool)
+                                ? np_am->automatch_pool(np_am->ctx) : 0;
+        const int am_secs = (np_am && np_am->automatch_queued_secs)
+                                ? np_am->automatch_queued_secs(np_am->ctx) : 0;
+        /* The label owns text the launcher itself writes, so the ⚡ goes
+         * through the atlas the same way a chat line's emoji does -- without
+         * this it draws as the merged OpenMoji outline. The emoji is kept out
+         * of the translated string so a translator carries words, not a
+         * codepoint. */
+        char automatch_label[80];
+        {
+            char raw[64];
+            if (am_queued) {
+                /* The elapsed time IS the button: a queue with no visible
+                 * clock reads as a hang, and this is also the only control
+                 * that leaves the queue. */
+                std::snprintf(raw, sizeof(raw), "⚡ %s %d:%02d", ui_text("Queued"),
+                              am_secs / 60, am_secs % 60);
+            } else {
+                std::snprintf(raw, sizeof(raw), "⚡ %s", ui_text("Automatch"));
+            }
+            emoji_display(raw, automatch_label, sizeof(automatch_label));
+        }
+        /* Queued: leave. Otherwise pick a queue when there is a choice, and
+         * skip straight past the picker when there is only one. */
+        auto automatch_click = [&]() {
+            if (!np_am) return;
+            if (am_queued) {
+                if (np_am->automatch_cancel) np_am->automatch_cancel(np_am->ctx);
+                return;
+            }
+            const int n = np_am->automatch_ruleset_count
+                              ? np_am->automatch_ruleset_count(np_am->ctx) : 0;
+            if (n > 1) {
+                m->netplay_automatch_picker_open = true;
+                return;
+            }
+            np_automatch_queue(m, "");
+        };
+        auto automatch_tip = [&]() {
+            if (!automatch_ok) return "This lobby server does not offer automatch";
+            if (am_gated)     return "Answer the match offer to continue";
+            if (am_queued)    return am_pool > 0
+                                  ? "Others are waiting in this queue - click to leave"
+                                  : "Nobody else is waiting yet - click to leave";
+            return "Queue for a match against anyone else waiting";
+        };
         const float action_w = px(190.0f);
         const float settings_w = px(170.0f);
         const float refresh_w = px(120.0f);
@@ -10054,8 +10256,25 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Reload server lobbies and rescan LAN/Direct IP");
             ImGui::SetCursorScreenPos(ImVec2(origin.x + fullw - action_w, cta_y));
-            if (ImGui::Button(ui_text("Join Direct"), ImVec2(action_w, play_h)))
-                m->netplay_direct_modal_open = true;
+            if (lan_mode) {
+                if (ImGui::Button(ui_text("Join Direct"), ImVec2(action_w, play_h)))
+                    m->netplay_direct_modal_open = true;
+            } else {
+                ImGui::BeginDisabled(!automatch_ok || am_gated);
+                if (ImGui::Button(automatch_label, ImVec2(action_w, play_h)))
+                    automatch_click();
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("%s", automatch_tip());
+                /* The population sits under the button rather than in the
+                 * tooltip: it is the number that says whether waiting is
+                 * worth it, and a tooltip is not where you look for that. */
+                if (am_queued) {
+                    ImGui::SetCursorScreenPos(
+                        ImVec2(origin.x + fullw - action_w, cta_y + play_h + px(2)));
+                    ImGui::TextColored(col(th.text_muted), "%d waiting", am_pool);
+                }
+            }
         } else {
             /* Narrow window: collapse into a scrollable Actions menu. */
             const float menu_btn_w = px(160.0f);
@@ -10080,8 +10299,16 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
                             "Reload server lobbies and rescan LAN/Direct IP");
-                    if (ImGui::Selectable(ui_text("Join Direct"))) {
-                        m->netplay_direct_modal_open = true;
+                    if (lan_mode) {
+                        if (ImGui::Selectable(ui_text("Join Direct"))) {
+                            m->netplay_direct_modal_open = true;
+                        }
+                    } else {
+                        ImGui::BeginDisabled(!automatch_ok || am_gated);
+                        if (ImGui::Selectable(automatch_label)) automatch_click();
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            ImGui::SetTooltip("%s", automatch_tip());
                     }
                 }
                 ImGui::EndChild();
@@ -11479,6 +11706,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_netplay_host_modal(m, th);
     draw_netplay_password_modal(m, th);
     draw_netplay_direct_modal(m, th);
+    draw_netplay_automatch_modal(m, th);
     draw_restore_defaults_modal(m);
     // Transfer Pak config modal (N64): opened by any tile, dashboard or
     // Controller page. Drawn at root so it isn't clipped by a card child.

@@ -538,6 +538,14 @@ typedef struct {
     bool      netplay_lan_only;   /* "LAN/Direct IP Only"; false = online / ICE path */
     bool      netplay_list_fresh; /* false → refresh lobby list on next Netplay draw */
     bool      netplay_direct_modal_open;
+    /* Automatch. The accept gate is NOT a flag the UI owns -- it opens and
+     * closes off automatch_state, so a peer's decline or a lapsed deadline
+     * takes the modal down without the launcher having to be told twice.
+     * This only tracks whether the popup has been opened for the current
+     * gate, so ImGui::OpenPopup is called once rather than every frame. */
+    bool      netplay_automatch_gate_open;
+    /* The queue-type picker, drawn only when the server offers more than one. */
+    bool      netplay_automatch_picker_open;
     char      netplay_direct_ip[64];
     char      netplay_direct_port[16];
     char      netplay_password[64];
