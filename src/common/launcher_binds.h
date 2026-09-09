@@ -40,20 +40,18 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
 
 // N64-native store only: bind an arbitrary FIELD (type/id per
 // consoles/n64/n64_binds.h — key, pad button, signed pad axis, raw joystick
-// button/axis) into alternate slot 0/1 of the device table the player's
-// current input source selects. No-op for every other profile.
+// button/axis) into alternate slot 0/1 of a device table. A KEY always lands
+// in the keyboard table; controller fields reach this store only as the
+// input.cfg mirror of a per-GUID pad bind. No-op for every other profile.
 void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
                               int type, int id);
 
 // Re-read every player's bind display strings from the active store. Cheap;
-// the backend calls it when a Configure page's input source changes (the N64
-// store is per-device-TYPE, so the shown table follows the source).
+// the backend calls it on entry to a Configure page and whenever the input
+// source or the selected controller changes — both can change what the stores
+// answer (N64's keyboard table is shared across ports; a per-GUID gamepad
+// store answers differently for every pad).
 void launcher_binds_refresh(LauncherModel* m);
-
-// Whether a capture for `player` (1-based) should listen for GAMEPAD events
-// (pad buttons / axis throws / raw joystick fields) instead of the keyboard —
-// true only for the N64 store when that player's source is a gamepad.
-int launcher_binds_wants_pad_capture(const LauncherModel* m, int player);
 
 // Generic GAMEPAD-bind kind codes for launcher_binds_set_pad_button()'s `kind`
 // argument. Values mirror the engine's GamepadBindKind exactly (and equal the

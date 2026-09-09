@@ -2439,6 +2439,8 @@ void draw_source_selectables(LauncherModel* m, int p) {
     const bool psx = src_prof && src_prof->id && !strcmp(src_prof->id, "psx");
     const bool snes_prof = src_prof && src_prof->id &&
                            !strcmp(src_prof->id, "snes");
+    const bool n64_prof = src_prof && src_prof->id &&
+                          !strcmp(src_prof->id, "n64");
     if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
         launcher_model_set_source(m, p, 0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
@@ -2558,6 +2560,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
                                      opts[i].guid);
             if (psx) {
                 launcher_binds_apply_psx_pad_profile(m, p);
+                launcher_binds_refresh(m);
+            } else if (n64_prof) {
+                /* Per-GUID store: the labels ARE this controller's mapping, so
+                 * selecting a different pad shows a different page. Nothing to
+                 * copy into a live file the way SNES has to. */
                 launcher_binds_refresh(m);
             } else if (snes_prof) {
                 /* Selecting a controller restores the profile saved for it, so
@@ -4281,6 +4288,22 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
     end_panel();
 }
 
+/* Draw a bind row's LABEL and leave the cursor at `label_col_w` from the start
+ * of this table cell, ready for the bind chip.
+ *
+ * Why not ImGui::SameLine(label_col_w): that offset is measured from the
+ * window's content start, not the cell's, so inside a multi-column bind grid
+ * the chip landed short of the reserved label column and the longest labels
+ * ("D-Pad Right", "L-Stick Down") were drawn underneath it. Spacing off the
+ * label just drawn is measured from the right place by construction. */
+static void bind_row_label(const char* label, const ImVec4& colour,
+                           float label_col_w, float min_gap) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(colour, "%s", label);
+    const float pad = label_col_w - ImGui::CalcTextSize(label).x;
+    ImGui::SameLine(0.0f, pad > min_gap ? pad : min_gap);
+}
+
 // CONTROLLER-view rebind page: input source + deadzone, and the keyboard
 // bindings grid — reached from the dashboard CONTROLLER panel's Configure
 // button. The bindings grid walks the ACTIVE SystemProfile's
@@ -4744,10 +4767,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::TableNextColumn();
                             ImGui::PushID(b);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextColored(col(th.text_muted), "%s",
-                                               spec.buttons[b].label);
-                            ImGui::SameLine(label_col_w);
+                            bind_row_label(spec.buttons[b].label,
+                                           col(th.text_muted), label_col_w,
+                                           px(6.0f));
                             const bool cap = m->capturing && !m->capture_pad &&
                                              m->capture_btn == b;
                             const bool cap_alt = cap && m->capture_slot == 1;
@@ -4855,10 +4877,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::TableNextColumn();
                             ImGui::PushID(b);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextColored(col(th.text_muted), "%s",
-                                               spec.buttons[b].label);
-                            ImGui::SameLine(label_col_w);
+                            bind_row_label(spec.buttons[b].label,
+                                           col(th.text_muted), label_col_w,
+                                           px(6.0f));
                             const bool cap = m->capturing && m->capture_pad &&
                                              m->capture_btn == b;
                             const bool wait_rel = cap && m->map_all_wait_release;
@@ -4937,41 +4958,38 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         const int bpi = settings_player_binds
             ? 1 : (spec.binds_per_input < 1 ? 1 : spec.binds_per_input);
 
-        // Stores that follow the input SOURCE (N64: one shared table per device
-        // TYPE) must re-read display strings on entry so switching
-        // Keyboard<->pad shows the table actually in effect. Single-bind stores
-        // are per-player and unaffected by the source, so skip the refresh to
-        // keep their behaviour byte-identical.
-        if (bpi >= 2) launcher_binds_refresh(m);
+        // Re-read display strings on entry.
+        //
+        // This used to be done only for bpi>=2 stores, on the reasoning that
+        // single-bind stores are per-player and cannot change behind the page.
+        // That is not true of a store shared across players or across device
+        // types -- N64's keyboard table is one table for every port -- and it
+        // is not true of a per-GUID store either, where selecting a different
+        // controller changes every label on the page. Refreshing is a pure
+        // read of whatever is on disk, so it is correct for every console and
+        // there is no longer a case to special-case.
+        launcher_binds_refresh(m);
 
         // A pad-bind console (Genesis) offers a KEY chip AND a GAMEPAD chip per
         // row — the legacy launcher's "Set key" / "Set pad" pair. Otherwise the
         // grid is keyboard-only, exactly as before.
         const bool has_pad = spec.has_pad_binds != 0 || settings_player_binds;
 
-        // When the player's source is a gamepad the N64 store captures pad
-        // fields, not keys — reflect that in the card title and the capture
-        // placeholder.
-        const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
-
         // Is this player actually driving the game with a pad?
         //
-        // NOT pad_cap: that helper answers "does the N64's shared device table
-        // capture pad fields", and is `is_n64_profile(m) && ...` -- always 0
-        // anywhere else. Using it to pick which chip is live meant a SNES
+        // player_src == 2 is the gamepad source the Input source selector sets,
+        // and is what the PSX gamepad panel already keys off. This deliberately
+        // does NOT ask a console-specific "which store captures" question: an
+        // earlier version did, and because that question was N64-only, a SNES
         // player on a controller was shown the KEYBOARD row and Auto Map
         // listened for keys, so pressing the controller did nothing at all.
-        //
-        // player_src == 2 is the gamepad source the Input source selector sets,
-        // and is what the PSX gamepad panel already keys off.
         const bool pad_src = has_pad && m->s.player_src[p] == 2;
 
         // Heading uses accent2 so each console's title tints in ITS logo colour
         // (N64 blue; single-accent consoles set accent2 == accent).
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        if (has_pad)      ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
-        else if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
-        else              ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+        if (has_pad) ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
+        else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
 
         // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
@@ -5047,19 +5065,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     : cell;
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
-                ImGui::SameLine(label_col_w);
+                bind_row_label(spec.buttons[b].label, col(th.text_muted),
+                               label_col_w, chip_gap);
                 if (bpi >= 2) {
-                    // N64: two chips per input (slot 0 primary, slot 1 alt); the
-                    // shared store captures a key or pad field per pad_cap.
+                    // Two chips per input: slot 0 primary, slot 1 alternate,
+                    // both keyboard binds in the console's own store. No
+                    // console ships this today — N64 left it when its gamepad
+                    // half moved to the per-GUID store — but the store shape it
+                    // serves (alternates per input) is not N64-specific.
                     for (int slot = 0; slot < bpi; ++slot) {
                         if (slot) ImGui::SameLine(0, chip_gap);
                         ImGui::PushID(slot);
                         const bool cap = m->capturing && m->capture_btn == b
                                                       && m->capture_slot == slot;
                         const char* txt = cap
-                            ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
+                            ? "[ press a key... ]"
                             : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
                         if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                         if (ImGui::Button(txt, ImVec2(chip_w, 0)))
@@ -11180,26 +11200,14 @@ bool is_modifier_scancode(SDL_Scancode sc) {
 
 // Keyboard capture for the rebind editors. Player buttons persist a SCANCODE to
 // keybinds.ini; system hotkeys persist a KEYCODE+mods to config.ini [KeyMap].
-#if !defined(LNG_SDL3)
-// SDL2 only: is this raw joystick button/axis already part of the pad's
-// SDL_GameController mapping? Raw capture is reserved for inputs the mapping
-// can't express (PSR issue #15: 8BitDo 64 C-buttons) — prefer the clean gamepad
-// event otherwise. Ported from PSR input_bindings.cpp raw_input_is_mapped().
-static bool raw_input_is_mapped(SDL_JoystickID which, bool is_axis, int raw_index) {
-    SDL_GameController* gc = SDL_GameControllerFromInstanceID(which);
-    if (!gc) return false;
-    auto hit = [&](SDL_GameControllerButtonBind b) {
-        if (!is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON) return b.value.button == raw_index;
-        if ( is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_AXIS)   return b.value.axis   == raw_index;
-        return false;
-    };
-    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i)
-        if (hit(SDL_GameControllerGetBindForButton(gc, (SDL_GameControllerButton)i))) return true;
-    for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i)
-        if (hit(SDL_GameControllerGetBindForAxis(gc, (SDL_GameControllerAxis)i))) return true;
-    return false;
-}
-#endif
+/* The SDL2-only raw_input_is_mapped() helper stood here. Its one caller was
+ * the N64 field-capture path, which bound a raw joystick button or axis for a
+ * pad whose SDL_GameController mapping could not express the input (PSR issue
+ * #15, the 8BitDo 64's C-buttons). N64 gamepad binds now live in the shared
+ * per-GUID store, whose vocabulary is SDL gamepad names, so a raw field can no
+ * longer be captured or written — see consoles/n64/n64_pad_binds.h. Kept as a
+ * note rather than dead code, because "why can I not bind this pad's C-buttons
+ * any more" deserves an answer at the place the answer used to live. */
 
 bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     if (!m->capturing && !m->hk_capturing &&
@@ -11262,6 +11270,11 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         }
         const SystemProfile* cap_prof = (const SystemProfile*)m->profile;
         const bool psx_cap = cap_prof && cap_prof->id && !strcmp(cap_prof->id, "psx");
+        /* Consoles whose gamepad binds are stored per GUID. They must refuse a
+         * bind whose selected device has not resolved to a live pad, or the
+         * mapping lands in some other controller's profile. */
+        const bool guid_store = psx_cap ||
+            (cap_prof && cap_prof->id && !strcmp(cap_prof->id, "n64"));
         /* Which SDL device may bind.
          *
          * player_pad_id is set when the player picks a pad from the Input
@@ -11295,11 +11308,11 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
              *
              * want_id == 0 means no specific device is chosen (the console
              * offers a generic "Gamepad" source), and any pad is accepted --
-             * which is the behaviour Genesis had and keeps. PSX additionally
-             * refuses when its selection has not resolved to a live device,
-             * because its bindings are stored per GUID and would otherwise be
-             * written against the wrong profile. */
-            if (!want_id) return !psx_cap;
+             * which is the behaviour Genesis had and keeps. A per-GUID store
+             * additionally refuses when its selection has not resolved to a
+             * live device, because the binding would otherwise be written
+             * against the wrong profile. */
+            if (!want_id) return !guid_store;
             return which == want_id;
         };
         auto try_clear_release_wait = [&](uint32_t which) {
@@ -11402,45 +11415,6 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
             return true;
         }
         return true;   // swallow all other input while capturing a pad bind
-    }
-
-    // N64 pad capture: when the player being configured has a gamepad source,
-    // the input.cfg store captures pad fields, not keys. Listen for pad
-    // buttons / decisive axis throws / (SDL2) raw joystick fields; swallow the
-    // keyboard entirely so a stray key can't land in a controller bind.
-    if (m->capturing && launcher_binds_wants_pad_capture(m, m->cfg_player + 1)) {
-        const int pl = m->cfg_player + 1, b = m->capture_btn, slot = m->capture_slot;
-        constexpr int kScanThreshold = 20000;   // decisive throw; ignores resting drift
-        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-            launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_BUTTON, (int)LNG_EVGBTN(ev));
-            launcher_model_cancel_capture(m);
-        } else if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
-            const int v = (int)LNG_EVGAXISVAL(ev);
-            if (v > kScanThreshold) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_P, (int)LNG_EVGAXIS(ev));
-                launcher_model_cancel_capture(m);
-            } else if (v < -kScanThreshold) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_N, (int)LNG_EVGAXIS(ev));
-                launcher_model_cancel_capture(m);
-            }
-        }
-#if !defined(LNG_SDL3)
-        else if (ev.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
-            if (!raw_input_is_mapped(LNG_EVJBTNWHICH(ev), false, (int)LNG_EVJBTN(ev))) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_JOY_BUTTON, (int)LNG_EVJBTN(ev));
-                launcher_model_cancel_capture(m);
-            }
-        } else if (ev.type == SDL_EVENT_JOYSTICK_AXIS_MOTION) {
-            const int v = (int)LNG_EVJAXISVAL(ev);
-            if ((v > kScanThreshold || v < -kScanThreshold) &&
-                !raw_input_is_mapped(LNG_EVJAXISWHICH(ev), true, (int)LNG_EVJAXIS(ev))) {
-                launcher_binds_set_field(m, pl, b, slot,
-                    v > 0 ? RUI_N64_FIELD_JOY_AXIS_P : RUI_N64_FIELD_JOY_AXIS_N, (int)LNG_EVJAXIS(ev));
-                launcher_model_cancel_capture(m);
-            }
-        }
-#endif
-        return true;   // swallow all other input (keyboard included) while pad-capturing
     }
 
     /* Mouse buttons are bindable inputs on stores that keep alternates

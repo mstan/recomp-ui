@@ -4,9 +4,11 @@
 #include "launcher_sdlcompat.h"   // SDL header (2 or 3)
 #include "keybinds.h"             // engine keyboard-binding store
 #include "launcher_system.h"      // SystemProfile / ControllerSpec.button_count
+#include "pad_binds.h"            // shared per-GUID input.ini store (path rule)
 #include "consoles/psx/psx_binds.h"   // PSX-native keybind bridge (psx_keybinds.c format)
 #include "consoles/psx/psx_pad_binds.h" // PSX gamepad input.ini per-GUID bridge
-#include "consoles/n64/n64_binds.h"   // N64-native input.cfg bridge (kb+pad tables)
+#include "consoles/n64/n64_binds.h"   // N64-native input.cfg bridge (keyboard table)
+#include "consoles/n64/n64_pad_binds.h" // N64 gamepad input.ini per-GUID bridge
 #include "consoles/nes/nes_binds.h"   // NES-native keybind bridge (nesrecomp keybinds.c format)
 #include "consoles/genesis/genesis_binds.h"   // Genesis-native bridge (settings.ini [input.pN])
 #include "consoles/gb/gb_binds.h"     // Game Boy-native bridge (keybinds.ini [controls])
@@ -87,24 +89,13 @@ static const char* keybinds_file_path(void) {
              ? g_launcher_keybinds_path : "keybinds.ini";
 }
 
-// input.ini lives next to keybinds.ini (same exe dir the runtime uses).
+// input.ini lives next to keybinds.ini (same exe dir the runtime uses). The
+// directory rule itself is in common/pad_binds.c because the GAME process has
+// to resolve the same file; two copies would be two places to disagree.
 static const char* psx_input_ini_path(void) {
     static char buf[1024];
-    const char* kb = keybinds_file_path();
-    const char* slash = strrchr(kb, '/');
-#ifdef _WIN32
-    const char* bslash = strrchr(kb, '\\');
-    if (bslash && (!slash || bslash > slash)) slash = bslash;
-#endif
-    if (!slash) {
-        snprintf(buf, sizeof(buf), "input.ini");
-        return buf;
-    }
-    size_t dir_len = (size_t)(slash - kb + 1);
-    if (dir_len >= sizeof(buf)) dir_len = sizeof(buf) - 1;
-    memcpy(buf, kb, dir_len);
-    buf[dir_len] = '\0';
-    strncat(buf, "input.ini", sizeof(buf) - strlen(buf) - 1);
+    rui_pad_binds_sibling_path(keybinds_file_path(), "input.ini",
+                               buf, (int)sizeof(buf));
     return buf;
 }
 
@@ -134,8 +125,39 @@ static const char* n64_binds_file_path(void) {
 }
 
 // Device table (0 kb / 1 pad) player p's Configure page edits.
+//
+// Only the KEYBOARD table is still addressed this way. The controller half
+// moved to the per-GUID store (consoles/n64/n64_pad_binds.h), because
+// input.cfg's `pad.*` table is shared by every controller ever plugged in:
+// two players could not hold different layouts, and swapping a pad silently
+// inherited the other one's mapping.
 static int n64_device_for_player(const LauncherModel* m, int player /*0-based*/) {
     return m->s.player_src[player] == 2 ? 1 : 0;
+}
+
+// input.ini beside input.cfg — same rule, same shared helper, as PSX above.
+static const char* n64_input_ini_path(void) {
+    static char buf[1024];
+    rui_n64_pad_binds_path(n64_binds_file_path(), buf, (int)sizeof(buf));
+    return buf;
+}
+
+// Translate a launcher pad bind (kind/code/axis_dir) into an input.cfg field
+// and write it to the shared controller table, slot 0. Slot 1 is cleared by
+// the store itself, matching PSR's load-order contract.
+static void n64_mirror_pad_bind_to_cfg(int b, int kind, int code, int axis_dir) {
+    int type;
+    if (kind == LNG_PADBIND_BUTTON)   type = RUI_N64_FIELD_PAD_BUTTON;
+    else if (kind == LNG_PADBIND_AXIS) type = axis_dir < 0 ? RUI_N64_FIELD_PAD_AXIS_N
+                                                           : RUI_N64_FIELD_PAD_AXIS_P;
+    else                               type = RUI_N64_FIELD_NONE;
+    rui_n64_binds_set(n64_binds_file_path(), 1, b, 0, type,
+                      type == RUI_N64_FIELD_NONE ? -1 : code);
+}
+
+static const char* n64_player_guid(const LauncherModel* m, int player /*1-based*/) {
+    if (!m || player < 1 || player > LNG_MAX_PLAYERS) return "";
+    return m->s.player_gamepad_guid[player - 1];
 }
 
 // ---- Genesis-native bind bridge ----------------------------------------------
@@ -288,17 +310,21 @@ static void reload_player_display(LauncherModel* m, int player) {
         return;
     }
     if (is_n64_profile(m)) {
-        // Per-device-TYPE tables: every player assigned the same device kind
-        // shows (and edits) the same table — exactly the SS Anne contract.
-        const int dev = n64_device_for_player(m, player - 1);
+        // Two stores, one row each. The KEY chip is input.cfg's keyboard table
+        // (device 0 — still per-device-TYPE, which is right for a keyboard:
+        // there is one). The GAMEPAD chip is this pad's own input.ini section.
+        // binds_alt is deliberately not filled: the page is single-chip now
+        // (n64_profile.h binds_per_input), so a second label nothing draws
+        // would only be a stale string waiting to be believed.
+        const char* guid = n64_player_guid(m, player);
         for (int b = 0; b < LNG_N64_PAD_BUTTON_COUNT; ++b) {
             int type = 0, id = -1;
-            rui_n64_binds_get(n64_binds_file_path(), dev, b, 0, &type, &id);
+            rui_n64_binds_get(n64_binds_file_path(), 0, b, 0, &type, &id);
             rui_n64_binds_label(type, id, m->binds[player - 1][b],
                                 sizeof(m->binds[player - 1][b]));
-            rui_n64_binds_get(n64_binds_file_path(), dev, b, 1, &type, &id);
-            rui_n64_binds_label(type, id, m->binds_alt[player - 1][b],
-                                sizeof(m->binds_alt[player - 1][b]));
+            rui_n64_pad_binds_source(n64_input_ini_path(), guid, b,
+                                     m->pad_binds[player - 1][b],
+                                     (int)sizeof(m->pad_binds[player - 1][b]));
         }
         return;
     }
@@ -900,6 +926,7 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
         launcher_binds_hydrate_psx_pad_names(m);
     } else if (is_n64_profile(m)) {
         rui_n64_binds_init(n64_binds_file_path());      // load input.cfg (defaults if absent; never seeds the file)
+        rui_n64_pad_binds_init(n64_input_ini_path());   // gamepad maps (input.ini, per GUID)
     } else if (is_nes_profile(m)) {
         rui_nes_binds_init(keybinds_file_path());   // load/generate nesrecomp-format keybinds.ini
         // Zapper switches live in the same file ([zapper]); surface them on
@@ -923,11 +950,6 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
 void launcher_binds_refresh(LauncherModel* m) {
     for (int p = 1; p <= LNG_MAX_PLAYERS; ++p)
         reload_player_display(m, p);
-}
-
-int launcher_binds_wants_pad_capture(const LauncherModel* m, int player) {
-    if (player < 1 || player > LNG_MAX_PLAYERS) return 0;
-    return is_n64_profile(m) && n64_device_for_player(m, player - 1) == 1;
 }
 
 // Persist the Zapper switches to keybinds.ini [zapper] (surgical: the rest of
@@ -1019,7 +1041,11 @@ void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
     if (!is_n64_profile(m)) return;   // field binds exist only in the N64 store
     if (player < 1 || player > LNG_MAX_PLAYERS) return;
     if (b < 0 || b >= LNG_N64_PAD_BUTTON_COUNT) return;
-    const int dev = n64_device_for_player(m, player - 1);
+    // A KEY belongs in the keyboard table whatever the player's source is;
+    // controller fields no longer reach this store at all (they go to the
+    // per-GUID input.ini), so the device is not a function of the source.
+    const int dev = (type == RUI_N64_FIELD_KEY) ? 0
+                                                : n64_device_for_player(m, player - 1);
     rui_n64_binds_set(n64_binds_file_path(), dev, b, slot, type, id);
     // The table is shared by every player on the same device kind — refresh
     // ALL players' display strings, not just the one that captured.
@@ -1040,6 +1066,29 @@ void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
         rui_psx_pad_binds_label(psx_input_ini_path(), guid, b,
                                 m->pad_binds[player - 1][b],
                                 (int)sizeof(m->pad_binds[player - 1][b]));
+        return;
+    }
+    if (is_n64_profile(m)) {
+        if (b < 0 || b >= LNG_N64_PAD_BUTTON_COUNT) return;
+        const char* guid = n64_player_guid(m, player);
+        if (!guid[0]) return;          // nothing to key the mapping on
+        rui_n64_pad_binds_set(n64_input_ini_path(), guid, b, kind, code, axis_dir);
+        // Keep the pad registered (name/deadzone unchanged unless first create).
+        rui_n64_pad_binds_remember(n64_input_ini_path(), guid,
+                                   m->player_pad_name[player - 1], -1);
+        // ... and mirror it into input.cfg's shared `pad.*` table.
+        //
+        // input.ini is the identity-bearing store and what n64lle's host reads.
+        // The RT64-era N64 runners read input.cfg and nothing else, so dropping
+        // the mirror would leave their players with a Configure page that
+        // writes a file the game never opens. The mirror is lossy by
+        // construction — one table for every controller, so the last pad edited
+        // wins — which is precisely the defect input.ini exists to fix, and is
+        // no worse than what those runners had before this store existed.
+        n64_mirror_pad_bind_to_cfg(b, kind, code, axis_dir);
+        rui_n64_pad_binds_source(n64_input_ini_path(), guid, b,
+                                 m->pad_binds[player - 1][b],
+                                 (int)sizeof(m->pad_binds[player - 1][b]));
         return;
     }
     if (is_snes_profile(m)) {
@@ -1343,8 +1392,16 @@ int launcher_binds_psx_name_is_custom(const char* guid) {
 void launcher_binds_reset_player(LauncherModel* m, int player) {
     if (is_n64_profile(m)) {
         if (player < 1 || player > LNG_MAX_PLAYERS) return;
-        rui_n64_binds_reset_device(n64_binds_file_path(),
-                                   n64_device_for_player(m, player - 1));
+        // Reset the half the page is showing, and only that half: a player on
+        // a controller pressing Reset must not silently rewrite the keyboard
+        // table every other player shares.
+        const char* guid = n64_player_guid(m, player);
+        if (n64_device_for_player(m, player - 1) == 1 && guid[0]) {
+            rui_n64_pad_binds_reset(n64_input_ini_path(), guid);
+            rui_n64_binds_reset_device(n64_binds_file_path(), 1);   // keep the mirror in step
+        } else {
+            rui_n64_binds_reset_device(n64_binds_file_path(), 0);
+        }
         launcher_binds_refresh(m);
         return;
     }
