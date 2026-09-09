@@ -1540,6 +1540,49 @@ void launcher_model_toggle_renderer(LauncherModel* m) {
     m->s.renderer = !m->s.renderer;
 }
 
+/*
+ * Enumerate the renderer vocabulary, so a host can present it as a LIST
+ * rather than a button that has to be clicked N-1 times to reach the last
+ * entry. Same three-way precedence the label getter uses: game-supplied
+ * labels, then the console profile's pair, then the legacy pair.
+ */
+int launcher_model_renderer_count(const LauncherModel* m) {
+    if (!m) return 0;
+    if (m->renderer_labels && m->num_renderers > 0) return m->num_renderers;
+    return 2;
+}
+
+const char* launcher_model_renderer_label_at(const LauncherModel* m, int i) {
+    if (!m) return "";
+    if (m->renderer_labels && m->num_renderers > 0) {
+        if (i < 0 || i >= m->num_renderers) return "";
+        return m->renderer_labels[i];
+    }
+    {
+        const SystemProfile* prof = (const SystemProfile*)m->profile;
+        if (prof && prof->renderer_labels)
+            return prof->renderer_labels[i ? 1 : 0];
+    }
+    return i ? "OpenGL" : "Software";
+}
+
+void launcher_model_set_renderer(LauncherModel* m, int index) {
+    if (!m || !m->has_renderer) return;
+    m->s.renderer = clampi(index, 0, launcher_model_renderer_count(m) - 1);
+}
+
+/* Set rather than cycle. The values are the RECOMP_LAUNCHER_VSYNC_* constants,
+ * not an index, because that is what Settings.vsync holds and what a host
+ * reads back. */
+void launcher_model_set_vsync(LauncherModel* m, int value) {
+    if (!m || !m->has_vsync) return;
+    if (value != RECOMP_LAUNCHER_VSYNC_OFF &&
+        value != RECOMP_LAUNCHER_VSYNC_ON &&
+        value != RECOMP_LAUNCHER_VSYNC_ADAPTIVE)
+        return;
+    m->s.vsync = value;
+}
+
 const char* launcher_model_renderer_label(const LauncherModel* m) {
     if (m->renderer_labels && m->num_renderers > 0) {
         int i = clampi(m->s.renderer, 0, m->num_renderers - 1);

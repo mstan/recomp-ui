@@ -758,6 +758,12 @@ void launcher_model_cycle_window_size(LauncherModel* m);       // {960,1280,1600
 const char* launcher_model_window_size_label(const LauncherModel* m);  // "1280 x 960" (H follows aspect)
 void launcher_model_toggle_renderer(LauncherModel* m);         // Software/OpenGL
 const char* launcher_model_renderer_label(const LauncherModel* m);
+/* List form of the same vocabulary, for hosts that draw a dropdown instead of
+ * a cycle button. count/label_at follow the same precedence as the label
+ * getter above; set_renderer clamps. */
+int         launcher_model_renderer_count(const LauncherModel* m);
+const char* launcher_model_renderer_label_at(const LauncherModel* m, int i);
+void        launcher_model_set_renderer(LauncherModel* m, int index);
 void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
 const char* launcher_model_supersampling_label(const LauncherModel* m);
 void launcher_model_cycle_aa(LauncherModel* m);            // Off/2x/4x/8x (MSAA sample count)
@@ -793,7 +799,10 @@ const char* launcher_model_rewind_interval_label(const LauncherModel* m);
 void launcher_model_cycle_vsync(LauncherModel* m);
 // Binary On/Off flip for the legacy-surface checkbox (Adaptive counts as On).
 void launcher_model_toggle_vsync(LauncherModel* m);
-const char* launcher_model_vsync_label(const LauncherModel* m);  // "On"/"Off"/"Adaptive"
+const char* launcher_model_vsync_label(const LauncherModel* m);
+/* Set the exact state rather than cycling to it. Takes a
+ * RECOMP_LAUNCHER_VSYNC_* value, not an index. */
+void launcher_model_set_vsync(LauncherModel* m, int value);  // "On"/"Off"/"Adaptive"
 void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
 void launcher_model_cycle_fullscreen(LauncherModel* m);        // Off -> Borderless -> Exclusive, wraps

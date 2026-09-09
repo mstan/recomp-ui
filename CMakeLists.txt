@@ -160,6 +160,22 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-discs-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    # Renderer / VSync as enumerable lists rather than cycle buttons. Same
+    # include-the-TU shape as the discs test above.
+    add_executable(recomp-ui-launcher-video-pick-test
+        tests/launcher_video_pick_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-video-pick-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-video-pick-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-video-pick
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-video-pick-test>)
+
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.
     add_executable(recomp-ui-launcher-setup-bios-test

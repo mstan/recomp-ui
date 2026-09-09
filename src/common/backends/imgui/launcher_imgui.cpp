@@ -3024,9 +3024,23 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_renderer) {
+        /* A list, not a cycle button. The vocabulary is up to five entries on
+         * hosts that supply their own (Auto / D3D11 / D3D9 / OpenGL /
+         * Software), and reaching the last one by clicking through the other
+         * four is not a choice a player should have to count out. */
         row_label("Renderer", th);
-        if (ImGui::Button(ui_text(launcher_model_renderer_label(m)), ImVec2(px(220), px(30))))
-            launcher_model_toggle_renderer(m);
+        ImGui::SetNextItemWidth(px(220));
+        if (ImGui::BeginCombo("##renderer",
+                              ui_text(launcher_model_renderer_label(m)))) {
+            const int n = launcher_model_renderer_count(m);
+            for (int i = 0; i < n; ++i) {
+                const char* lbl = launcher_model_renderer_label_at(m, i);
+                if (!lbl || !lbl[0]) continue;
+                if (ImGui::Selectable(ui_text(lbl), m->s.renderer == i))
+                    launcher_model_set_renderer(m, i);
+            }
+            ImGui::EndCombo();
+        }
     }
 
     if (m->has_supersampling) {
@@ -3179,8 +3193,19 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     // frame reaches the panel, not how it is drawn.
     if (m->has_vsync) {
         row_label("VSync", th);
-        if (ImGui::Button(ui_text(launcher_model_vsync_label(m)), ImVec2(px(120), px(30))))
-            launcher_model_cycle_vsync(m);
+        ImGui::SetNextItemWidth(px(120));
+        if (ImGui::BeginCombo("##vsync_mode",
+                              ui_text(launcher_model_vsync_label(m)))) {
+            static const struct { int v; const char* label; } kVsync[] = {
+                { RECOMP_LAUNCHER_VSYNC_OFF,      "Off" },
+                { RECOMP_LAUNCHER_VSYNC_ON,       "On" },
+                { RECOMP_LAUNCHER_VSYNC_ADAPTIVE, "Adaptive" },
+            };
+            for (const auto& o : kVsync)
+                if (ImGui::Selectable(ui_text(o.label), m->s.vsync == o.v))
+                    launcher_model_set_vsync(m, o.v);
+            ImGui::EndCombo();
+        }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
                 "On: the swap waits for the panel — no tearing.\n"
