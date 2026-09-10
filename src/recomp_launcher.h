@@ -69,8 +69,11 @@ extern "C" {
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
 
-/* Netplay lobby membership ceiling (party games up to 8). */
+/* Netplay lobby membership ceiling (party games up to 8). Players only. */
 #define RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS 8
+/* Spectator seats a host may open, a separate pool on top of the players --
+ * so a full room can still be watched. */
+#define RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS 4
 
 typedef struct RecompLauncherCSettings RecompLauncherCSettings;
 
@@ -86,7 +89,27 @@ typedef struct RecompLauncherCNetplayLobby {
     int  latency_ms;
     /* 0 standard, 1 PSX-Link (browser badge; 0 when the server predates it). */
     int  lobby_kind;
+    /* Host's country, ISO 3166-1 alpha-2 (e.g. "JP"), from the server's GeoIP
+     * on the host's address. Empty when unknown, private, or LAN. */
+    char host_country[4];
+    /* Gallery, for the browser's Spectators column: allow_spectators 0 draws
+     * "No"; otherwise "<spectator_count>/<max_spectators>". A backend that
+     * predates the field leaves all three 0, which also reads as "No". */
+    int  allow_spectators;
+    int  max_spectators;
+    int  spectator_count;
 } RecompLauncherCNetplayLobby;
+
+/* One player connected to the lobby server, seated or just browsing -- the
+ * browser's "players online" panel. */
+typedef struct RecompLauncherCNetplayOnlinePlayer {
+    char display_name[64];
+    char country[4];     /* alpha-2 from the server's GeoIP; "" unknown */
+    char lobby_name[64]; /* room they are in; "" while browsing */
+    int  in_lobby;
+    int  hosting;
+    int  is_local;       /* this client */
+} RecompLauncherCNetplayOnlinePlayer;
 
 typedef struct RecompLauncherCNetplayMember {
     int  slot;
@@ -101,6 +124,22 @@ typedef struct RecompLauncherCNetplayMember {
     int  bios_offer_valid;
     int  bios_can_scph1001;
     int  bios_prefer_openbios;
+    /* 1 when this row is a spectator rather than a player. `slot` stays the
+     * seat index to pass back to move_member / kick_member either way -- the
+     * two roles share one index namespace, so the UI never has to translate.
+     * Always 0 against a host that predates spectators. */
+    int  is_spectator;
+    /* Peer memory-card offer (append-only; 0 = legacy / not advertised).
+     * memcard_has_card: a slot-1 card is enabled on that peer.
+     * memcard_share: that peer opted in to bring it. Drawn on seat 2 (P2):
+     * the match uses P2's card as its slot-2 card when P2 offers it AND the
+     * host allows it (guest_memcard_get). */
+    int  memcard_offer_valid;
+    int  memcard_has_card;
+    int  memcard_share;
+    /* Country, ISO 3166-1 alpha-2, from the server's GeoIP on this peer's
+     * address. Empty when unknown, private, or LAN. Drawn as a flag. */
+    char country[4];
 } RecompLauncherCNetplayMember;
 
 typedef struct RecompLauncherCNetplayNeedMod {
@@ -124,7 +163,27 @@ typedef struct RecompLauncherCNetplayLobbyMod {
     char reason[96];
     int  builtin;
     uint32_t size;
+    /* How the HOST has this package configured: the enabled features and the
+     * option values it resolved them to, e.g. "localization language=en".
+     *
+     * Shown to guests because it is what they will actually run -- the host's
+     * configuration is adopted before launch, so a guest reading its own local
+     * settings here would be reading the wrong ones. Refreshed from the host's
+     * published caps, so it tracks a host changing a dropdown without the
+     * guest doing anything. Empty when the host published no configuration. */
+    char options[192];
 } RecompLauncherCNetplayLobbyMod;
+
+/* One lobby chat line, oldest first. Backends keep a short ring (the last
+ * 64 or so); the UI redraws the whole ring every frame, so `seq` only has to
+ * be monotonic so the UI can notice a new line and scroll to it. */
+typedef struct RecompLauncherCNetplayChatMessage {
+    char     from[64];   /* display name; empty for a system line */
+    char     text[256];
+    int      is_local;   /* sent by this client */
+    int      is_system;  /* join/leave/notice, not a player */
+    uint32_t seq;
+} RecompLauncherCNetplayChatMessage;
 
 typedef struct RecompLauncherCNetplayLaunch {
     int      enabled;
@@ -161,6 +220,40 @@ typedef struct RecompLauncherCNetplayLaunch {
      * console-B seat is occupied at launch; otherwise the session degrades to
      * a standard lobby of the seated players. */
     int      lobby_kind;
+    /* 1 when this client launches into the gallery: it runs the same
+     * simulation from the same start and displays it, and contributes no
+     * input to anybody. Its own controllers must not reach the guest.
+     *
+     * player_count / occupied_mask above stay PLAYERS ONLY. A spectator
+     * counted there is a seat every peer waits on and nobody ever fills. */
+    int      is_spectator;
+    /* Spectator only: this client's slot in the input relay's namespace,
+     * which is NOT local_slot (a lobby seat index) and NOT a player seat.
+     * It sits at or above the relay's player count, which is what makes the
+     * relay refuse to forward anything this peer sends.
+     *
+     * <= 0 with is_spectator set means the host published no relay base; the
+     * engine must refuse to launch rather than fall back to a player slot. */
+    int      spectator_wire_slot;
+    /* 1 = seat 2 (P2) brings its own memory card this match: its local slot-1
+     * card is uploaded to the host at launch and becomes every peer's slot-2
+     * card. 0 = the host's slot choices only (default). Settled by the host
+     * at start and delivered to every peer with the launch, so all peers
+     * agree even if the toggle raced the start. */
+    int      guest_memcard;
+    /* 1 = the host watches from the gallery and still runs the match: it
+     * holds session slot 0 with its pad muted (every host-only path keys on
+     * slot 0), and player seats sit at lobby seat + 1. Settled by the server
+     * at start; backends fold it into local_slot / occupied_mask. */
+    int      host_spectates;
+    /* Session slot -> controller port, when slot_port_valid. The lobby host
+     * is always session slot 0 (the sim authority every host-only path keys
+     * on) whatever seat it holds; the other players follow in lobby-seat
+     * order; each drives the port of its LOBBY seat, so the game sees a
+     * player where the lobby seated them. -1 = no port (a host in the
+     * gallery). Without it, session slot == lobby seat == port. */
+    int      slot_port_valid;
+    int      slot_port[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1];
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -298,6 +391,30 @@ typedef struct RecompLauncherCNetplayCallbacks {
                            RecompLauncherCNetplayLobbyMod* out);
     int  (*lobby_mods_missing)(void* ctx);
     int  (*lobby_mods_download)(void* ctx);
+    /* Optional (append-only): would lobby_mods_download actually start a
+     * transfer right now? 1 yes, 0 no. Asked BEFORE the button is drawn, so a
+     * peer is never offered a download that cannot happen.
+     *
+     * This is a question about the current state, not about the build. The
+     * lobby server grants a mod-transfer channel only to a peer it REFUSED to
+     * seat (`pending_mod_lobby` is set on the need_mods rejection and cleared
+     * the moment the peer is seated), so a peer that is already sitting in the
+     * lobby has no channel even in a build that fully implements transfers —
+     * mod_xfer_start would come back `need_mods`. That is the case this panel
+     * shows when the host edits the plan mid-lobby.
+     *
+     * Absent (NULL) means "unknown": the button is drawn and the answer comes
+     * from lobby_mods_download's return, which is how it behaved before. */
+    int  (*lobby_mods_can_download)(void* ctx);
+    /* Optional (append-only): per-row transfer, so a peer can pull one package
+     * without re-fetching the ones it already has.
+     *   lobby_mods_download_one : start row `index`; 0 started, <0 not started
+     *   lobby_mods_progress_one : -1 idle, -2 failed, 0..100 in flight
+     * A row's button is drawn only when lobby_mods_can_download says yes AND
+     * the row is not installed, so neither call is a way to ask "is this
+     * possible" -- that question has its own callback above. */
+    int  (*lobby_mods_download_one)(void* ctx, int index);
+    int  (*lobby_mods_progress_one)(void* ctx, int index);
     /* Optional (append-only): seat self-service. A player may move ITSELF to
      * a free seat; taking a seat somebody occupies requires that player's
      * consent, so it is a request/approve exchange rather than a move.
@@ -315,6 +432,101 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int  (*seat_swap_respond)(void* ctx, int accept);
     int  (*seat_swap_outgoing)(void* ctx);
     void (*seat_swap_clear)(void* ctx);
+
+    /* ---- spectators -----------------------------------------------------
+     * Optional, and every one of them reports "no gallery" against a host or
+     * server that predates the feature -- so the UI gates its whole spectator
+     * section on lobby_allow_spectators() and otherwise renders as before.
+     *
+     * A spectator watches the match in sync and cannot affect it. The relay
+     * enforces that; the launcher only has to stop offering it a controller.
+     *
+     *   allow_spectators_get/set : host toggle, applied on the NEXT create
+     *   lobby_allow_spectators   : what the CURRENT lobby actually has
+     *   lobby_max_spectators     : gallery seat count (0 = none)
+     *   lobby_spectator_count    : occupied gallery seats
+     *   local_is_spectator       : 1 when this client is watching
+     *   spectator_slot           : seat index for gallery position `index`,
+     *                              to pass to move_member / kick_member;
+     *                              <0 when out of range.
+     *
+     * Moving between the tables is move_member(from_slot, to_slot) with a
+     * seat index from either side -- there is no separate promote/demote
+     * call, because a promotion IS a move and giving it its own path is how
+     * the two end up behaving differently. */
+    int  (*allow_spectators_get)(void* ctx);
+    int  (*allow_spectators_set)(void* ctx, int allow);
+    int  (*lobby_allow_spectators)(void* ctx);
+    int  (*lobby_max_spectators)(void* ctx);
+    int  (*lobby_spectator_count)(void* ctx);
+    int  (*local_is_spectator)(void* ctx);
+    int  (*spectator_slot)(void* ctx, int index);
+    /* ---- bring-your-own memory card (PSX) ------------------------------
+     * Optional (append-only).
+     *   memcard_offer_set(has_card, share): publish THIS peer's offer.
+     *       has_card = a slot-1 card is enabled locally (the UI knows; the
+     *       backend does not read launcher state). share < 0 keeps the
+     *       current opt-in; 0/1 sets it. Cheap to call every frame — the
+     *       backend re-advertises only on change.
+     *   guest_memcard_get()      : host's allow flag (1 unless the host
+     *                              turned it off; host-authoritative).
+     *   guest_memcard_set(allow) : host only; <0 refused otherwise.
+     * Effective = seat-2 offer (has_card && share) && host allow. */
+    int  (*memcard_offer_set)(void* ctx, int has_card, int share);
+    int  (*guest_memcard_get)(void* ctx);
+    int  (*guest_memcard_set)(void* ctx, int allow);
+    /* ---- lobby chat --------------------------------------------------
+     * Optional (append-only). Everyone seated (players and spectators) sees
+     * every line. chat_send returns 0 when the line was accepted; the line
+     * shows up through chat_get once the room has it (online: the server's
+     * echo, so order is the server's; LAN: the host's relay), so the UI
+     * never appends locally. chat_count/chat_get read the backend's ring,
+     * oldest first; the ring is cleared on join/leave. */
+    int  (*chat_send)(void* ctx, const char* text);
+    int  (*chat_count)(void* ctx);
+    int  (*chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
+    /* Optional (append-only): 1 when this backend can run the match with the
+     * host seated in the gallery (host_spectates above). The UI lets the host
+     * drag itself into the spectator table only when this says yes. */
+    int  (*host_can_spectate)(void* ctx);
+
+    /* ---- players online (optional, append-only) --------------------------
+     * Everyone connected to the lobby server (the `players` array the server
+     * sends with each lobby_list), for the browser's side panel. A backend
+     * with no server presence (LAN-only) leaves both NULL and the panel is
+     * not drawn. */
+    int  (*online_count)(void* ctx);
+    int  (*online_get)(void* ctx, int index, RecompLauncherCNetplayOnlinePlayer* out);
+
+    /* ---- server chat (optional, append-only) ------------------------------
+     * Per-game chat outside any room, for everyone on the lobby server
+     * playing this title. Same contract as the lobby chat callbacks: send
+     * returns 0 when queued and the line arrives through get; no history.
+     * NULL (or send returning <0 while offline) hides the panel. */
+    int  (*server_chat_send)(void* ctx, const char* text);
+    int  (*server_chat_count)(void* ctx);
+    int  (*server_chat_get)(void* ctx, int index, RecompLauncherCNetplayChatMessage* out);
+
+    /* ---- name policy (optional, append-only) ------------------------------
+     * 1 when `name` may not be used -- it trips the same word list the chat
+     * filter uses (recomp-net's rnet_chat_filter). Asked for BOTH a player's
+     * display name and a room title.
+     *
+     * Unlike a chat line, a refused name is NOT masked: a line is a moment
+     * and a mask reads as one, while a player name sits in the seat table and
+     * in front of every line that player sends, and a room title sits in the
+     * lobby browser in front of everyone shopping for a game. Masking either
+     * just publishes the same word with stars in it, so the client is asked
+     * for a different one instead.
+     *
+     * The UI asks BEFORE it accepts a name, so the answer is immediate and
+     * works in a LAN room with no server. This is a courtesy check, not the
+     * gate: the lobby server refuses the name itself (a modified or older
+     * client can send what this would stop) and answers `name_rejected` /
+     * `lobby_name_rejected`, which arrive through last_error and reopen the
+     * matching prompt. NULL leaves the local check off and the server's
+     * refusal still lands. */
+    int  (*name_rejected)(void* ctx, const char* name);
 } RecompLauncherCNetplayCallbacks;
 
 /* ---- schema-driven mods --------------------------------------------------
@@ -594,8 +806,11 @@ struct RecompLauncherCSettings {
     char memcard_path[2][512];
     // Per-slot enable/disable (mirrors the legacy PSX launcher's per-card
     // "Enabled" switch / SIO-port concept: a disabled slot reports no card
-    // present). 0 = unset (host predates this field) -> the model defaults it
-    // to enabled at init. Appended additively; see launcher_model_toggle_memcard().
+    // present). Tri-state on the way IN: 1 = enabled, -1 = disabled, 0 = unset
+    // (host predates this field) -> the model defaults it to enabled at init.
+    // The model normalizes to 0/1 and hands back 0/1; hosts should read the
+    // result as `> 0` so a -1 passed through an older launcher still reads as
+    // off. Appended additively; see launcher_model_toggle_memcard().
     int  memcard_enabled[2];
 
     // ---- audio output device (GameInfo.audio_device_labels consoles) --------
@@ -820,6 +1035,15 @@ struct RecompLauncherCSettings {
      * explicitly disabled. Bindings live in assist_key_bind/assist_pad_bind so
      * they appear in the Controller page with the rest of host-owned binds. */
     int  virtual_stylus;
+
+    /* Presentation frame blending (GameInfo.has_frame_blend consoles):
+     * average each presented frame with the previous one, so a game's
+     * alternate-frame flicker "transparency" (thrusters, explosions) reads
+     * as steady translucency instead of breaking up on a tear or on the
+     * duplicated frame a 60.00 Hz panel makes of the 60.0988 Hz guest.
+     * Costs half a frame of motion ghosting. 0 = off (the faithful
+     * default). Appended for ABI stability. */
+    int  frame_blend;
 };
 
 /* Values for RecompLauncherCSettings.vsync (1-based; 0 = unset). */
@@ -837,6 +1061,8 @@ struct RecompLauncherCSettings {
 /* Hosts can #ifdef on this to stay source-compatible with older recomp-ui. */
 #define RECOMP_LAUNCHER_HAS_FMV_FILTER 1
 
+/* Hosts can #ifdef on this to stay source-compatible with older recomp-ui. */
+#define RECOMP_LAUNCHER_HAS_FRAME_BLEND 1
 /* Scanline post-process (Settings.scanlines / scanline_strength_pct,
  * GameInfo.has_scanlines). Hosts #ifdef on this to stay source-compatible with
  * older recomp-ui that lacks the fields. */
@@ -1137,10 +1363,14 @@ typedef struct RecompLauncherCGameInfo {
      * prepare_disc_label / prepare_disc_note are button + help text (NULL =>
      * "Convert raw dump…" / default note).
      *
-     * Path persistence (Continue to launcher / Change ROM / BIOS browse):
-     * The launcher writes `rom_cache_path` (NULL => "rom.cfg") immediately so
-     * quitting without PLAY still remembers the ROM. Optional persist_setup
-     * lets the host also flush BIOS / config.ini (return 0 on success). */
+     * Path persistence: the moment the wizard's picks are confirmed (Confirm
+     * disc / Continue to launcher), the launcher writes rom.cfg, disc.cfg and
+     * bios.cfg beside the executable and in the cwd, and calls persist_setup
+     * (or persist_setup_discs), so quitting without PLAY -- or a host relaunch
+     * -- still remembers them and the wizard does not ask again. The same
+     * flush runs on a BIOS change, before Generate and after a rebuild.
+     * persist_setup lets the host also flush its own config (project-root
+     * sidecars, config.ini); return 0 on success. */
     int needs_setup;
     int (*bios_verify)(const char* bios_path, RecompLauncherCBiosVerify* out);
     int (*prepare_disc)(const char* source_path, char* out_disc_path, size_t out_cap,
@@ -1419,6 +1649,11 @@ typedef struct RecompLauncherCGameInfo {
      * Return a private mounted-disc path; never replace the disc with the SBI. */
     int (*import_sbi)(const char* disc, const char* sbi, char* out_disc,
                       size_t out_cap, char* error, size_t error_cap);
+
+    /* Display row (checkbox) for Settings.frame_blend. 0 => no row drawn,
+     * so a console that leaves this unset keeps exactly today's settings
+     * surface. Appended for ABI stability. */
+    int has_frame_blend;
 } RecompLauncherCGameInfo;
 
 /* recomp_launcher_run_window return codes */

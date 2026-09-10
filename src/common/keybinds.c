@@ -43,16 +43,34 @@
         .l3     = SDL_SCANCODE_UNKNOWN, \
         .r3     = SDL_SCANCODE_UNKNOWN, \
     }, \
-    /* Player 2 unbound by default. Add bindings in the INI to enable. */ \
+    /* Player 2 gets the SAME defaults as player 1.
+     *
+     * It was unbound because the host applied every slot's keyboard bits each
+     * frame, so a key bound in slot 2 drove player 2 even when player 2 was a
+     * gamepad -- an empty map standing in for a gate that did not exist. The
+     * host now reads the keyboard only for slots whose source IS the keyboard,
+     * so identical defaults are safe, and choosing Keyboard for slot 2 gives a
+     * playable controller instead of twelve buttons to bind by hand.
+     *
+     * Two slots both on Keyboard do share these keys; rebinding one is the
+     * answer, and it beats shipping slot 2 unusable. */ \
     .p2 = { \
-        .a = SDL_SCANCODE_UNKNOWN, .b = SDL_SCANCODE_UNKNOWN, \
-        .x = SDL_SCANCODE_UNKNOWN, .y = SDL_SCANCODE_UNKNOWN, \
-        .l = SDL_SCANCODE_UNKNOWN, .r = SDL_SCANCODE_UNKNOWN, \
-        .start = SDL_SCANCODE_UNKNOWN, .select = SDL_SCANCODE_UNKNOWN, \
-        .up    = SDL_SCANCODE_UNKNOWN, .down  = SDL_SCANCODE_UNKNOWN, \
-        .left  = SDL_SCANCODE_UNKNOWN, .right = SDL_SCANCODE_UNKNOWN, \
-        .l2    = SDL_SCANCODE_UNKNOWN, .r2    = SDL_SCANCODE_UNKNOWN, \
-        .l3    = SDL_SCANCODE_UNKNOWN, .r3    = SDL_SCANCODE_UNKNOWN, \
+        .a      = SDL_SCANCODE_X, \
+        .b      = SDL_SCANCODE_Z, \
+        .x      = SDL_SCANCODE_S, \
+        .y      = SDL_SCANCODE_A, \
+        .l      = SDL_SCANCODE_C, \
+        .r      = SDL_SCANCODE_V, \
+        .start  = SDL_SCANCODE_RETURN, \
+        .select = SDL_SCANCODE_RSHIFT, \
+        .up     = SDL_SCANCODE_UP, \
+        .down   = SDL_SCANCODE_DOWN, \
+        .left   = SDL_SCANCODE_LEFT, \
+        .right  = SDL_SCANCODE_RIGHT, \
+        .l2     = SDL_SCANCODE_Q, \
+        .r2     = SDL_SCANCODE_E, \
+        .l3     = SDL_SCANCODE_UNKNOWN, \
+        .r3     = SDL_SCANCODE_UNKNOWN, \
     }, \
 }
 
@@ -168,8 +186,9 @@ static void write_defaults(const char *path) {
         "# l2/r2/l3/r3 are only used by systems with a deeper button set than\n"
         "# SNES (e.g. PSX L2/R2 shoulders, L3/R3 stick clicks); harmless if unused.\n"
         "#\n"
-        "# Player 2 is unbound by default — fill in keys to enable a second\n"
-        "# keyboard player.\n"
+        "# Both players default to the same keys. Only a player whose Input\n"
+        "# source is Keyboard reads them, so this is not a conflict unless you\n"
+        "# put BOTH players on the keyboard -- rebind one if you do.\n"
         "\n");
     write_player_section(f, "player1", &s_binds.p1);
     write_player_section(f, "player2", &s_binds.p2);

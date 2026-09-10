@@ -171,6 +171,11 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
         else if (strcmp(v, "controller") == 0) launcher_model_set_view(m, LNG_VIEW_CONTROLLER);
         else if (strcmp(v, "assist_tools") == 0) launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
         else if (strcmp(v, "credits") == 0) launcher_model_set_view(m, LNG_VIEW_CREDITS);
+        else if (strcmp(v, "netplay") == 0) {
+            m->netplay_list_fresh = false;
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+        }
+        else if (strcmp(v, "lobby") == 0) launcher_model_set_view(m, LNG_VIEW_LOBBY);
     } else if (strncmp(c, "player:", 7) == 0) {
         // Select which player the Controller view configures. Clamp to the
         // launcher's real player range (N64 profiles run up to 4) instead of
@@ -199,6 +204,20 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
             if (k != SDLK_UNKNOWN) synth_key(k);
             else fprintf(stderr, "[dbg] unknown key: %s\n", c + 4);
         }
+    } else if (strncmp(c, "text:", 5) == 0) {
+        /* Type UTF-8 into the focused widget, as an OS text-input event. */
+        static char s_text[256];
+        SDL_Event e;
+        snprintf(s_text, sizeof(s_text), "%s", c + 5);
+        SDL_zero(e);
+        e.type = SDL_EVENT_TEXT_INPUT;
+#if defined(LNG_SDL3)
+        e.text.text = s_text;
+        e.text.windowID = SDL_GetWindowID(p->window);
+#else
+        snprintf(e.text.text, sizeof(e.text.text), "%s", s_text);
+#endif
+        SDL_PushEvent(&e);
     } else if (strncmp(c, "wait:", 5) == 0) {
         g_wait_frames = atoi(c + 5);
     } else if (strncmp(c, "shot:", 5) == 0) {

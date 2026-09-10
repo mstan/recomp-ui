@@ -14,7 +14,8 @@ set(_RUI_COMMON_IMG_ASSETS
     "${RUI_ASSETS}/common/img/verdict_ok.tga"
     "${RUI_ASSETS}/common/img/verdict_warn.tga"
     "${RUI_ASSETS}/common/img/verdict_bad.tga"
-    "${RUI_ASSETS}/common/img/verdict_none.tga")
+    "${RUI_ASSETS}/common/img/verdict_none.tga"
+    "${RUI_ASSETS}/common/img/flags.png")
 
 set(_RUI_CONSOLE_ASSETS_snes
     "${RUI_ASSETS}/consoles/snes/img/pad.tga")

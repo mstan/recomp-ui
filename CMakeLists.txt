@@ -130,6 +130,21 @@ if(BUILD_TESTING)
     target_include_directories(recomp-runtime-ui-test PRIVATE src)
     add_test(NAME recomp-runtime-ui COMMAND $<TARGET_FILE:recomp-runtime-ui-test>)
 
+    # N64 controller page: the 3-column reading order the page is drawn from,
+    # and the per-GUID gamepad store behind its bind chips.
+    add_executable(recomp-ui-n64-pad-binds-test
+        tests/n64_pad_binds_test.c
+        src/consoles/n64/n64_pad_binds.c
+        src/common/pad_binds.c)
+    target_include_directories(recomp-ui-n64-pad-binds-test PRIVATE
+        src src/common src/consoles/n64)
+    target_link_libraries(recomp-ui-n64-pad-binds-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-n64-pad-binds-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-n64-pad-binds
+        COMMAND $<TARGET_FILE:recomp-ui-n64-pad-binds-test>
+                "${CMAKE_CURRENT_BINARY_DIR}")
+
     add_executable(recomp-ui-psx-binds-test
         tests/psx_binds_test.c
         src/consoles/psx/psx_binds.c)
@@ -177,6 +192,25 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-setup-bios-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    # First-run wizard: Confirm disc / Continue records the pick immediately
+    # (sidecars + host persist_setup), so the next start does not ask again.
+    # Same include-the-TU shape as the setup-bios test above.
+    add_executable(recomp-ui-launcher-setup-confirm-test
+        tests/launcher_setup_confirm_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-setup-confirm-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-setup-confirm-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-setup-confirm
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-setup-confirm-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
+
     # Per-seat pad_mode resolution: a locked mode (game.toml lock_mode) must
     # survive the keyboard-has-no-sticks presentation default, because the
     # selector that could undo it is hidden. Same include-the-TU shape as the
@@ -195,6 +229,24 @@ if(BUILD_TESTING)
     add_test(
         NAME recomp-ui-launcher-pad-mode
         COMMAND $<TARGET_FILE:recomp-ui-launcher-pad-mode-test>)
+
+    # Memory-card slot facts the Save panel paints: block-usage source order
+    # (real inspect beats placeholder; a wired inspector never shows a made-up
+    # pattern) and the tri-state enabled flag. Includes launcher_model.c like
+    # the discs test to reach the static inspect helper.
+    add_executable(recomp-ui-launcher-memcard-test
+        tests/launcher_memcard_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-memcard-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-memcard-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-memcard
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-memcard-test>)
 
     add_executable(recomp-ui-psx-profile-test
         tests/psx_profile_test.c)

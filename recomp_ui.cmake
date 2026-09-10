@@ -155,19 +155,28 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_files.c
         ${RUI_SRC}/common/launcher_debug.c
         ${RUI_SRC}/common/launcher_binds.c
+        ${RUI_SRC}/common/pad_binds.c          # per-GUID input.ini store (all consoles)
         ${RUI_SRC}/common/launcher_udp_port.c  # host-lobby UDP port probe / auto-pick
         ${RUI_SRC}/common/recomp_runtime_ui.c # renderer-agnostic in-game overlay
         ${RUI_SRC}/common/recomp_runtime_settings.c # shared cross-ecosystem setting catalog
         ${RUI_SRC}/common/launcher_boot_timing.c  # PSX_LAUNCHER_BOOT_TIMING / LNG_BOOT_TIMING
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/common/launcher_i18n.cpp
+        # color emoji for chat: scanner + per-platform rasterizers (each
+        # provider compiles to nothing where its platform/deps are absent)
+        ${RUI_SRC}/common/emoji/recomp_emoji.c
+        ${RUI_SRC}/common/emoji/recomp_emoji_freetype.c
+        ${RUI_SRC}/common/emoji/recomp_emoji_win32.cpp
+        ${RUI_SRC}/common/emoji/recomp_emoji_flags.c   # bundled flag sheet (all platforms)
         ${RUI_SRC}/third_party/tinyfiledialogs.c
         # console-specific helpers (src/consoles/<id>/) — always compiled, only
         # reached when the active SystemProfile opts into the capability
         ${RUI_SRC}/consoles/psx/memcard_format.c   # PS1 blank memory-card image writer
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
-        ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX gamepad input.ini per-GUID bridge
-        ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (kb+pad tables)
+        ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX button table over common/pad_binds.c
+        ${RUI_SRC}/consoles/snes/snes_pad_binds.c  # SNES button table over common/pad_binds.c
+        ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (keyboard table + mirror)
+        ${RUI_SRC}/consoles/n64/n64_pad_binds.c    # N64 button table over common/pad_binds.c
         ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
         ${RUI_SRC}/consoles/gb/gb_binds.c          # Game Boy-native keybinds.ini [controls] bridge
@@ -236,6 +245,37 @@ function(recomp_target_launcher_ui TGT)
         # (Steam Deck) even though the package is found — see cmake/recomp_gl.cmake.
         recomp_resolve_gl(RUI_GL_TARGET)
         target_link_libraries(${TGT} PRIVATE ${RUI_GL_TARGET} ${CMAKE_DL_LIBS})
+    endif()
+
+    # ---- color emoji providers (see src/common/emoji/recomp_emoji.h) ----------
+    # Windows: DirectWrite + Direct2D on Segoe UI Emoji (always available).
+    # Elsewhere: FreeType on the system color emoji font when the build can find
+    # FreeType, plus HarfBuzz for sequence shaping when that is around too. A
+    # build without either simply keeps the outline emoji glyphs — no option to
+    # remember, no missing-dependency failure.
+    if(WIN32)
+        target_link_libraries(${TGT} PRIVATE d2d1 dwrite windowscodecs ole32)
+    elseif(NOT ANDROID)
+        find_package(Freetype QUIET)
+        if(TARGET Freetype::Freetype)
+            target_compile_definitions(${TGT} PRIVATE RECOMP_UI_HAVE_FREETYPE=1)
+            target_link_libraries(${TGT} PRIVATE Freetype::Freetype)
+            find_package(PkgConfig QUIET)
+            if(PkgConfig_FOUND)
+                pkg_check_modules(RUI_HARFBUZZ QUIET IMPORTED_TARGET harfbuzz)
+                if(RUI_HARFBUZZ_FOUND)
+                    target_compile_definitions(${TGT} PRIVATE RECOMP_UI_HAVE_HARFBUZZ=1)
+                    target_link_libraries(${TGT} PRIVATE PkgConfig::RUI_HARFBUZZ)
+                endif()
+            endif()
+            if(RUI_HARFBUZZ_FOUND)
+                message(STATUS "recomp-ui: color emoji via FreeType + HarfBuzz")
+            else()
+                message(STATUS "recomp-ui: color emoji via FreeType (no HarfBuzz: sequences unjoined)")
+            endif()
+        else()
+            message(STATUS "recomp-ui: no FreeType; emoji stay outline glyphs")
+        endif()
     endif()
 
     if(NOT MSVC)

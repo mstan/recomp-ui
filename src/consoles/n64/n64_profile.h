@@ -11,9 +11,10 @@
 // trigger), RT64-backed video settings (graphics API / SSAA / MSAA /
 // fullscreen — the SS Anne launcher's Settings page), an optional per-port
 // Transfer Pak GB-cartridge card set (GameInfo.tpak_slots; Stadium games),
-// and native bind persistence through the games' own input.cfg format
-// (consoles/n64/n64_binds.c — keyboard AND gamepad tables, two alternate
-// binds per input).
+// and bind persistence split across two stores: the games' own input.cfg
+// format for the keyboard (consoles/n64/n64_binds.c) and the shared per-GUID
+// input.ini for controllers (consoles/n64/n64_pad_binds.c), so two players on
+// two pads can hold two layouts.
 
 #ifndef RUI_CONSOLE_N64_PROFILE_H
 #define RUI_CONSOLE_N64_PROFILE_H
@@ -37,6 +38,21 @@ static const ButtonDef kN64PadButtons[] = {
     { "Stick Up", 14 }, { "Stick Down", 15 }, { "Stick Left", 16 }, { "Stick Right", 17 },
 };
 #define LNG_N64_PAD_BUTTON_COUNT ((int)(sizeof(kN64PadButtons) / sizeof(kN64PadButtons[0])))
+
+// ---- Gamepad Bindings panel order (column-major: down, then next column) ----
+// Indices into kN64PadButtons. Eighteen inputs divide into the three clusters
+// an N64 pad physically has, reading DOWN each column:
+//   Col1: d-pad + face   Col2: Z/Start + analog stick   Col3: C cluster + L/R
+// The spec order above is PSR's N64Input enum and cannot be reshuffled to suit
+// the page (n64_binds.c and the host address inputs by it), so the layout is
+// declared here as a separate reading order instead.
+static const int kN64GamepadBindOrder[LNG_N64_PAD_BUTTON_COUNT] = {
+     4,  5,  6,  7,  0,  1,   // D-Pad Up Down Left Right / A B
+     2,  3, 14, 15, 16, 17,   // Z Start / Stick Up Down Left Right
+    10, 11, 12, 13,  8,  9,   // C-Up C-Down C-Left C-Right / L R
+};
+#define LNG_N64_GAMEPAD_BIND_COLS 3
+#define LNG_N64_GAMEPAD_BIND_ROWS 6
 
 // ---- panel composition --------------------------------------------------------
 // Dashboard: the common game + controller cards, plus the Transfer Pak card
@@ -65,7 +81,17 @@ static const SystemProfile kSystemProfileN64 = {
         kN64PadButtons, LNG_N64_PAD_BUTTON_COUNT,
         "pad_n64.tga", NULL, NULL,     // real N64 controller art; no analog/digital pair
         /* max_players */ 4, /* has_pad_mode */ 0,
-        /* binds_per_input */ 2,       // input.cfg keeps two alternate binds per input
+        // ONE chip per row, not the two alternate input.cfg slots. A row now
+        // shows the bind for the source the player actually selected — the
+        // other chip mapped something nothing reads. input.cfg still holds two
+        // slots per input and the host still honours both; only the page (and
+        // what it writes: slot 0, which clears the stale alt) is single-bind.
+        /* binds_per_input */ 1,
+        /* modes */ NULL, /* mode_count */ 0,
+        /* has_pad_binds */ 1,         // gamepad half lives in the per-GUID store
+        /* pad_bind_order */ kN64GamepadBindOrder,
+        /* pad_bind_cols  */ LNG_N64_GAMEPAD_BIND_COLS,
+        /* pad_bind_rows  */ LNG_N64_GAMEPAD_BIND_ROWS,
     },
     // Cartridge battery saves, one file per game (per-game via sram_path —
     // the compact save row folded into the GAME card, like SNES/GBA).
