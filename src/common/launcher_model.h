@@ -311,6 +311,7 @@ typedef struct {
     bool has_sharp_filter;
     bool has_affine_filter;
     bool has_frame_blend;
+    bool has_run_ahead;
     bool has_shader;
     bool netplay_supported;
     /* Host opted into first-run wizard + Generate & rebuild (GameInfo). */
@@ -718,12 +719,23 @@ void launcher_model_restore_defaults(LauncherModel* m);
 void launcher_model_cancel_restore_defaults(LauncherModel* m);
 
 // ---- display settings ----
-void launcher_model_cycle_scale(LauncherModel* m);   // 1..6 wrap
+// Window scale, in whole native-size steps. LNG_WINDOW_SCALE_MAX bounds both
+// the cycle's wrap and the dropdown's list, so the two can never offer
+// different sets.
+#define LNG_WINDOW_SCALE_MAX 6
+void launcher_model_cycle_scale(LauncherModel* m);   // 1..LNG_WINDOW_SCALE_MAX wrap
+void launcher_model_set_scale(LauncherModel* m, int scale);  // clamped
 void launcher_model_toggle_filter(LauncherModel* m);
 void launcher_model_cycle_scaling_filter(LauncherModel* m);
 const char* launcher_model_scaling_filter_label(const LauncherModel* m);
 void launcher_model_toggle_affine_filter(LauncherModel* m);
 void launcher_model_toggle_frame_blend(LauncherModel* m);  // gated has_frame_blend
+// Run-ahead depth, 0 (Off) .. RECOMP_LAUNCHER_RUN_AHEAD_MAX. Off by default:
+// each frame of depth is a whole extra emulated frame plus a snapshot/restore,
+// so it is opt-in rather than a cost every host pays. Set, not cycled -- the
+// UI draws it as a dropdown, and the labels for each depth live with that
+// control alongside every other choice list.
+void launcher_model_set_run_ahead(LauncherModel* m, int frames);  // clamped, gated has_run_ahead
 void launcher_model_toggle_widescreen(LauncherModel* m);  // gated
 void launcher_model_toggle_adaptive_view(LauncherModel* m);  // gated; fixed aspect is retained
 /* Unified Native / fixed widescreen / Adaptive control. Compatibility fields
@@ -815,6 +827,7 @@ void launcher_model_toggle_skip_fmv(LauncherModel* m);
 void launcher_model_toggle_turbo_loads(LauncherModel* m);
 void launcher_model_cycle_fullscreen(LauncherModel* m);        // Off -> Borderless -> Exclusive, wraps
 const char* launcher_model_fullscreen_label(const LauncherModel* m);  // "Off"/"Borderless"/"Exclusive"
+void launcher_model_set_fullscreen(LauncherModel* m, int mode);  // 0/1/2, clamped
 void launcher_model_toggle_fullscreen(LauncherModel* m);       // binary on/off; kept for bool-style hosts
 void launcher_model_cycle_language(LauncherModel* m);          // wraps over num_languages
 const char* launcher_model_language_label(const LauncherModel* m);

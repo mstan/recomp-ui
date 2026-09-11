@@ -45,6 +45,8 @@ extern "C" {
 #define RECOMP_LAUNCHER_HAS_REWIND_INTERVAL 1
 /* Host may #ifdef this when reading Settings.rewind_enabled. */
 #define RECOMP_LAUNCHER_HAS_REWIND_ENABLED 1
+/* Host may #ifdef this when reading Settings.run_ahead. */
+#define RECOMP_LAUNCHER_HAS_RUN_AHEAD 1
 /* Host may #ifdef this when reading Settings.vsync. */
 #define RECOMP_LAUNCHER_HAS_VSYNC 1
 /* Host may #ifdef this when reading Settings.virtual_stylus. */
@@ -1183,7 +1185,31 @@ struct RecompLauncherCSettings {
      * Costs half a frame of motion ghosting. 0 = off (the faithful
      * default). Appended for ABI stability. */
     int  frame_blend;
+
+    /* Run-ahead depth in frames (GameInfo.has_run_ahead consoles): how many
+     * frames the runtime speculates past the one being shown, so that the
+     * game's own internal input latency is hidden. The runtime advances the
+     * machine, snapshots, runs N more frames with the same input, presents
+     * the last one, then restores -- so the picture the player sees is the
+     * one their input will have produced N frames from now.
+     *
+     * Costs N extra emulated frames per displayed frame, and it is strictly
+     * a LOCAL prediction: a peer cannot be speculated about, so a host must
+     * refuse it during netplay regardless of this value.
+     *
+     * 0 = off, which is both "unset" and the faithful default -- a
+     * zero-initialized host predating this field gets exactly the behavior
+     * it had. RECOMP_LAUNCHER_RUN_AHEAD_MAX bounds what the UI offers.
+     * Appended for ABI stability. */
+    int  run_ahead;
 };
+
+/* Largest run-ahead depth the launcher will offer for
+ * RecompLauncherCSettings.run_ahead. Deeper than this and the cost (one full
+ * extra emulated frame each) buys latency the player cannot feel, while the
+ * mispredictions a deep speculation makes become visible. A host whose
+ * runtime clamps lower still clamps on read; the UI never offers more. */
+#define RECOMP_LAUNCHER_RUN_AHEAD_MAX 4
 
 /* Values for RecompLauncherCSettings.vsync (1-based; 0 = unset). */
 #define RECOMP_LAUNCHER_VSYNC_ON       1
@@ -1784,6 +1810,11 @@ typedef struct RecompLauncherCGameInfo {
      * so a console that leaves this unset keeps exactly today's settings
      * surface. Appended for ABI stability. */
     int has_frame_blend;
+
+    /* Display row (cycle) for Settings.run_ahead. 0 => no row drawn, so a
+     * console whose runtime cannot snapshot-and-restore a frame keeps
+     * exactly today's settings surface. Appended for ABI stability. */
+    int has_run_ahead;
 } RecompLauncherCGameInfo;
 
 /* recomp_launcher_run_window return codes */

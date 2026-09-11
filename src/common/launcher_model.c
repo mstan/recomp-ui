@@ -403,6 +403,7 @@ void launcher_model_init(LauncherModel* m,
         m->has_sharp_filter     = game->has_sharp_filter != 0;
         m->has_affine_filter    = game->has_affine_filter != 0;
         m->has_frame_blend      = game->has_frame_blend != 0;
+        m->has_run_ahead        = game->has_run_ahead != 0;
         m->has_shader           = game->has_shader != 0;
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
@@ -485,6 +486,14 @@ void launcher_model_init(LauncherModel* m,
     }
     if (m->has_frame_blend)
         m->s.frame_blend = m->s.frame_blend ? 1 : 0;
+    /* A host may seed a depth its build predates, or a negative from a
+     * malformed config; clamp to what the control can actually show rather
+     * than drawing a value no press can return to. */
+    if (m->has_run_ahead) {
+        if (m->s.run_ahead < 0) m->s.run_ahead = 0;
+        if (m->s.run_ahead > RECOMP_LAUNCHER_RUN_AHEAD_MAX)
+            m->s.run_ahead = RECOMP_LAUNCHER_RUN_AHEAD_MAX;
+    }
     memset(&m->s.netplay_launch, 0, sizeof(m->s.netplay_launch));
     if (!m->s.netplay_player_name[0] && m->netplay && m->netplay->player_name) {
         safe_copy(m->s.netplay_player_name, sizeof(m->s.netplay_player_name),
@@ -1308,6 +1317,9 @@ void launcher_model_restore_defaults(LauncherModel* m) {
         int iv = m->s.rewind_interval;
         if (iv != 1 && iv != 4 && iv != 8 && iv != 12 && iv != 15)
             m->s.rewind_interval = 15;
+        if (m->s.run_ahead < 0) m->s.run_ahead = 0;
+        if (m->s.run_ahead > RECOMP_LAUNCHER_RUN_AHEAD_MAX)
+            m->s.run_ahead = RECOMP_LAUNCHER_RUN_AHEAD_MAX;
     }
     m->defaults_modal_open = false;
 }
@@ -1317,8 +1329,14 @@ void launcher_model_cancel_restore_defaults(LauncherModel* m) {
 }
 
 void launcher_model_cycle_scale(LauncherModel* m) {
-    m->s.window_scale = (m->s.window_scale >= 6) ? 1 : m->s.window_scale + 1;
+    m->s.window_scale = (m->s.window_scale >= LNG_WINDOW_SCALE_MAX)
+                            ? 1 : m->s.window_scale + 1;
     if (m->s.window_scale < 1) m->s.window_scale = 1;
+}
+
+void launcher_model_set_scale(LauncherModel* m, int scale) {
+    if (!m) return;
+    m->s.window_scale = clampi(scale, 1, LNG_WINDOW_SCALE_MAX);
 }
 
 void launcher_model_toggle_filter(LauncherModel* m) {
@@ -1355,6 +1373,11 @@ void launcher_model_toggle_affine_filter(LauncherModel* m) {
 void launcher_model_toggle_frame_blend(LauncherModel* m) {
     if (!m || !m->has_frame_blend) return;
     m->s.frame_blend = !m->s.frame_blend;
+}
+
+void launcher_model_set_run_ahead(LauncherModel* m, int frames) {
+    if (!m || !m->has_run_ahead) return;
+    m->s.run_ahead = clampi(frames, 0, RECOMP_LAUNCHER_RUN_AHEAD_MAX);
 }
 
 void launcher_model_toggle_widescreen(LauncherModel* m) {
@@ -1821,6 +1844,11 @@ void launcher_model_cycle_fullscreen(LauncherModel* m) {
 const char* launcher_model_fullscreen_label(const LauncherModel* m) {
     static const char* const kNames[3] = { "Off", "Borderless", "Exclusive" };
     return kNames[clampi(m->s.fullscreen, 0, 2)];
+}
+
+void launcher_model_set_fullscreen(LauncherModel* m, int mode) {
+    if (!m) return;
+    m->s.fullscreen = clampi(mode, 0, 2);
 }
 
 void launcher_model_toggle_fullscreen(LauncherModel* m) {

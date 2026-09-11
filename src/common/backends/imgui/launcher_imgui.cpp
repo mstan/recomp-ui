@@ -1324,11 +1324,21 @@ void kv(const char* k, const char* v, const LauncherTheme& th,
         ImGui::TextUnformatted(b); ImGui::PopStyleColor();
     }
 }
-void stepper(const char* id, int value, const char* suffix, int* out_delta) {
+// `total_w` > 0 stretches the value field so the whole widget measures exactly
+// that — which is what lets a right-anchored stepper line its LEFT edge up
+// with the dropdowns above it instead of floating a few pixels inside them.
+// 0 keeps the natural width every other caller has always had.
+void stepper(const char* id, int value, const char* suffix, int* out_delta,
+             float total_w = 0.0f) {
     ImGui::PushID(id);
-    const float bh = px(30), fw = px(58);
-    if (ImGui::Button("-", ImVec2(px(32), bh))) *out_delta = -5;
-    ImGui::SameLine(0, px(6));
+    const float bh = px(30), bw = px(32), gap = px(6);
+    float fw = px(58);
+    if (total_w > 0.0f) {
+        const float want = total_w - bw * 2.0f - gap * 2.0f;
+        if (want > fw) fw = want;
+    }
+    if (ImGui::Button("-", ImVec2(bw, bh))) *out_delta = -5;
+    ImGui::SameLine(0, gap);
     // value centered in a fixed-width field so "+" never shifts with the digits
     char buf[32]; snprintf(buf, sizeof(buf), "%d%s", value, suffix);
     float cx = ImGui::GetCursorPosX();
@@ -1337,8 +1347,8 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(buf);
     ImGui::SameLine(0, 0);
-    ImGui::SetCursorPosX(cx + fw + px(6));
-    if (ImGui::Button("+", ImVec2(px(32), bh))) *out_delta = +5;
+    ImGui::SetCursorPosX(cx + fw + gap);
+    if (ImGui::Button("+", ImVec2(bw, bh))) *out_delta = +5;
     ImGui::PopID();
 }
 
@@ -1357,6 +1367,130 @@ void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
     } else {
         ImGui::SameLine(0.0f, px(th.spacing_md));  // flow from label width (no fixed-x overlap)
     }
+}
+
+/*
+ * "Label ....................... [control]" — the label at the card's left
+ * edge, the control pushed out to its RIGHT edge.
+ *
+ * The settings cards used to align on the LEFT of the control column
+ * (row_label's col_w), which meant the caller had to measure every label in
+ * the card first and pass the widest, and a card's controls then floated in
+ * the middle with dead space to their right. Anchoring to the right edge
+ * needs no measuring pass at all -- it reads off the card's own width -- and
+ * a card whose rows all use the same control width comes out flush on BOTH
+ * sides, which is the grid the col_w pass was trying to build.
+ *
+ * `ctrl_w` is the width the caller is about to draw: px(SETTINGS_CTRL_W) for
+ * the shared button/dropdown width, ImGui::GetFrameHeight() for a checkbox
+ * (they are square), or a bespoke width for a row that needs one. A label too
+ * long to leave room keeps a minimum gap and lets its control run wide rather
+ * than colliding with the text.
+ */
+void row_label_right(const char* text, const LauncherTheme& th, float ctrl_w) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(col(th.text_muted), "%s", ui_text(text));
+    ImGui::SameLine(0.0f, 0.0f);
+    float shift = ImGui::GetContentRegionAvail().x - ctrl_w;
+    const float min_gap = px(th.spacing_md);
+    if (shift < min_gap) shift = min_gap;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + shift);
+}
+
+/* One width for every button and dropdown in the Display and Audio cards, so
+ * right-anchoring also lines their left edges up. Wide enough for the longest
+ * value any of them shows ("Borderless", "Adaptive", "2 frames", "32000 Hz").
+ * Rows whose value cannot fit -- a screen model, a file path -- pass their own
+ * width to row_label_right instead. */
+#define SETTINGS_CTRL_W 150.0f
+
+/*
+ * False while the window is too narrow to run DISPLAY and AUDIO side by side,
+ * so the settings cards stack in one column. draw_settings sets it each frame;
+ * the card drawers read it, because a STACKED card must hug its content — the
+ * legacy fixed band exists only to make two side-by-side cards the same
+ * height, and pinning it in one column leaves a tall empty region under a
+ * short card.
+ *
+ * A file-scope flag rather than a parameter: the panel registry's draw
+ * signature is the generic (model, theme) shared by every view, and threading
+ * one layout bit through all of it to reach two call sites would be worse.
+ */
+bool g_settings_two_col = true;
+
+/* One entry of a settings dropdown: the stored value and what it reads as. */
+struct SettingsChoice { int value; const char* label; };
+
+/*
+ * A labelled dropdown row: right-anchored combo over a fixed list of choices.
+ * Returns the value the player picked this frame, or `current` when they
+ * picked nothing, so the caller commits through its own model setter.
+ *
+ * Cycle buttons were fine when a setting had two or three states, but the
+ * player cannot see what the other states ARE without pressing through them,
+ * and a wrap-around list has no "back". A dropdown shows the whole set and
+ * puts every entry one click away -- which is what Renderer and VSync already
+ * did, so this is the control the card was already half using.
+ */
+int settings_combo_row(const char* label, const LauncherTheme& th,
+                       const char* id, const SettingsChoice* choices,
+                       int count, int current) {
+    const char* current_label = "";
+    for (int i = 0; i < count; ++i)
+        if (choices[i].value == current) { current_label = choices[i].label; break; }
+
+    row_label_right(label, th, px(SETTINGS_CTRL_W));
+    ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+    int picked = current;
+    if (ImGui::BeginCombo(id, ui_text(current_label))) {
+        for (int i = 0; i < count; ++i)
+            if (ImGui::Selectable(ui_text(choices[i].label),
+                                  choices[i].value == current))
+                picked = choices[i].value;
+        ImGui::EndCombo();
+    }
+    return picked;
+}
+
+/* Window scale reads as "1x".."6x". Spelled out rather than formatted per
+ * frame so the list is plain data, like every other choice list here. */
+static const SettingsChoice kScaleChoices[LNG_WINDOW_SCALE_MAX] = {
+    {1, "1x"}, {2, "2x"}, {3, "3x"}, {4, "4x"}, {5, "5x"}, {6, "6x"}
+};
+static const SettingsChoice kFullscreenChoices[] = {
+    {0, "Off"}, {1, "Borderless"}, {2, "Exclusive"}
+};
+static const SettingsChoice kRunAheadChoices[RECOMP_LAUNCHER_RUN_AHEAD_MAX + 1] = {
+    {0, "Off"}, {1, "1 frame"}, {2, "2 frames"}, {3, "3 frames"}, {4, "4 frames"}
+};
+
+/* The three rows those lists drive, so the legacy and deep Display surfaces
+ * cannot drift apart in what they offer. */
+void row_window_scale(LauncherModel* m, const LauncherTheme& th) {
+    launcher_model_set_scale(
+        m, settings_combo_row("Window scale", th, "##window_scale",
+                              kScaleChoices, LNG_WINDOW_SCALE_MAX,
+                              m->s.window_scale < 1 ? 1 : m->s.window_scale));
+}
+
+void row_fullscreen(LauncherModel* m, const LauncherTheme& th) {
+    launcher_model_set_fullscreen(
+        m, settings_combo_row("Fullscreen", th, "##fullscreen",
+                              kFullscreenChoices, 3, m->s.fullscreen));
+}
+
+void row_run_ahead(LauncherModel* m, const LauncherTheme& th) {
+    launcher_model_set_run_ahead(
+        m, settings_combo_row("Run-ahead", th, "##run_ahead", kRunAheadChoices,
+                              RECOMP_LAUNCHER_RUN_AHEAD_MAX + 1,
+                              m->s.run_ahead));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip(
+            "Emulate ahead and show a frame from the future, so\n"
+            "the game's own input lag is hidden. Each frame of depth\n"
+            "costs one extra emulated frame -- start at 1.\n\n"
+            "Local only: the runtime turns it off during netplay,\n"
+            "where a peer's input cannot be predicted.");
 }
 
 // ---- views -----------------------------------------------------------------
@@ -2804,6 +2938,7 @@ bool video_card_grows(const LauncherModel* m) {
     if (m->has_shader) return true;
     if (m->has_sharp_filter || m->has_affine_filter) return true;
     if (m->has_frame_blend || m->has_vsync) return true;
+    if (m->has_run_ahead) return true;
     if (m->num_display_layouts > 0) return true;
     // NES legacy-surface additions (Integer scaling row, HD texture pack block)
     // add extra rows the fixed no_scroll band wasn't sized for.
@@ -2880,41 +3015,18 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
 
     if (!any_deep_display(m)) {
-        // ---- legacy minimal surface (SNES/NES etc.) — aligned label grid -------
-        float cw = ImGui::CalcTextSize("Linear filtering").x;
-        if (m->has_sharp_filter) {
-            float t = ImGui::CalcTextSize("Scaling filter").x;
-            if (t > cw) cw = t;
-        }
-        if (m->has_affine_filter) {
-            float t = ImGui::CalcTextSize("Affine background smoothing").x;
-            if (t > cw) cw = t;
-        }
-        if (m->has_frame_blend) {
-            float t = ImGui::CalcTextSize("Frame blending").x;
-            if (t > cw) cw = t;
-        }
-        if (m->has_shader) {
-            float t = ImGui::CalcTextSize("Shader").x;
-            if (t > cw) cw = t;
-        }
-        if (m->has_integer_scale) { float t = ImGui::CalcTextSize("Integer scaling").x; if (t > cw) cw = t; }
-        cw += px(18.0f);
-        row_label("Window scale", th, cw);
-        ImGui::PushID("window_scale");
-        if (ImGui::Button(ui_text(launcher_model_scale_label(m)), ImVec2(px(120), px(30))))
-            launcher_model_cycle_scale(m);
-        ImGui::PopID();
-        // Universal fullscreen row (every console; tri-state cycle restoring
-        // the legacy launcher's Off/Borderless/Exclusive vocabulary). Sits
-        // right under Window scale, matching the old Display panel order.
-        row_label("Fullscreen", th, cw);
-        ImGui::PushID("fullscreen");
-        if (ImGui::Button(ui_text(launcher_model_fullscreen_label(m)), ImVec2(px(120), px(30))))
-            launcher_model_cycle_fullscreen(m);
-        ImGui::PopID();
+        // ---- legacy minimal surface (SNES/NES etc.) ---------------------------
+        // Labels at the left edge, controls at the right (row_label_right), so
+        // no measuring pass over the labels is needed and the card reads as a
+        // grid flush on both sides.
+        const float cb = ImGui::GetFrameHeight();   // a checkbox is square
+        row_window_scale(m, th);
+        // Universal fullscreen row (every console; Off/Borderless/Exclusive,
+        // the legacy launcher's vocabulary). Sits right under Window scale,
+        // matching the old Display panel order.
+        row_fullscreen(m, th);
         if (m->num_display_layouts > 0) {
-            row_label("Screen layout", th, cw);
+            row_label_right("Screen layout", th, px(180));
             ImGui::PushID("screen_layout");
             if (ImGui::Button(ui_text(launcher_model_display_layout_label(m)),
                               ImVec2(px(180), px(30))))
@@ -2922,29 +3034,29 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopID();
         }
         if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
-            row_label("Integer scaling", th, cw);
+            row_label_right("Integer scaling", th, cb);
             bool is = m->s.integer_scale != 0;
             if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
         }
         if (m->has_sharp_filter) {
-            row_label("Scaling filter", th, cw);
+            row_label_right("Scaling filter", th, px(180));
             if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
                               ImVec2(px(180), px(30))))
                 launcher_model_cycle_scaling_filter(m);
         } else {
-            row_label("Linear filtering", th, cw);
+            row_label_right("Linear filtering", th, cb);
             bool filter = m->s.linear_filter != 0;
             if (ImGui::Checkbox("##filter", &filter))
                 launcher_model_toggle_filter(m);
         }
         if (m->has_affine_filter) {
-            row_label("Affine background smoothing", th, cw);
+            row_label_right("Affine background smoothing", th, cb);
             bool affine = m->s.affine_filter != 0;
             if (ImGui::Checkbox("##affine_filter", &affine))
                 launcher_model_toggle_affine_filter(m);
         }
         if (m->has_frame_blend) {
-            row_label("Frame blending", th, cw);
+            row_label_right("Frame blending", th, cb);
             bool fb = m->s.frame_blend != 0;
             if (ImGui::Checkbox("##frame_blend", &fb))
                 launcher_model_toggle_frame_blend(m);
@@ -2955,11 +3067,12 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                     "(thrusters, explosions) as a CRT would; costs a\n"
                     "little motion ghosting.");
         }
-        // On/Off checkbox rather than the deep surface's tri-state cycle:
+        if (m->has_run_ahead) row_run_ahead(m, th);
+        // On/Off checkbox rather than the deep surface's tri-state dropdown:
         // legacy-surface hosts map this onto a boolean renderer flag, so
         // offering "Adaptive" here would promise what they cannot deliver.
         if (m->has_vsync) {
-            row_label("VSync", th, cw);
+            row_label_right("VSync", th, cb);
             bool vs = m->s.vsync != RECOMP_LAUNCHER_VSYNC_OFF;
             if (ImGui::Checkbox("##vsync", &vs))
                 launcher_model_toggle_vsync(m);
@@ -2971,7 +3084,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                     "The runtime still paces frames to the console's own "
                     "rate either way, so Off does not run the game fast.");
         }
-        draw_shader_row(m, th, cw);
+        // The shader row is a compound control (combo + Browse/Folder/Clear)
+        // that already fills to the card's right edge, so it flows from its
+        // label rather than reserving a fixed control width.
+        draw_shader_row(m, th);
         // HD texture packs (NES module, Mesen hires.txt format): one line —
         //   [x] HD texture pack   …folder tail   [Browse]
         // Mirrors the MSU-1 row in Audio (same enable + folder pattern).
@@ -3002,23 +3118,21 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     // Supersampling, Aspect ratio, Texture filtering, Antialiasing, Screen
     // model, Frame interpolation (+Presentation target), Skip FMVs, Turbo
     // loads, Fullscreen.
+    // Labels left, controls right (row_label_right), same as the legacy card.
+    const float cb = ImGui::GetFrameHeight();   // a checkbox is square
     if (m->has_window_size) {
-        row_label("Window size", th);
-        if (ImGui::Button(ui_text(launcher_model_window_size_label(m)), ImVec2(px(150), px(30))))
+        row_label_right("Window size", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_window_size_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_window_size(m);
     } else {
-        row_label("Window scale", th);
-        ImGui::PushID("window_scale");
-        if (ImGui::Button(ui_text(launcher_model_scale_label(m)), ImVec2(px(120), px(30))))
-            launcher_model_cycle_scale(m);
-        ImGui::PopID();
+        row_window_scale(m, th);
     }
 
     // NES module rows can appear on this branch too (has_renderer puts NES
     // on the deep surface): integer scaling right under the window row,
     // mirroring the legacy branch's ordering.
     if (m->has_integer_scale) {
-        row_label("Integer scaling", th);
+        row_label_right("Integer scaling", th, cb);
         bool is = m->s.integer_scale != 0;
         if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
     }
@@ -3028,8 +3142,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * hosts that supply their own (Auto / D3D11 / D3D9 / OpenGL /
          * Software), and reaching the last one by clicking through the other
          * four is not a choice a player should have to count out. */
-        row_label("Renderer", th);
-        ImGui::SetNextItemWidth(px(220));
+        row_label_right("Renderer", th, px(SETTINGS_CTRL_W));
+        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
         if (ImGui::BeginCombo("##renderer",
                               ui_text(launcher_model_renderer_label(m)))) {
             const int n = launcher_model_renderer_count(m);
@@ -3044,9 +3158,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_supersampling) {
-        row_label("Supersampling", th);
+        row_label_right("Supersampling", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("supersampling");
-        if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(px(120), px(30))))
+        if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_supersampling(m);
         ImGui::PopID();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
@@ -3059,15 +3173,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     // Universal fullscreen row (every console — no longer gated on the
-    // vestigial has_fullscreen_toggle). Tri-state cycle replaces the old
-    // binary checkbox so Exclusive mode is reachable again.
-    row_label("Fullscreen", th);
-    ImGui::PushID("fullscreen");
-        if (ImGui::Button(ui_text(launcher_model_fullscreen_label(m)), ImVec2(px(120), px(30))))
-        launcher_model_cycle_fullscreen(m);
-    ImGui::PopID();
+    // vestigial has_fullscreen_toggle). A tri-state dropdown, so Exclusive is
+    // both reachable and visible without pressing through the other two.
+    row_fullscreen(m, th);
     if (m->num_display_layouts > 0) {
-        row_label("Screen layout", th);
+        /* Wider than the shared column: these labels come from the HOST, not
+         * from a vocabulary this file owns, and a button (unlike a combo) does
+         * not elide -- so it keeps the room the widest stock layout name
+         * needs. Right-anchored like every other row regardless. */
+        row_label_right("Screen layout", th, px(180));
         ImGui::PushID("screen_layout");
         if (ImGui::Button(ui_text(launcher_model_display_layout_label(m)),
                           ImVec2(px(180), px(30))))
@@ -3076,22 +3190,22 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_sharp_filter) {
-        row_label("Scaling filter", th);
+        row_label_right("Scaling filter", th, px(SETTINGS_CTRL_W));
         if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
-                          ImVec2(px(180), px(30))))
+                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_scaling_filter(m);
     } else if (m->has_texture_filter) {
-        row_label("Texture filtering", th);
-        if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(px(120), px(30))))
+        row_label_right("Texture filtering", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_toggle_texture_filter(m);
     } else {
-        row_label("Linear filtering", th);
+        row_label_right("Linear filtering", th, cb);
         bool filter = m->s.linear_filter != 0;
         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
     }
 
     if (m->has_frame_blend) {
-        row_label("Frame blending", th);
+        row_label_right("Frame blending", th, cb);
         bool fb = m->s.frame_blend != 0;
         if (ImGui::Checkbox("##frame_blend", &fb))
             launcher_model_toggle_frame_blend(m);
@@ -3104,9 +3218,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_antialiasing) {
-        row_label("Antialiasing", th);
+        row_label_right("Antialiasing", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("antialiasing");
-        if (ImGui::Button(ui_text(launcher_model_aa_label(m)), ImVec2(px(90), px(30))))
+        if (ImGui::Button(ui_text(launcher_model_aa_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_aa(m);
         ImGui::PopID();
     }
@@ -3116,13 +3230,13 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
      * window, and the good answer differs between the two. Antialiasing off
      * means nearest everywhere, so the row has nothing to say then. */
     if (m->has_fmv_filter) {
-        row_label("FMV filtering", th);
+        row_label_right("FMV filtering", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("fmv_filter");
         const bool aa_off = m->has_antialiasing && m->s.antialiasing == 0;
         if (aa_off) ImGui::BeginDisabled();
         if (ImGui::Button(ui_text(aa_off ? "Nearest"
                                          : launcher_model_fmv_filter_label(m)),
-                          ImVec2(px(120), px(30))))
+                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_fmv_filter(m);
         if (aa_off) {
             ImGui::EndDisabled();
@@ -3134,7 +3248,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_affine_filter) {
-        row_label("Affine background smoothing", th);
+        row_label_right("Affine background smoothing", th, cb);
         bool affine = m->s.affine_filter != 0;
         if (ImGui::Checkbox("##affine_filter", &affine))
             launcher_model_toggle_affine_filter(m);
@@ -3155,7 +3269,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         // Perspective textures are unaffected by that problem: they only change
         // UV interpolation inside a polygon whose provenance is already proven,
         // so no vertex moves and adjacent polygons cannot disagree about an edge.
-        row_label("Perspective textures", th);
+        row_label_right("Perspective textures", th, cb);
         bool persp = m->s.perspective_texturing != 0;
         if (ImGui::Checkbox("##persptex", &persp))
             launcher_model_toggle_perspective_texturing(m);
@@ -3168,7 +3282,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_screen_kind) {
-        row_label("Screen model", th);
+        row_label_right("Screen model", th, px(220));
         // Wide enough for the longest label ("Super Game Boy (No Border)");
         // shorter models (e.g. "DMG") center within the same fixed box.
         if (ImGui::Button(ui_text(launcher_model_screen_kind_label(m)), ImVec2(px(220), px(30))))
@@ -3179,12 +3293,12 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     // interpolation pass); Presentation target only matters once frame
     // interpolation is actually on.
     if (m->has_frame_interp && m->s.renderer) {
-        row_label("Frame interpolation", th);
+        row_label_right("Frame interpolation", th, cb);
         bool fi = m->s.frame_interp != 0;
         if (ImGui::Checkbox("##fi", &fi)) launcher_model_toggle_frame_interp(m);
         if (m->s.frame_interp) {
-            row_label("Presentation target", th);
-            if (ImGui::Button(ui_text(launcher_model_interp_fps_label(m)), ImVec2(px(150), px(30))))
+            row_label_right("Presentation target", th, px(SETTINGS_CTRL_W));
+            if (ImGui::Button(ui_text(launcher_model_interp_fps_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
                 launcher_model_cycle_interp_fps(m);
         }
     }
@@ -3192,8 +3306,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     // VSync sits with frame interpolation because both decide how a finished
     // frame reaches the panel, not how it is drawn.
     if (m->has_vsync) {
-        row_label("VSync", th);
-        ImGui::SetNextItemWidth(px(120));
+        row_label_right("VSync", th, px(SETTINGS_CTRL_W));
+        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
         if (ImGui::BeginCombo("##vsync_mode",
                               ui_text(launcher_model_vsync_label(m)))) {
             static const struct { int v; const char* label; } kVsync[] = {
@@ -3218,13 +3332,13 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_skip_fmv) {
-        row_label("Skip FMVs", th);
+        row_label_right("Skip FMVs", th, cb);
         bool sk = m->s.auto_skip_fmv != 0;
         if (ImGui::Checkbox("##skipfmv", &sk)) launcher_model_toggle_skip_fmv(m);
     }
 
     if (m->has_rewind_depth) {
-        row_label("Rewind", th);
+        row_label_right("Rewind", th, cb);
         bool rewind_on = m->s.rewind_enabled != 0;
         if (ImGui::Checkbox("##rewind_enabled", &rewind_on))
             launcher_model_toggle_rewind_enabled(m);
@@ -3237,8 +3351,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         }
         /* The two tuning rows only mean anything once it is on. */
         ImGui::BeginDisabled(!rewind_on);
-        row_label("Rewind buffer", th);
-        if (ImGui::Button(ui_text(launcher_model_rewind_depth_label(m)), ImVec2(px(100), px(30))))
+        row_label_right("Rewind buffer", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_rewind_depth_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_rewind_depth(m);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
@@ -3246,8 +3360,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Each one is a few MB of machine state.\n"
                 "Takes effect on the next launch.");
         }
-        row_label("Rewind interval", th);
-        if (ImGui::Button(ui_text(launcher_model_rewind_interval_label(m)), ImVec2(px(100), px(30))))
+        row_label_right("Rewind interval", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_rewind_interval_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_rewind_interval(m);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             ImGui::SetTooltip(
@@ -3257,6 +3371,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::EndDisabled();
     }
+
+    /* Run-ahead sits with Rewind rather than with the filters: both spend
+     * machine snapshots to move the player in time, and neither changes how
+     * a frame is drawn. */
+    if (m->has_run_ahead) row_run_ahead(m, th);
 
     /* Turbo loads is deliberately NOT a Display row on any console. Load
      * acceleration is owned by the framework's Mods catalog (Fast Loading /
@@ -3308,7 +3427,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
 void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
     // video_card_grows() folds in NES's legacy-surface additions (Integer
     // scaling row, HD texture pack block) alongside the deep/widescreen surfaces.
-    if (video_card_grows(m)) {
+    if (video_card_grows(m) || !g_settings_two_col) {
         if (begin_panel("disp", 0, false)) draw_display_controls(m, *th);
         end_panel();
     } else {
@@ -3319,27 +3438,30 @@ void panel_video_draw(LauncherModel* m, const LauncherTheme* th) {
 
 void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("AUDIO");
-    // Fixed label column so the sample-rate button, the volume stepper's "-",
-    // and the SPU toggle all share the same left edge (aligned grid).
-    float cw = ImGui::CalcTextSize("Sample rate").x;
-    if (m->has_spu_hq) { float t = ImGui::CalcTextSize("High-quality SPU").x; if (t > cw) cw = t; }
-    cw += px(18.0f);
+    // Labels at the card's left edge, controls at its right (row_label_right),
+    // matching DISPLAY. Every control is SETTINGS_CTRL_W wide -- including the
+    // volume stepper, which stretches its value field to reach it -- so the
+    // column is flush on both sides.
+    const float cb = ImGui::GetFrameHeight();   // a checkbox is square
     // Sample rate: hidden for consoles whose runtime has no audio-frequency
     // setting (SystemProfile.hide_audio_freq — NES has Volume only).
     const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
     if (!audio_prof || !audio_prof->hide_audio_freq) {
-        row_label("Sample rate", th, cw);
-        if (ImGui::Button(ui_text(launcher_model_freq_label(m)), ImVec2(px(120), px(30))))
+        row_label_right("Sample rate", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_freq_label(m)),
+                          ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_freq(m);
     }
-    row_label("Volume", th, cw);
-    int dv = 0; stepper("vol", m->s.volume, "%", &dv);
+    row_label_right("Volume", th, px(SETTINGS_CTRL_W));
+    int dv = 0; stepper("vol", m->s.volume, "%", &dv, px(SETTINGS_CTRL_W));
     if (dv) launcher_model_volume_delta(m, dv);
 
     // Output-device pick (host-enumerated names; N64/RT64 hosts) — "(system
     // default)" first, committing "" so an unplugged device degrades sanely.
+    // A device name is far longer than a setting value, so this row keeps the
+    // full-width combo on its own rather than squeezing into the column.
     if (m->num_audio_devices > 0 && m->audio_device_labels) {
-        row_label("Output device", th, cw);
+        row_label("Output device", th);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
         if (ImGui::BeginCombo("##audiodev", ui_text(launcher_model_audio_device_label(m)))) {
             if (ImGui::Selectable(ui_text("(system default)"), m->s.audio_device[0] == '\0'))
@@ -3356,7 +3478,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     }
 
     if (m->has_spu_hq) {
-        row_label("High-quality SPU", th, cw);
+        row_label_right("High-quality SPU", th, cb);
         bool hq = m->s.spu_hq != 0;
         if (ImGui::Checkbox("##spuhq", &hq)) launcher_model_toggle_spu_hq(m);
     }
@@ -3403,8 +3525,8 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     if (m->num_languages > 0) {
         ImGui::Dummy(ImVec2(0, px(6)));
         eyebrow("LOCALIZATION");
-        row_label("Language", th);
-        if (ImGui::Button(ui_text(launcher_model_language_label(m)), ImVec2(px(140), px(30))))
+        row_label_right("Language", th, px(SETTINGS_CTRL_W));
+        if (ImGui::Button(ui_text(launcher_model_language_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
             launcher_model_cycle_language(m);
     }
 }
@@ -3414,7 +3536,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
 // to compute inline.
 void panel_audio_draw(LauncherModel* m, const LauncherTheme* th) {
     const bool deep_audio = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */
-    if (deep_audio) {
+    if (deep_audio || !g_settings_two_col) {
         if (begin_panel("audio", 0, false)) draw_audio_controls(m, *th);
         end_panel();
     } else {
@@ -3806,10 +3928,30 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     // never has to be threaded through the generic draw(model,theme) signature.)
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const float gap  = px(th.spacing_md);
-    const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
     const float row_h = px(240.0f);   // legacy fixed band height (4 rows: the
                                       // universal Fullscreen row joined scale/
                                       // filter/widescreen on the legacy surface)
+
+    /*
+     * Two columns, until half the window is too narrow to hold a settings row.
+     *
+     * A row is a label plus a control anchored to the card's right edge, so
+     * the card has a real floor: below it the label and the control collide
+     * (row_label_right's minimum gap wins and the control overhangs), which
+     * is worse than reading the same rows one column at a time. Past that
+     * floor AUDIO drops to a full-width card UNDER DISPLAY rather than being
+     * squeezed beside it, and every SIDE card follows it down the same
+     * single column.
+     *
+     * The floor is measured, not guessed: the longest label the shared cards
+     * draw, plus the control column, plus the card's own padding.
+     */
+    const float full_w = ImGui::GetContentRegionAvail().x;
+    const float col_floor = ImGui::CalcTextSize("Affine background smoothing").x +
+                            px(SETTINGS_CTRL_W) + px(th.spacing_md) * 3.0f;
+    const bool two_col = (full_w - gap) * 0.5f >= col_floor;
+    const float half = two_col ? (full_w - gap) * 0.5f : full_w;
+    g_settings_two_col = two_col;   // read by panel_video_draw/panel_audio_draw
 
     const bool deep_display = video_card_grows(m);   // superset of any_deep_display: folds in NES + widescreen (N64 covered too)
     const bool deep_audio   = m->has_spu_hq || m->num_languages > 0 || m->num_audio_devices > 0;   /* deadzone moved to controller card */
@@ -3823,23 +3965,34 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     // full-width content (HOTKEYS) below both columns must resume.
     const float content_left_x = ImGui::GetCursorScreenPos().x;
 
+    /* The legacy fixed band exists ONLY so the two side-by-side cards share a
+     * height. Stacked, there is nothing to line up with, and pinning the band
+     * would leave a tall empty region under a two-row AUDIO card — so in one
+     * column both cards hug their content instead. */
+    const bool pin_band = two_col;
     float left_bottom = 0.0f;   // DISPLAY's bottom edge (screen space)
     if (video_p) {
-        if (deep_display) begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+        if (deep_display || !pin_band) begin_container("set_l", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
         else               begin_container("set_l", ImVec2(half, row_h));
         video_p->draw(m, &th);
         end_container();
         left_bottom = ImGui::GetItemRectMax().y;
     }
-    if (video_p && audio_p) ImGui::SameLine(0, gap);
-    // Capture the right column's SCREEN x BEFORE opening AUDIO's child, so
-    // additional SIDE cards (INPUT/SYSTEM/…) can reopen at the same x once
-    // AUDIO's child ends (a finished child returns the cursor to the LEFT
-    // edge of the row on the next line, not to its own column).
+    if (video_p && audio_p) {
+        if (two_col) ImGui::SameLine(0, gap);
+        // One column: put AUDIO under DISPLAY with the same gap the columns
+        // would have had, instead of leaving it to item spacing.
+        else ImGui::SetCursorScreenPos(ImVec2(content_left_x, left_bottom + gap));
+    }
+    // Capture the column's SCREEN x BEFORE opening AUDIO's child, so additional
+    // SIDE cards (INPUT/SYSTEM/…) can reopen at the same x once AUDIO's child
+    // ends (a finished child returns the cursor to the LEFT edge of the row on
+    // the next line, not to its own column). In one-column mode this is simply
+    // the content's left edge, so the stacking code below needs no second case.
     const float right_x = ImGui::GetCursorScreenPos().x;
     float audio_bottom = 0.0f;   // AUDIO's bottom edge (screen space)
     if (audio_p) {
-        if (deep_audio) begin_container("set_r", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+        if (deep_audio || !pin_band) begin_container("set_r", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
         else             begin_container("set_r", ImVec2(half, row_h));
         audio_p->draw(m, &th);
         end_container();
@@ -10149,7 +10302,18 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
          * online-only way to reach a room without picking one. */
         const bool lan_mode = m->netplay_mode == 1;
         const auto* np_am = np_cb(m);
-        const bool automatch_ok = np_am && np_am->automatch_available &&
+        /* Two different "no", and the button must not confuse them.
+         *
+         * A NULL automatch_available means THIS BUILD has no automatch
+         * backend wired -- the launcher never asks the server anything, and
+         * would answer the same way against a server running the feature
+         * perfectly. Reporting that as "the server does not offer automatch"
+         * sends whoever reads it to go and check a server that was never
+         * consulted. A present callback answering 0 is the real server
+         * answer: reachable, asked, and it has no rulesets loaded for this
+         * title. */
+        const bool am_wired = np_am && np_am->automatch_available != NULL;
+        const bool automatch_ok = am_wired &&
                                   np_am->automatch_available(np_am->ctx);
         const int am_state = np_automatch_state(np_am);
         const bool am_queued = am_state == RECOMP_LAUNCHER_AUTOMATCH_QUEUED;
@@ -10197,6 +10361,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             np_automatch_queue(m, "");
         };
         auto automatch_tip = [&]() {
+            if (!am_wired)    return "This build has no automatch support yet";
             if (!automatch_ok) return "This lobby server does not offer automatch";
             if (am_gated)     return "Answer the match offer to continue";
             if (am_queued)    return am_pool > 0
