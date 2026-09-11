@@ -871,6 +871,37 @@ static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
 const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m);   /* fwd */
 
 /*
+ * Push the block list to the server when it changes, and again on a fresh
+ * connection.
+ *
+ * Sent rather than merely applied here because only one of a block's three
+ * effects can be done client-side. Hiding somebody's chat is ours. Not being
+ * PAIRED with them, and their not seeing or joining our room, are the
+ * server's -- and the second of those is the direction a client cannot do at
+ * all, because it cannot know it was blocked.
+ *
+ * Resent on reconnect: the server holds the list for the life of a connection
+ * and never persists it, so a dropped socket would otherwise silently leave
+ * the player unprotected on the next one.
+ */
+static void np_push_blocks(LauncherModel* m) {
+    const auto* np = np_cb(m);
+    if (!np || !np->set_blocks) return;
+    char list[256 * 41];
+    recomp_moderation_blocked_list(list, sizeof(list));
+
+    static char s_last[sizeof(list)];
+    static bool s_was_connected;
+    const bool connected = np->connected && np->connected(np->ctx);
+    if (!connected) { s_was_connected = false; return; }
+    /* A reconnect counts as a change even when the list did not move. */
+    if (s_was_connected && std::strcmp(s_last, list) == 0) return;
+    s_was_connected = true;
+    std::snprintf(s_last, sizeof(s_last), "%s", list);
+    np->set_blocks(np->ctx, list);
+}
+
+/*
  * Right-click a player: ignore them, or block them.
  *
  * ONLINE ONLY, and that gate is the point rather than a simplification. A LAN
@@ -9293,6 +9324,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_status[0])
         ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
     ImGui::Spacing();
+    np_push_blocks(m);
     /* Tell the backend which fork the player took before asking it anything.
      * It merges its LAN registry and beacon rows with the server's list and
      * has no other way to know: a LAN player was being shown online rooms

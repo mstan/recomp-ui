@@ -682,6 +682,14 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*chat_report)(void* ctx, const char* const* mids, int mid_count,
                                const char* reason, const char* note);
 
+    /* Hand the backend the accounts this player has blocked, ';'-separated,
+     * replacing the whole set. The server needs them because two of a
+     * block's three effects cannot be done client-side: it must not pair the
+     * two in automatch, and the blocked player must not see or be able to
+     * join the blocker's room. A client can hide what it was sent; it cannot
+     * know it was blocked. NULL/"" clears. Appended for ABI stability. */
+    int         (*set_blocks)(void* ctx, const char* accounts);
+
     int         (*list_scope_set)(void* ctx, int scope);
 
     int         (*automatch_available)(void* ctx);
@@ -731,6 +739,8 @@ typedef struct RecompLauncherCNetplayCallbacks {
 
 /* Host may #ifdef this when wiring chat_report / filling ChatMessage.mid. */
 #define RECOMP_LAUNCHER_HAS_CHAT_REPORT 1
+/* Host may #ifdef this when wiring set_blocks. */
+#define RECOMP_LAUNCHER_HAS_SET_BLOCKS 1
 /* The categories the server matches on. Same list on every console; an
  * unrecognised one is stored as "other" rather than refused. */
 #define RECOMP_LAUNCHER_REPORT_HARASSMENT     "harassment"
