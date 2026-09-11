@@ -621,6 +621,19 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * The queue / accept callbacks land with the flow itself; this one is
      * here first so the button is gated on a real capability rather than
      * offered and then found not to work. */
+    /* Which lobbies the browser should be shown: 0 = every source (the
+     * historical behaviour), 1 = LAN / Direct IP only, 2 = the lobby server
+     * only.
+     *
+     * The backend merges its LAN registry and beacon rows with the server's
+     * list, and only the UI knows which fork the player took on the way in --
+     * so the scope has to travel. Without it a player who chose "LAN / Direct
+     * IP" was shown online rooms they had no connection for, and a player who
+     * chose online was shown LAN rooms from their own machine.
+     *
+     * Appended for ABI stability; a backend without it keeps merging. */
+    int         (*list_scope_set)(void* ctx, int scope);
+
     int         (*automatch_available)(void* ctx);
     /* The queue types this server offers for this title. Zero is a valid
      * answer and means the same as automatch_available saying no. */
@@ -659,6 +672,14 @@ typedef struct RecompLauncherCNetplayCallbacks {
 /* Present since automatch_available was added. Guarded the same way, for
  * the same reason: a game pins a recomp-ui and the two move separately. */
 #define RECOMP_LAUNCHER_HAS_AUTOMATCH 1
+
+/* Host may #ifdef this when wiring list_scope_set. */
+#define RECOMP_LAUNCHER_HAS_LIST_SCOPE 1
+enum {
+    RECOMP_LAUNCHER_LIST_SCOPE_ANY = 0,
+    RECOMP_LAUNCHER_LIST_SCOPE_LAN = 1,
+    RECOMP_LAUNCHER_LIST_SCOPE_ONLINE = 2
+};
 
 /* account_state() values. Guest is not an error and not a lesser state: it is
  * the launcher's original behaviour, and most players will sit in it. */

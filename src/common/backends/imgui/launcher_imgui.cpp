@@ -6199,14 +6199,17 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                                RECOMP_LAUNCHER_NETPLAY_MAX_SPECTATORS);
         }
         ImGui::Spacing();
-        bool lan = m->netplay_lan_only;
-        if (ImGui::Checkbox("LAN/Direct IP Only", &lan)) {
-            m->netplay_lan_only = lan;
-            /* Keep the enumerated interfaces + selection; only the enabled
-             * state changes. Refresh if we somehow have no list yet. */
-            if (m->netplay_local_address_count == 0)
-                np_refresh_host_ip(m);
-        }
+        /* No LAN/Direct-IP checkbox. The player already answered this question
+         * on the way in -- the mode page is literally "LAN / Direct IP" or
+         * "Online Netplay" -- and asking again inside the dialog offered them
+         * a third answer that contradicts the first. It defaulted to OFF in
+         * both modes, so hosting from the LAN page published an ONLINE room
+         * nobody on the LAN could see. open_host() sets the flag from the mode
+         * now, and this dialog only shows what follows from it.
+         *
+         * Spectators disappear with it in LAN mode, by the gate above: a
+         * peer-to-peer room has no server between the peers to drop a
+         * spectator's packets at, so the control was never honest there. */
         /* Advertised IP/Port: which NIC + port peers should use for LAN RTT /
          * Direct IP. Online still STUNs for a public endpoint; this pick is the
          * preferred LAN advertise / bind address. */
@@ -9003,6 +9006,16 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_status[0])
         ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
     ImGui::Spacing();
+    /* Tell the backend which fork the player took before asking it anything.
+     * It merges its LAN registry and beacon rows with the server's list and
+     * has no other way to know: a LAN player was being shown online rooms
+     * they had no connection for, and an online player was shown LAN rooms
+     * from their own machine. */
+    if (np->list_scope_set) {
+        np->list_scope_set(np->ctx,
+                           m->netplay_mode == 1 ? RECOMP_LAUNCHER_LIST_SCOPE_LAN
+                                                : RECOMP_LAUNCHER_LIST_SCOPE_ONLINE);
+    }
     int rows = np->list_count ? np->list_count(np->ctx) : 0;
     /* Slim rows: a browser is a list to scan, not a form. The Join button
      * sets the floor. */
@@ -10420,8 +10433,12 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 np_open_name_modal(m);
                 return;
             }
-            np_connect_and_list(m);
-            m->netplay_lan_only = false;
+            /* The mode IS the answer: LAN hosts a LAN room, online hosts an
+             * online one. Connecting is online-only -- a LAN host dialling the
+             * lobby server would advertise the same room twice, once in the
+             * file registry and once on the server. */
+            m->netplay_lan_only = (m->netplay_mode == 1);
+            if (!m->netplay_lan_only) np_connect_and_list(m);
             np_refresh_host_ip(m);
             if (!m->netplay_host_name[0]) {
                 std::snprintf(m->netplay_host_name, sizeof(m->netplay_host_name),
@@ -10473,9 +10490,22 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                  * tooltip: it is the number that says whether waiting is
                  * worth it, and a tooltip is not where you look for that. */
                 if (am_queued) {
-                    ImGui::SetCursorScreenPos(
-                        ImVec2(origin.x + fullw - action_w, cta_y + play_h + px(2)));
-                    ImGui::TextColored(col(th.text_muted), "%d waiting", am_pool);
+                    /* Painted straight onto the draw list rather than placed
+                     * as a widget. The footer is a fixed-height band whose
+                     * controls are positioned by hand, and an ImGui item below
+                     * the button still counts toward the window's content
+                     * size -- so this one line pushed the content past the
+                     * band and the whole page grew a scrollbar for the sake of
+                     * eight characters. There is room to draw it; there was no
+                     * room to lay it out. */
+                    char pool_text[32];
+                    std::snprintf(pool_text, sizeof(pool_text), "%d waiting",
+                                  am_pool);
+                    const float tw = ImGui::CalcTextSize(pool_text).x;
+                    ImGui::GetWindowDrawList()->AddText(
+                        ImVec2(origin.x + fullw - action_w + (action_w - tw) * 0.5f,
+                               cta_y + play_h + px(2)),
+                        imcol(th.text_muted), pool_text);
                 }
             }
         } else {
