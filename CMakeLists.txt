@@ -76,6 +76,15 @@ if(BUILD_TESTING)
     target_include_directories(recomp-ui-ips-patch-test PRIVATE src/common)
     add_test(NAME recomp-ui-ips-patch COMMAND $<TARGET_FILE:recomp-ui-ips-patch-test>)
 
+    # The photosensitivity flash guard. Pure arithmetic on two ARGB frames --
+    # no SDL, no window, no ROM -- so it runs anywhere the rest of these do.
+    add_executable(recomp-ui-flash-guard-test
+        tests/flash_guard_test.c
+        src/common/recomp_flash_guard.c)
+    target_include_directories(recomp-ui-flash-guard-test PRIVATE src)
+    add_test(NAME recomp-ui-flash-guard
+             COMMAND $<TARGET_FILE:recomp-ui-flash-guard-test>)
+
     add_executable(recomp-ui-rom-patch-tool
         tools/rom_patch_tool.c
         src/common/ips_patch.c

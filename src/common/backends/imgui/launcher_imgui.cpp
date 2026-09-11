@@ -1167,7 +1167,11 @@ void draw_dot(bool on, const LngColor& good, const LngColor& off) {
 }
 // The primary neon CTA (PLAY): glow + violet gradient + play triangle. Fully
 // custom-drawn over an InvisibleButton so it looks nothing like a stock button.
-bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = true) {
+// `arrow` draws the ▶. PLAY wants it; a primary action that is not "start the
+// game" does not -- an Automatch button that already carries ⚡ would show two
+// glyphs arguing about what it does.
+bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = true,
+              bool arrow = true) {
     const LauncherTheme& th = *g_th;
     ImVec2 p = ImGui::GetCursorScreenPos();
     // EnableNav is REQUIRED: ImGui::InvisibleButton() adds ImGuiItemFlags_NoNav by
@@ -1198,12 +1202,13 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
     // centered "▶ label"
     float th_h = ImGui::GetTextLineHeight();
     float tw = ImGui::CalcTextSize(label).x;
-    float tri = px(11.0f), gap = px(10.0f);
+    float tri = arrow ? px(11.0f) : 0.0f, gap = arrow ? px(10.0f) : 0.0f;
     float total = tri + gap + tw;
     float cx = p.x + (size.x - total) * 0.5f, cy = p.y + size.y * 0.5f;
     ImU32 fg = imcol(th.accent_text);
-    dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
-                          ImVec2(cx + tri, cy), fg);
+    if (arrow)
+        dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
+                              ImVec2(cx + tri, cy), fg);
     dl->AddText(ImVec2(cx + tri + gap, cy - th_h*0.5f), fg, label);
     if (!enabled) ImGui::EndDisabled();
     return clk && enabled;
@@ -8708,7 +8713,16 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
     ImGui::PopFont();
     ImGui::PopStyleColor();
     ImGui::SetCursorScreenPos(ImVec2(p.x + px(20), p.y + px(50)));
-    ImGui::PushTextWrapPos(p.x + w - px(20));
+    /* PushTextWrapPos takes a WINDOW-LOCAL x, and this was handing it a screen
+     * one (p.x is from GetCursorScreenPos). The two differ by the window's
+     * origin, so the wrap boundary sat that many pixels to the RIGHT of the
+     * card and the body text ran to the border and past it.
+     *
+     * Derived from the cursor instead, which is already local, so it cannot
+     * drift from where the text actually starts. The right inset is a little
+     * wider than the left on purpose: a wrap point is where a word may still
+     * begin, so the last glyph of a long word lands beyond it. */
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (w - px(20) - px(28)));
     ImGui::TextColored(col(th.text_muted), "%s", body);
     ImGui::PopTextWrapPos();
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + px(14)));
@@ -10426,7 +10440,14 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
 
         if (!compact) {
             ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y));
-            if (ImGui::Button(ui_text("Host Lobby"), ImVec2(action_w, play_h)))
+            /* Host Lobby and Automatch carry the CTA treatment: on this page
+             * they ARE the two ways to get into a game, and drawing them in
+             * the same neutral grey as Refresh made the screen read as four
+             * equal utilities with no obvious way in. Network Settings and
+             * Refresh stay neutral, which is what gives the other two their
+             * weight -- accenting everything would say nothing. */
+            if (neon_cta("##np_host", ui_text("Host Lobby"),
+                         ImVec2(action_w, play_h), true, /*arrow*/false))
                 open_host();
             ImGui::SetCursorScreenPos(ImVec2(origin.x + action_w + gap, cta_y));
             if (ImGui::Button(ui_text("Network Settings"), ImVec2(settings_w, play_h)))
@@ -10442,10 +10463,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                 if (ImGui::Button(ui_text("Join Direct"), ImVec2(action_w, play_h)))
                     m->netplay_direct_modal_open = true;
             } else {
-                ImGui::BeginDisabled(!automatch_ok || am_gated);
-                if (ImGui::Button(automatch_label, ImVec2(action_w, play_h)))
+                if (neon_cta("##np_automatch", automatch_label,
+                             ImVec2(action_w, play_h),
+                             automatch_ok && !am_gated, /*arrow*/false))
                     automatch_click();
-                ImGui::EndDisabled();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("%s", automatch_tip());
                 /* The population sits under the button rather than in the
@@ -10524,6 +10545,12 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
         }
     }
+    /* The netplay MODE picker is a fork in the road, not a launch screen: the
+     * player is answering "LAN or online?", and a PLAY button there offers to
+     * start the game instead of answering it -- which is both the wrong action
+     * and the most prominent thing on the page. Every other view keeps it. */
+    if (m->view == LNG_VIEW_NETPLAY_MODE) return;
+
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
     const bool can_play = launcher_model_can_launch(m);
     const bool bios_block = launcher_model_bios_blocks_play(m);
