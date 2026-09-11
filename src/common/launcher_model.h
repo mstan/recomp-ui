@@ -519,6 +519,14 @@ typedef struct {
     bool      netplay_network_modal_open;
     bool      netplay_password_modal_open;
     bool      netplay_moderation_modal_open;
+    /* The report dialog: which line, who said it, and what the reporter
+     * chose. The mid is the whole referent -- the text is never carried. */
+    bool      netplay_report_modal_open;
+    char      netplay_report_mid[40];
+    char      netplay_report_who[64];
+    int       netplay_report_reason;
+    char      netplay_report_note[512];
+    char      netplay_report_status[160];
     bool      netplay_local_room;
     /* Which kind of netplay the player picked on LNG_VIEW_NETPLAY_MODE.
      * 0 = not chosen yet, 1 = LAN / Direct IP, 2 = online. The netplay page

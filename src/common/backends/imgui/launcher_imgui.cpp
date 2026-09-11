@@ -868,6 +868,8 @@ static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
  * provider renders as the real flag. Without a color provider the outline
  * font has no flags, so the code is shown in a muted "[JP]" instead of two
  * meaningless letter boxes. Draws nothing for an empty / malformed code. */
+const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m);   /* fwd */
+
 /*
  * Right-click a player: ignore them, or block them.
  *
@@ -885,7 +887,8 @@ static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
  * store as a label.
  */
 static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
-                           const char* account, const char* name) {
+                           const char* account, const char* name,
+                           const char* mid = nullptr) {
     if (m->netplay_mode != 2) return;   /* LAN/Direct IP has no accounts */
     if (!ImGui::BeginPopupContextItem("##player_menu")) return;
 
@@ -923,6 +926,37 @@ static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Hide their chat, hide them from the lists, and ask "
                           "the matchmaker not to pair you.");
+
+    /* Chat only, and only with an id.
+     *
+     * Ignoring and blocking are decisions about a PERSON and belong on any
+     * row that names one. A report is about a LINE -- the server records the
+     * words it relayed, not a person -- so it is offered where a line exists
+     * to point at, and nowhere else. Offering it on a seat row would leave
+     * the player choosing which of that person's messages they meant from a
+     * menu that never showed them one.
+     *
+     * A line with no id predates the server's message ids and cannot be
+     * reported at all: there is no referent both sides agree on. */
+    const auto* np_rep = np_cb(m);
+    if (mid && mid[0] && np_rep && np_rep->chat_report) {
+        ImGui::Separator();
+        if (ImGui::MenuItem("Report Message...")) {
+            std::snprintf(m->netplay_report_mid, sizeof(m->netplay_report_mid),
+                          "%s", mid);
+            std::snprintf(m->netplay_report_who, sizeof(m->netplay_report_who),
+                          "%s", (name && name[0]) ? name : "Player");
+            m->netplay_report_note[0] = '\0';
+            m->netplay_report_reason = 0;
+            m->netplay_report_status[0] = '\0';
+            m->netplay_report_modal_open = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Send this line to the server's moderation "
+                              "queue. The server records what IT relayed, "
+                              "not text from here.");
+    }
+
     ImGui::Separator();
     if (ImGui::MenuItem("Moderation list..."))
         m->netplay_moderation_modal_open = true;
@@ -6100,6 +6134,107 @@ void draw_netplay_moderation_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::EndPopup();
 }
 
+/* The report dialog. A category and an optional sentence -- and NOT the text
+ * of the line, which the server already has and is the only copy that can be
+ * trusted (docs/MODERATION.md, "The one design decision that matters"). */
+void draw_netplay_report_modal(LauncherModel* m, const LauncherTheme& th) {
+    static const struct { const char* id; const char* label; } kReasons[] = {
+        { RECOMP_LAUNCHER_REPORT_HARASSMENT,     "Harassment" },
+        { RECOMP_LAUNCHER_REPORT_HATE_SPEECH,    "Hate speech" },
+        { RECOMP_LAUNCHER_REPORT_THREATS,        "Threats" },
+        { RECOMP_LAUNCHER_REPORT_SEXUAL_CONTENT, "Sexual content" },
+        { RECOMP_LAUNCHER_REPORT_SPAM,           "Spam" },
+        { RECOMP_LAUNCHER_REPORT_CHEATING,       "Cheating claim" },
+        { RECOMP_LAUNCHER_REPORT_OTHER,          "Something else" },
+    };
+    const int kReasonCount = (int)(sizeof(kReasons) / sizeof(kReasons[0]));
+
+    if (m->netplay_report_modal_open) ImGui::OpenPopup("Report Message");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Report Message", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    char who[96];
+    emoji_display(m->netplay_report_who, who, sizeof(who));
+    ImGui::TextColored(col(th.text_muted), "Reporting a message from");
+    ImGui::SameLine(0, px(5));
+    ImGui::TextUnformatted(who);
+    ImGui::Spacing();
+
+    if (m->netplay_report_reason < 0 || m->netplay_report_reason >= kReasonCount)
+        m->netplay_report_reason = 0;
+    ImGui::TextColored(col(th.text_muted), "Reason");
+    ImGui::SetNextItemWidth(px(260));
+    if (ImGui::BeginCombo("##report_reason",
+                          kReasons[m->netplay_report_reason].label)) {
+        for (int i = 0; i < kReasonCount; ++i)
+            if (ImGui::Selectable(kReasons[i].label,
+                                  i == m->netplay_report_reason))
+                m->netplay_report_reason = i;
+        ImGui::EndCombo();
+    }
+
+    ImGui::Spacing();
+    ImGui::TextColored(col(th.text_muted), "Anything to add (optional)");
+    ImGui::SetNextItemWidth(px(460));
+    ImGui::InputTextWithHint("##report_note",
+                             "What happened, in a sentence",
+                             m->netplay_report_note,
+                             sizeof(m->netplay_report_note));
+
+    ImGui::Spacing();
+    /* Said plainly, because a reporter who thinks they are attaching their own
+     * copy of the words will word the note as though the message were not
+     * already in the record. */
+    ImGui::PushTextWrapPos(px(460));
+    ImGui::TextColored(col(th.text_muted),
+                       "The server already has the message and records its own "
+                       "copy, along with a little of the conversation around "
+                       "it. Nothing is sent from here except the reason and "
+                       "your note.");
+    ImGui::PopTextWrapPos();
+
+    if (m->netplay_report_status[0]) {
+        ImGui::Spacing();
+        ImGui::TextColored(col(th.warn), "%s", m->netplay_report_status);
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
+        m->netplay_report_modal_open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    const auto* np = np_cb(m);
+    const bool can_send = np && np->chat_report && m->netplay_report_mid[0];
+    ImGui::BeginDisabled(!can_send);
+    if (ImGui::Button("Send Report", ImVec2(px(150), 0))) {
+        const char* mids[1] = { m->netplay_report_mid };
+        const int rc = np->chat_report(np->ctx, mids, 1,
+                                       kReasons[m->netplay_report_reason].id,
+                                       m->netplay_report_note);
+        if (rc == 0) {
+            /* Handed over, which is not the same as accepted -- the server
+             * still refuses an expired line, a guest's line, your own, and
+             * anything over the rate limit. Saying "sent" rather than
+             * "received" is the honest half of that. */
+            m->netplay_report_modal_open = false;
+            ImGui::CloseCurrentPopup();
+            std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                          "Report sent to the moderation queue.");
+        } else {
+            std::snprintf(m->netplay_report_status,
+                          sizeof(m->netplay_report_status),
+                          "Could not send the report. Are you still connected?");
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::EndPopup();
+}
+
 void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_direct_modal_open) ImGui::OpenPopup("Join Direct");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -8343,7 +8478,7 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
             ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s", from_disp);
             /* Right-click the NAME on a chat line, same as in the player
              * list: it is the thing you point at when you mean "them". */
-            if (!msg.is_local) np_player_menu(m, th, msg.account, msg.from);
+            if (!msg.is_local) np_player_menu(m, th, msg.account, msg.from, msg.mid);
             ImGui::SameLine(0, px(6));
             ImGui::TextUnformatted(text_disp);
         }
@@ -12099,6 +12234,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_netplay_direct_modal(m, th);
     draw_netplay_automatch_modal(m, th);
     draw_netplay_moderation_modal(m, th);
+    draw_netplay_report_modal(m, th);
     draw_restore_defaults_modal(m);
     // Transfer Pak config modal (N64): opened by any tile, dashboard or
     // Controller page. Drawn at root so it isn't clipped by a card child.

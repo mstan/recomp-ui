@@ -228,6 +228,13 @@ typedef struct RecompLauncherCNetplayFound {
 
 typedef struct RecompLauncherCNetplayChatMessage {
     char     from[64];   /* display name; empty for a system line */
+    /* The SERVER's id for this line. A report names this and never the text:
+     * chat already passes through the server, so it has the words, and
+     * letting a report carry them would let anyone compose a message,
+     * attribute it to somebody, and have them sanctioned for words they never
+     * typed. Empty when the server predates ids -- such a line simply cannot
+     * be reported, because there is no agreed referent for it. */
+    char     mid[40];
     /* Opaque, stable id for the ACCOUNT behind this player; "" for a guest.
      *
      * Not a name and not a Discord identifier -- the server's own row key,
@@ -659,6 +666,22 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * chose online was shown LAN rooms from their own machine.
      *
      * Appended for ABI stability; a backend without it keeps merging. */
+    /* Report chat lines for moderation. `mids` are RecompLauncherCNetplay-
+     * ChatMessage.mid values -- several at once, because harassment is
+     * usually a burst rather than a line, and making somebody file six
+     * reports for one incident produces six rows that each look minor.
+     *
+     * `reason` is a category string; anything unrecognised is filed as
+     * "other" rather than refused. `note` is optional.
+     *
+     * 0 means handed to the server, NOT accepted: it refuses a line that has
+     * scrolled out of its ring, one from a signed-out sender, one that is
+     * your own, and anything over the per-account rate limit.
+     *
+     * NULL hides the report affordance entirely. Appended for ABI stability. */
+    int         (*chat_report)(void* ctx, const char* const* mids, int mid_count,
+                               const char* reason, const char* note);
+
     int         (*list_scope_set)(void* ctx, int scope);
 
     int         (*automatch_available)(void* ctx);
@@ -705,6 +728,19 @@ typedef struct RecompLauncherCNetplayCallbacks {
 
 /* Host may #ifdef this when filling the `account` key on player rows. */
 #define RECOMP_LAUNCHER_HAS_PLAYER_ACCOUNT 1
+
+/* Host may #ifdef this when wiring chat_report / filling ChatMessage.mid. */
+#define RECOMP_LAUNCHER_HAS_CHAT_REPORT 1
+/* The categories the server matches on. Same list on every console; an
+ * unrecognised one is stored as "other" rather than refused. */
+#define RECOMP_LAUNCHER_REPORT_HARASSMENT     "harassment"
+#define RECOMP_LAUNCHER_REPORT_HATE_SPEECH    "hate_speech"
+#define RECOMP_LAUNCHER_REPORT_SEXUAL_CONTENT "sexual_content"
+#define RECOMP_LAUNCHER_REPORT_SPAM           "spam"
+#define RECOMP_LAUNCHER_REPORT_THREATS        "threats"
+#define RECOMP_LAUNCHER_REPORT_CHEATING       "cheating_claim"
+#define RECOMP_LAUNCHER_REPORT_OTHER          "other"
+#define RECOMP_LAUNCHER_REPORT_NOTE_MAX 500
 enum {
     RECOMP_LAUNCHER_LIST_SCOPE_ANY = 0,
     RECOMP_LAUNCHER_LIST_SCOPE_LAN = 1,
