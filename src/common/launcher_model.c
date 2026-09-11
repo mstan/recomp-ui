@@ -784,31 +784,49 @@ void launcher_model_init(LauncherModel* m,
     }
     launcher_model_refresh_bios_status(m);
 
-    /* Soft-return from a match: land on Netplay; the frame then switches to
-     * the full-screen lobby view because the backend still reports us
-     * seated (see LNG_VIEW_LOBBY). */
-    if (game && game->resume_netplay_room && m->netplay_supported && m->netplay &&
-        m->netplay->in_lobby && m->netplay->in_lobby(m->netplay->ctx)) {
+    /* Soft-return from a match: land on Netplay.
+     *
+     * Still seated (a hosted room that outlived the match) => the frame then
+     * switches to the full-screen lobby view, because the backend reports us
+     * in a room (see LNG_VIEW_LOBBY).
+     *
+     * NOT seated => the netplay page draws its lobby LIST, which is the whole
+     * point for a host that left the room on the way out. An automatch room
+     * is the server's and is gone the moment the match ends, so there is
+     * nothing to return to; the in_lobby test used to gate the whole hint and
+     * such a host landed on the dashboard instead, a page away from the queue
+     * it was trying to rejoin. */
+    if (game && game->resume_netplay_room && m->netplay_supported && m->netplay) {
+        const bool seated = m->netplay->in_lobby &&
+                            m->netplay->in_lobby(m->netplay->ctx);
         m->view = LNG_VIEW_NETPLAY;
         m->netplay_list_fresh = true;
-        if (game->resume_netplay_endpoint && game->resume_netplay_endpoint[0]) {
-            m->netplay_local_room = true;
-            safe_copy(m->netplay_host_endpoint, sizeof(m->netplay_host_endpoint),
-                      game->resume_netplay_endpoint);
-        } else {
+        if (!seated) {
+            /* No room, so none of the room-shaped state below applies. */
             m->netplay_local_room = false;
             m->netplay_host_endpoint[0] = '\0';
-        }
-        /* Mirror engine match caps — UI default rollback=true must not flip a
-         * delay-sync Cable Club rematch on ▶ Play without opening Settings. */
-        if (m->netplay->rollback_get)
-            m->netplay_rollback =
-                m->netplay->rollback_get(m->netplay->ctx) != 0;
-        if (m->netplay->input_delay_get) {
-            m->netplay_lobby_input_delay =
-                m->netplay->input_delay_get(m->netplay->ctx);
-            if (m->netplay_lobby_input_delay < 2)
-                m->netplay_lobby_input_delay = 6;
+        } else {
+            if (game->resume_netplay_endpoint && game->resume_netplay_endpoint[0]) {
+                m->netplay_local_room = true;
+                safe_copy(m->netplay_host_endpoint,
+                          sizeof(m->netplay_host_endpoint),
+                          game->resume_netplay_endpoint);
+            } else {
+                m->netplay_local_room = false;
+                m->netplay_host_endpoint[0] = '\0';
+            }
+            /* Mirror engine match caps — UI default rollback=true must not
+             * flip a delay-sync Cable Club rematch on ▶ Play without opening
+             * Settings. */
+            if (m->netplay->rollback_get)
+                m->netplay_rollback =
+                    m->netplay->rollback_get(m->netplay->ctx) != 0;
+            if (m->netplay->input_delay_get) {
+                m->netplay_lobby_input_delay =
+                    m->netplay->input_delay_get(m->netplay->ctx);
+                if (m->netplay_lobby_input_delay < 2)
+                    m->netplay_lobby_input_delay = 6;
+            }
         }
     }
 

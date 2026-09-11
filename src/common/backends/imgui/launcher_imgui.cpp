@@ -5944,9 +5944,14 @@ void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
                                "If they decline you go back to the front of the "
                                "queue, not the back.");
         } else {
+            /* "Accepting in 15s" said the opposite of what happens. Letting
+             * this lapse DECLINES -- and takes the same cooldown strike a
+             * click on Decline does -- so a player who read it as "it will
+             * accept for me" and walked away was told the machine would do
+             * the one thing it will not. Say which way it falls. */
             if (have)
                 ImGui::TextColored(f.accept_secs_left <= 5 ? col(th.warn) : col(th.text),
-                                   "Accepting in %ds", f.accept_secs_left);
+                                   "Auto-declines in %ds", f.accept_secs_left);
             ImGui::Spacing();
             if (ImGui::Button("Accept", ImVec2(px(140), px(34)))) {
                 if (np->automatch_accept) np->automatch_accept(np->ctx, 1);
@@ -6575,7 +6580,19 @@ static void np_ingest_last_error(LauncherModel* m, const RecompLauncherCNetplayC
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Too many mods installed to announce to the lobby. "
                       "Remove some and try again.");
-    else
+    else if (std::strcmp(err, "cooldown") == 0) {
+        /* A matchmaking cooldown is not a lobby fault, and "Lobby error:
+         * cooldown" reads as one -- a bare protocol code in front of a player
+         * who declined a match thirty seconds ago and has no way to connect
+         * the two. The automatch layer has already phrased it WITH the
+         * server's own retry_secs in it, so prefer that over anything
+         * reconstructed here; the fallback only covers a server that sent no
+         * number. */
+        const char* am = np->automatch_error ? np->automatch_error(np->ctx) : "";
+        std::snprintf(m->netplay_status, sizeof(m->netplay_status),
+                      "Matchmaking: %s",
+                      (am && am[0]) ? am : "Cooldown For Declining");
+    } else
         std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                       "Lobby error: %s", err);
     if (np->clear_last_error) np->clear_last_error(np->ctx);
