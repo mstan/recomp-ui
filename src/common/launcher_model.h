@@ -518,6 +518,7 @@ typedef struct {
     bool      netplay_host_modal_open;
     bool      netplay_network_modal_open;
     bool      netplay_password_modal_open;
+    bool      netplay_moderation_modal_open;
     bool      netplay_local_room;
     /* Which kind of netplay the player picked on LNG_VIEW_NETPLAY_MODE.
      * 0 = not chosen yet, 1 = LAN / Direct IP, 2 = online. The netplay page

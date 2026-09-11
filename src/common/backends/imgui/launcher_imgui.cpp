@@ -21,6 +21,7 @@
 #include "launcher_panels.h"
 #include "launcher_system.h"
 #include "launcher_i18n.h"
+#include "recomp_moderation.h"   // local ignore/block list (online only)
 #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
 
 #include "launcher_sdlcompat.h"   // pulls the right SDL header + event shim
@@ -867,6 +868,67 @@ static int emoji_input_callback(ImGuiInputTextCallbackData* data) {
  * provider renders as the real flag. Without a color provider the outline
  * font has no flags, so the code is shown in a muted "[JP]" instead of two
  * meaningless letter boxes. Draws nothing for an empty / malformed code. */
+/*
+ * Right-click a player: ignore them, or block them.
+ *
+ * ONLINE ONLY, and that gate is the point rather than a simplification. A LAN
+ * / Direct IP room has no lobby server, so nobody published an account id and
+ * there is nothing durable to key a list on -- a menu there could only offer
+ * to remember a name, which is precisely the thing that blocks the wrong
+ * person later. It is also a room of people who already know each other.
+ *
+ * A guest has no account either. They get the menu disabled with the reason
+ * shown, rather than silently doing nothing: "I clicked Block and it did not
+ * block" is a worse outcome than being told why.
+ *
+ * `account` is the key and `name` is only what to put in the menu header and
+ * store as a label.
+ */
+static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
+                           const char* account, const char* name) {
+    if (m->netplay_mode != 2) return;   /* LAN/Direct IP has no accounts */
+    if (!ImGui::BeginPopupContextItem("##player_menu")) return;
+
+    char disp[96];
+    emoji_display((name && name[0]) ? name : "Player", disp, sizeof(disp));
+    ImGui::TextColored(col(th.text_muted), "%s", disp);
+    ImGui::Separator();
+
+    const bool has_key = account && account[0];
+    if (!has_key) {
+        ImGui::TextColored(col(th.text_muted),
+                           "Signed-out players cannot be ignored:");
+        ImGui::TextColored(col(th.text_muted),
+                           "there is no account to remember.");
+        ImGui::EndPopup();
+        return;
+    }
+
+    const RecompModLevel lvl = recomp_moderation_level(account);
+    bool ignored = lvl != RECOMP_MOD_NONE;
+    bool blocked = lvl == RECOMP_MOD_BLOCKED;
+
+    if (ImGui::MenuItem("Ignore Player", nullptr, ignored, !blocked)) {
+        recomp_moderation_set(account, name,
+                              ignored ? RECOMP_MOD_NONE : RECOMP_MOD_IGNORED);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(blocked ? "Already blocked, which includes this"
+                                  : "Hide their chat. They can still be in "
+                                    "your lobby.");
+    if (ImGui::MenuItem("Block Player", nullptr, blocked)) {
+        recomp_moderation_set(account, name,
+                              blocked ? RECOMP_MOD_NONE : RECOMP_MOD_BLOCKED);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Hide their chat, hide them from the lists, and ask "
+                          "the matchmaker not to pair you.");
+    ImGui::Separator();
+    if (ImGui::MenuItem("Moderation list..."))
+        m->netplay_moderation_modal_open = true;
+    ImGui::EndPopup();
+}
+
 static void np_draw_country_flag(const LauncherTheme& th, const char* cc) {
     if (!cc || !cc[0] || !cc[1]) return;
     const char a = (char)std::toupper((unsigned char)cc[0]);
@@ -5975,6 +6037,69 @@ void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
     }
 }
 
+/*
+ * The review list. Without it the only way to undo a block is editing a file
+ * by hand, which is not an undo -- and a moderation feature whose effects are
+ * invisible is one you stop trusting.
+ */
+void draw_netplay_moderation_modal(LauncherModel* m, const LauncherTheme& th) {
+    if (m->netplay_moderation_modal_open) ImGui::OpenPopup("Ignored & Blocked");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Ignored & Blocked", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const int n = recomp_moderation_count();
+    if (n <= 0) {
+        ImGui::TextColored(col(th.text_muted),
+                           "Nobody is ignored or blocked.");
+        ImGui::TextColored(col(th.text_muted),
+                           "Right-click a player's name to add one.");
+    } else {
+        ImGui::TextColored(col(th.text_muted),
+                           "Names are only labels -- the list follows the "
+                           "account, so renaming does not escape it.");
+        ImGui::Spacing();
+        if (ImGui::BeginTable("##mod_list", 3,
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, px(90));
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, px(90));
+            for (int i = 0; i < n; ++i) {
+                char key[RECOMP_MOD_KEY_CAP], name[RECOMP_MOD_NAME_CAP];
+                RecompModLevel lvl = RECOMP_MOD_NONE;
+                if (!recomp_moderation_get(i, key, sizeof(key), name, sizeof(name), &lvl))
+                    continue;
+                ImGui::PushID(i);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                char disp[96];
+                emoji_display(name[0] ? name : "(unknown)", disp, sizeof(disp));
+                ImGui::TextUnformatted(disp);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(col(lvl == RECOMP_MOD_BLOCKED ? th.warn : th.text_muted),
+                                   "%s", lvl == RECOMP_MOD_BLOCKED ? "Blocked" : "Ignored");
+                ImGui::TableSetColumnIndex(2);
+                if (ImGui::Button("Remove", ImVec2(px(84), 0))) {
+                    recomp_moderation_set(key, name, RECOMP_MOD_NONE);
+                    ImGui::PopID();
+                    break;   /* the list shifted under us */
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Close", ImVec2(px(120), 0))) {
+        m->netplay_moderation_modal_open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->netplay_direct_modal_open) ImGui::OpenPopup("Join Direct");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -6945,6 +7070,12 @@ static void draw_lobby_seat_row(LauncherModel* m,
         ImGui::TextUnformatted(occ ? row.display_name
                                    : view.spectator ? "Open seat" : "Open slot");
         if (!occ) ImGui::PopStyleColor();
+        /* The third surface: a seat in the room. Blocked players are NOT
+         * hidden here -- you are already in a lobby with them, and a seat
+         * that silently vanishes is a room you cannot reason about. Their
+         * chat still goes, and the menu is how you get here from a name you
+         * only meet once you are seated. */
+        if (occ && !row.is_local) np_player_menu(m, th, row.account, row.display_name);
         /* Seat 1 (P2) — by seat, not by who hosts: seat 0 is always the sim
          * authority whose cards are the match cards. */
         if (!view.spectator && wire == 1 && occ && np->memcard_offer_set &&
@@ -8197,11 +8328,22 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
                 ImGui::TextColored(col(th.text_muted), "%s", sys_disp);
                 continue;
             }
+            /* An ignored player's line is not drawn at all -- not greyed,
+             * not collapsed to "message hidden". The point of ignoring
+             * somebody is to stop seeing them, and a placeholder per line is
+             * still a conversation you are being made to watch. `newest` is
+             * updated above regardless, so a hidden line does not keep
+             * re-scrolling the log. Never your own. */
+            if (!msg.is_local && recomp_moderation_is_ignored(msg.account))
+                continue;
             char from_disp[128];
             char text_disp[640];
             emoji_display(msg.from[0] ? msg.from : "?", from_disp, sizeof(from_disp));
             emoji_display(msg.text, text_disp, sizeof(text_disp));
             ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s", from_disp);
+            /* Right-click the NAME on a chat line, same as in the player
+             * list: it is the thing you point at when you mean "them". */
+            if (!msg.is_local) np_player_menu(m, th, msg.account, msg.from);
             ImGui::SameLine(0, px(6));
             ImGui::TextUnformatted(text_disp);
         }
@@ -8587,6 +8729,9 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
         for (int i = 0; i < n; ++i) {
             RecompLauncherCNetplayOnlinePlayer p{};
             if (!np->online_get(np->ctx, i, &p)) continue;
+            /* Blocked players are not shown at all -- that is what block
+             * means here. Never the local row, whatever the file says. */
+            if (!p.is_local && recomp_moderation_is_blocked(p.account)) continue;
             ImGui::PushID(i);
             ImGui::TableNextRow(ImGuiTableRowFlags_None, row_h);
             ImGui::TableSetColumnIndex(0);
@@ -8601,6 +8746,13 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
                 ImGui::TextColored(col(th.text_muted), "(you)");
             } else {
                 ImGui::TextUnformatted(disp);
+                /* Right-click the NAME, which is the thing a player points at
+                 * when they mean "that person". Never on your own row. */
+                np_player_menu(m, th, p.account, p.display_name);
+                if (recomp_moderation_is_ignored(p.account)) {
+                    ImGui::SameLine(0, px(4));
+                    ImGui::TextColored(col(th.text_muted), "(ignored)");
+                }
             }
             ImGui::TableSetColumnIndex(1);
             table_row_vcenter(row_h, text_h);
@@ -11946,6 +12098,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_netplay_password_modal(m, th);
     draw_netplay_direct_modal(m, th);
     draw_netplay_automatch_modal(m, th);
+    draw_netplay_moderation_modal(m, th);
     draw_restore_defaults_modal(m);
     // Transfer Pak config modal (N64): opened by any tile, dashboard or
     // Controller page. Drawn at root so it isn't clipped by a card child.
@@ -12467,6 +12620,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         asset("assets/fonts/OpenMoji-black-glyf.ttf");
     float applied_scale = 0.0f;
     launcher_debug_init();
+    /* The ignore/block list, from beside the executable. Loaded once here
+     * rather than lazily on the netplay page: the file is the authority for
+     * whether a chat line is drawn, and a page that renders before the first
+     * load would show a line the player has already asked never to see. */
+    recomp_moderation_load(asset("").c_str());
 
     long smoke_frames = 0, frame = 0;
     if (const char* sf = SDL_getenv("LNG_SMOKE_FRAMES")) smoke_frames = SDL_atoi(sf);

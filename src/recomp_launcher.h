@@ -106,6 +106,15 @@ typedef struct RecompLauncherCNetplayLobby {
  * browser's "players online" panel. */
 typedef struct RecompLauncherCNetplayOnlinePlayer {
     char display_name[64];
+    /* Opaque, stable id for the ACCOUNT behind this player; "" for a guest.
+     *
+     * Not a name and not a Discord identifier -- the server's own row key,
+     * published precisely so a client can keep a list that survives the other
+     * player reconnecting or renaming. Never render it; it is a key, not a
+     * label. A guest has none, so a guest can only be muted for as long as
+     * their connection lasts. */
+    char account[40];
+
     char country[4];     /* alpha-2 from the server's GeoIP; "" unknown */
     char lobby_name[64]; /* room they are in; "" while browsing */
     int  in_lobby;
@@ -116,6 +125,15 @@ typedef struct RecompLauncherCNetplayOnlinePlayer {
 typedef struct RecompLauncherCNetplayMember {
     int  slot;
     char display_name[64];
+    /* Opaque, stable id for the ACCOUNT behind this player; "" for a guest.
+     *
+     * Not a name and not a Discord identifier -- the server's own row key,
+     * published precisely so a client can keep a list that survives the other
+     * player reconnecting or renaming. Never render it; it is a key, not a
+     * label. A guest has none, so a guest can only be muted for as long as
+     * their connection lasts. */
+    char account[40];
+
     int  ready;
     int  is_host;
     /* Round-trip ms from the local peer *to* this seat; -1 unknown / self. */
@@ -210,6 +228,15 @@ typedef struct RecompLauncherCNetplayFound {
 
 typedef struct RecompLauncherCNetplayChatMessage {
     char     from[64];   /* display name; empty for a system line */
+    /* Opaque, stable id for the ACCOUNT behind this player; "" for a guest.
+     *
+     * Not a name and not a Discord identifier -- the server's own row key,
+     * published precisely so a client can keep a list that survives the other
+     * player reconnecting or renaming. Never render it; it is a key, not a
+     * label. A guest has none, so a guest can only be muted for as long as
+     * their connection lasts. */
+    char account[40];
+
     char     text[256];
     int      is_local;   /* sent by this client */
     int      is_system;  /* join/leave/notice, not a player */
@@ -675,6 +702,9 @@ typedef struct RecompLauncherCNetplayCallbacks {
 
 /* Host may #ifdef this when wiring list_scope_set. */
 #define RECOMP_LAUNCHER_HAS_LIST_SCOPE 1
+
+/* Host may #ifdef this when filling the `account` key on player rows. */
+#define RECOMP_LAUNCHER_HAS_PLAYER_ACCOUNT 1
 enum {
     RECOMP_LAUNCHER_LIST_SCOPE_ANY = 0,
     RECOMP_LAUNCHER_LIST_SCOPE_LAN = 1,
