@@ -364,7 +364,9 @@ static bool s_pad_nav_armed = false;
 
 char        g_pick_buf[512] = {};    // ROM picker result
 
-enum class BuiltinPickerKind { Rom, Bios, SetupToolchainZip, DiscSlot };
+enum class BuiltinPickerKind { Rom, Bios, SetupToolchainZip, DiscSlot, ModArchive };
+
+static void mod_note_error(LauncherModel* m);
 
 /* Which disc row a DiscSlot browse is filling. Deliberately NOT a field of
  * BuiltinRomPicker: open_builtin_file_picker default-constructs that struct,
@@ -451,6 +453,7 @@ static void open_builtin_file_picker(LauncherModel* m, BuiltinPickerKind kind,
     g_rom_picker.kind = kind;
     const char* fallback_title =
         kind == BuiltinPickerKind::Bios             ? "Select BIOS file"
+        : kind == BuiltinPickerKind::ModArchive       ? "Install Mod Package"
         : kind == BuiltinPickerKind::SetupToolchainZip ? "Select toolchain zip"
                                                     : "Select game file";
     std::snprintf(g_rom_picker.title, sizeof(g_rom_picker.title), "%s",
@@ -488,7 +491,16 @@ static bool prefer_builtin_file_picker(void) {
 
 static void apply_builtin_picker_selection(LauncherModel* m, const char* path) {
     if (!m || !path) return;
-    if (g_rom_picker.kind == BuiltinPickerKind::Bios) {
+    if (g_rom_picker.kind == BuiltinPickerKind::ModArchive) {
+        const auto* mods = m->mods;
+        if (!mods || !mods->install_archive ||
+            !mods->install_archive(mods->ctx, path)) {
+            mod_note_error(m);
+        } else {
+            std::snprintf(m->mod_status, sizeof(m->mod_status), "%s",
+                          ui_text("Package installed. Changes apply when you press PLAY."));
+        }
+    } else if (g_rom_picker.kind == BuiltinPickerKind::Bios) {
         launcher_model_request_bios_path(m, path);
     } else if (g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip) {
         std::snprintf(m->setup_tc_zip, sizeof(m->setup_tc_zip), "%s", path);
@@ -678,6 +690,8 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
                     ? "Select an existing BIOS image (.bin / .rom)."
                 : g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip
                     ? "Select an existing toolchain .zip archive."
+                : g_rom_picker.kind == BuiltinPickerKind::ModArchive
+                    ? "Select an existing mod package matching the file filter."
                     : "Select an existing file matching this game's file types.";
             std::snprintf(g_rom_picker.error, sizeof(g_rom_picker.error), "%s",
                           err);
@@ -698,6 +712,8 @@ static void draw_standalone_builtin_rom_picker(LauncherModel* m,
             ? "Select BIOS file##builtin"
         : g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip
             ? "Select toolchain zip##builtin"
+        : g_rom_picker.kind == BuiltinPickerKind::ModArchive
+            ? "Install Mod Package##builtin"
             : "Select game file##builtin";
     ImGui::OpenPopup(popup);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
@@ -8749,16 +8765,9 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
                   "*%s", archive_extension);
     if (ImGui::Button(install_label)) {
         const char* patterns[] = { archive_pattern };
-        char path[1024];
-        if (launcher_pick_file(ui_text("Install Mod Package"), patterns, 1,
-                               archive_description,
-                               path, sizeof(path))) {
-            if (!mods->install_archive || !mods->install_archive(mods->ctx, path))
-                mod_note_error(m);
-            else
-                std::snprintf(m->mod_status, sizeof(m->mod_status),
-                              "Package installed. Changes apply when you press PLAY.");
-        }
+        request_file_picker(m, BuiltinPickerKind::ModArchive,
+                            ui_text("Install Mod Package"), patterns, 1,
+                            archive_description, false);
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(px(300));
@@ -9225,18 +9234,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                   "*%s", archive_extension);
     if (ImGui::Button(install_label)) {
         const char* patterns[] = { archive_pattern };
-        char path[1024];
-        if (launcher_pick_file("Install Mod Package", patterns, 1,
-                               archive_description,
-                               path, sizeof(path))) {
-            if (!mods->install_archive ||
-                !mods->install_archive(mods->ctx, path)) {
-                mod_note_error(m);
-            } else {
-                std::snprintf(m->mod_status, sizeof(m->mod_status),
-                              "%s", ui_text("Package installed. Changes apply when you press PLAY."));
-            }
-        }
+        request_file_picker(m, BuiltinPickerKind::ModArchive,
+                            ui_text("Install Mod Package"), patterns, 1,
+                            archive_description, false);
     }
     ImGui::SameLine();
     if (ImGui::Button(ui_text("Enable all")))
