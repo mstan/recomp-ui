@@ -76,6 +76,15 @@ if(BUILD_TESTING)
     target_include_directories(recomp-ui-ips-patch-test PRIVATE src/common)
     add_test(NAME recomp-ui-ips-patch COMMAND $<TARGET_FILE:recomp-ui-ips-patch-test>)
 
+    # The photosensitivity flash guard. Pure arithmetic on two ARGB frames --
+    # no SDL, no window, no ROM -- so it runs anywhere the rest of these do.
+    add_executable(recomp-ui-flash-guard-test
+        tests/flash_guard_test.c
+        src/common/recomp_flash_guard.c)
+    target_include_directories(recomp-ui-flash-guard-test PRIVATE src)
+    add_test(NAME recomp-ui-flash-guard
+             COMMAND $<TARGET_FILE:recomp-ui-flash-guard-test>)
+
     add_executable(recomp-ui-rom-patch-tool
         tools/rom_patch_tool.c
         src/common/ips_patch.c
@@ -174,6 +183,22 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-discs
         COMMAND $<TARGET_FILE:recomp-ui-launcher-discs-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
+
+    # Renderer / VSync as enumerable lists rather than cycle buttons. Same
+    # include-the-TU shape as the discs test above.
+    add_executable(recomp-ui-launcher-video-pick-test
+        tests/launcher_video_pick_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-video-pick-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-video-pick-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-video-pick
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-video-pick-test>)
 
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.
