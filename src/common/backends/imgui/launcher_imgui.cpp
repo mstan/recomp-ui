@@ -11612,9 +11612,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             game);
         ImGui::PopTextWrapPos();
     } else if (media_confirm) {
+        // "Confirm disc" on a cartridge console asked a SNES player to confirm
+        // a disc. The profile's rom_noun names the medium ("ROM", "Disc").
+        const char* medium = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
         ImGui::TextColored(col(th.accent),
-                           m->has_bios ? "Confirm BIOS and disc"
-                                       : "Confirm disc");
+                           m->has_bios ? "Confirm BIOS and %s" : "Confirm %s",
+                           medium);
         ImGui::PushTextWrapPos(wrap_x);
         if (plat == SETUP_PLAT_PSX && m->has_bios) {
             ImGui::TextColored(col(th.text_muted),
@@ -11971,10 +11974,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
     } else if (!m->prepare_required_before_continue) {
         const bool ready = launcher_model_can_finish_setup(m);
-        const char* continue_lbl =
-            media_confirm
-                ? (m->has_bios ? "Confirm BIOS and disc" : "Confirm disc")
-                : "Continue to launcher";
+        char confirm_lbl[64];
+        {
+            const char* medium = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
+            snprintf(confirm_lbl, sizeof(confirm_lbl),
+                     m->has_bios ? "Confirm BIOS and %s" : "Confirm %s", medium);
+        }
+        const char* continue_lbl = media_confirm ? confirm_lbl : "Continue to launcher";
         if (!ready) ImGui::BeginDisabled();
         if (ImGui::Button(continue_lbl, ImVec2(px(220), px(34)))) {
             launcher_model_finish_setup(m);
