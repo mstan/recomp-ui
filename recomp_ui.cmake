@@ -196,6 +196,15 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/backends/imgui/runtime_ui_imgui.cpp
         ${_rui_imgui_sources}
     )
+    # Two TUs carry the vendored stb_image.h, which trips GCC 15's
+    # -Wstringop-overflow in stbi__parse_png_file (a false positive on the
+    # 3-byte transparency key). A clean build of a game should not print a
+    # third party's warning; those TUs are built with it off on GCC.
+    set_source_files_properties(
+        ${RUI_SRC}/common/launcher_gl.c
+        ${RUI_SRC}/common/emoji/recomp_emoji_flags.c
+        PROPERTIES COMPILE_OPTIONS
+        "$<$<C_COMPILER_ID:GNU>:-Wno-stringop-overflow>")
 
     target_include_directories(${TGT} PRIVATE
         ${RUI_SRC}                   # recomp_launcher.h / launcher_profile.h / launcher_system.h
