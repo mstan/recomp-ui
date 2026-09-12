@@ -3706,6 +3706,11 @@ void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta) {
     m->s.deadzone[player] = clampi(m->s.deadzone[player] + delta, 0, 100);
 }
 
+void launcher_model_set_deadzone(LauncherModel* m, int player, int pct) {
+    player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
+    m->s.deadzone[player] = clampi(pct, 0, 100);
+}
+
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name,
                                const char* pad_guid) {

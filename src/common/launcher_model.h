@@ -962,6 +962,10 @@ void launcher_model_skip_msu1_patch(LauncherModel* m);
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
+/* Absolute set, for a drag slider rather than a +/- stepper. Clamped 0..100,
+ * and to whole percent: the value the runner consumes is a raw stick radius
+ * derived from it, so a fractional percent would not survive the round trip. */
+void launcher_model_set_deadzone(LauncherModel* m, int player, int pct);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,
 // 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name + GUID
 // (GUID may be NULL/empty; then player_gamepad_guid[player] is cleared).

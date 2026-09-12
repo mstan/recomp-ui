@@ -12,6 +12,7 @@
 #include "consoles/nes/nes_binds.h"   // NES-native keybind bridge (nesrecomp keybinds.c format)
 #include "consoles/genesis/genesis_binds.h"   // Genesis-native bridge (settings.ini [input.pN])
 #include "consoles/gb/gb_binds.h"     // Game Boy-native bridge (keybinds.ini [controls])
+#include "consoles/snes/snes_pad_binds.h" // SNES pad shape (default deadzone)
 
 #include <ctype.h>
 #include <stdio.h>
@@ -778,6 +779,32 @@ void launcher_binds_hydrate_snes_pad_names(LauncherModel* m,
                                            const LauncherPad* pads,
                                            int pad_count) {
     if (!m || !is_snes_profile(m)) return;
+
+    /* A slot whose source is "gamepad" with no GUID is what a first launch
+     * looks like: config.ini says EnableGamepad, and nothing has ever named a
+     * device. The Input source box then reads the generic placeholder while
+     * the game is in fact about to use a specific controller. Bind the first
+     * live pad no other slot has claimed, so the box names the pad it will
+     * actually play with -- and apply that pad's saved profile, or the console
+     * default deadzone when it has none. One shot: once a GUID is set this
+     * whole block is skipped, so it never fights a later choice. */
+    for (int p = 0; p < 2 && pads; ++p) {
+        if (m->s.player_src[p] != 2 || m->s.player_gamepad_guid[p][0]) continue;
+        for (int i = 0; i < pad_count; ++i) {
+            int taken = 0;
+            if (!pads[i].guid[0]) continue;
+            for (int o = 0; o < 2; ++o)
+                if (o != p && m->s.player_src[o] == 2 &&
+                    !strcmp(m->s.player_gamepad_guid[o], pads[i].guid))
+                    taken = 1;
+            if (taken) continue;
+            launcher_model_set_source(m, p, 2, pads[i].id, pads[i].name,
+                                      pads[i].guid);
+            launcher_binds_apply_snes_pad_profile(m, p + 1);
+            break;
+        }
+    }
+
     for (int p = 0; p < 2; ++p) {
         const char* guid = m->s.player_gamepad_guid[p];
         char name[64];
@@ -887,6 +914,12 @@ void launcher_binds_apply_snes_pad_profile(LauncherModel* m, int player) {
         if (dz < 0) dz = 0;
         if (dz > 100) dz = 100;
         m->s.deadzone[player - 1] = dz;
+    } else {
+        /* No saved profile for this pad: the console default, not whatever the
+         * previously selected pad happened to be on. A deadzone belongs to the
+         * device, so selecting a device the player has never configured must
+         * land on the default rather than inherit a stranger's number. */
+        m->s.deadzone[player - 1] = RUI_SNES_PAD_DEFAULT_DEADZONE_PCT;
     }
     if (snes_profile_get(guid, "Name", name, sizeof(name)) && name[0])
         copy_str(m->player_pad_name[player - 1],

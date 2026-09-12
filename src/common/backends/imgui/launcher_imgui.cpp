@@ -4764,9 +4764,24 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::EndPopup();
             }
         }
+        // Deadzone: a drag slider, not a stepper. The stepper moves in 5%
+        // steps, which is the wrong granularity for a stick whose resting
+        // noise a player is trying to just clear -- 8% and 12% are different
+        // controllers. Whole percent, because the runner consumes a raw stick
+        // radius derived from this and a fraction would not survive the trip.
         row_label("Deadzone", th);
-        int dz = 0; stepper("dz", m->s.deadzone[p], "%", &dz);
-        if (dz) launcher_model_deadzone_delta(m, p, dz);
+        {
+            int dz = m->s.deadzone[p];
+            // 0-50% is the whole useful range -- half a stick's travel is
+            // already absurd -- but a settings file carrying more than that
+            // gets the full scale rather than a handle pinned at the end
+            // showing a number the slider would silently rewrite.
+            const int hi = dz > 50 ? 100 : 50;
+            ImGui::SetNextItemWidth(px(240));
+            if (ImGui::SliderInt("##dz", &dz, 0, hi, "%d%%",
+                                 ImGuiSliderFlags_AlwaysClamp))
+                launcher_model_set_deadzone(m, p, dz);
+        }
     } end_panel();
 
     // Transfer Pak for THIS controller port (N64 tpak games), so it's reachable

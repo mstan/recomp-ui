@@ -273,6 +273,27 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-memcard
         COMMAND $<TARGET_FILE:recomp-ui-launcher-memcard-test>)
 
+    # SNES first-launch input defaults: a gamepad slot with no GUID binds the
+    # live pad (so the Input source box names it instead of reading "Gamepad"),
+    # and a pad with no saved profile takes the console default deadzone.
+    # Includes launcher_binds.c and links the model for the real set_source.
+    add_executable(recomp-ui-snes-pad-defaults-test
+        tests/snes_pad_defaults_test.c
+        src/common/launcher_model.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-snes-pad-defaults-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-snes-pad-defaults-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-snes-pad-defaults-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-snes-pad-defaults
+        COMMAND $<TARGET_FILE:recomp-ui-snes-pad-defaults-test>
+                "${CMAKE_CURRENT_BINARY_DIR}")
+
     add_executable(recomp-ui-psx-profile-test
         tests/psx_profile_test.c)
     target_include_directories(recomp-ui-psx-profile-test PRIVATE
