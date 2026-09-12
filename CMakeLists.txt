@@ -310,6 +310,21 @@ if(BUILD_TESTING)
         NAME recomp-ui-nds-profile
         COMMAND $<TARGET_FILE:recomp-ui-nds-profile-test>)
 
+    # Backspace in a launcher text field must not steal the focus ring: the
+    # footer's Back/Start "re-home to PLAY" shortcut fired while an InputText
+    # was active. Real ImGui frames, headless, same shape as the runtime-ui
+    # test below.
+    add_executable(recomp-ui-launcher-nav-backspace-test
+        tests/launcher_nav_backspace_test.cpp
+        src/third_party/imgui/imgui.cpp
+        src/third_party/imgui/imgui_draw.cpp
+        src/third_party/imgui/imgui_tables.cpp
+        src/third_party/imgui/imgui_widgets.cpp)
+    target_include_directories(recomp-ui-launcher-nav-backspace-test PRIVATE
+        src src/common src/third_party/imgui)
+    add_test(NAME recomp-ui-launcher-nav-backspace
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-nav-backspace-test>)
+
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp
         src/common/recomp_runtime_ui.c

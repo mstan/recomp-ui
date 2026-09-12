@@ -27,6 +27,7 @@
 #include "launcher_sdlcompat.h"   // pulls the right SDL header + event shim
 
 #include "imgui.h"
+#include "launcher_nav.h"
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -11068,9 +11069,9 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     // game by accident — the launch is the activate button (A/Cross) on the
     // focused PLAY, or a mouse click. SetKeyboardFocusHere() targets the NEXT
     // submitted item — PLAY's button.
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
+    // Not while the player is typing, and not over an open modal --
+    // rui_nav_rehome_to_play() carries the why.
+    if (rui_nav_rehome_to_play())
         ImGui::SetKeyboardFocusHere();
     float play_x = origin.x + fullw - play_w;
     if (m->netplay_supported &&
