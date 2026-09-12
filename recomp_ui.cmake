@@ -178,7 +178,8 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/consoles/psx/psx_binds.c        # PSX-native keybind persistence bridge
         ${RUI_SRC}/consoles/psx/psx_pad_binds.c    # PSX button table over common/pad_binds.c
         ${RUI_SRC}/consoles/snes/snes_pad_binds.c  # SNES button table over common/pad_binds.c
-        ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (kb+pad tables)
+        ${RUI_SRC}/consoles/n64/n64_binds.c        # N64-native input.cfg bridge (keyboard table + mirror)
+        ${RUI_SRC}/consoles/n64/n64_pad_binds.c    # N64 button table over common/pad_binds.c
         ${RUI_SRC}/consoles/nes/nes_binds.c        # NES-native keybind persistence bridge
         ${RUI_SRC}/consoles/genesis/genesis_binds.c # Genesis-native settings.ini key.*/pad.* bridge
         ${RUI_SRC}/consoles/gb/gb_binds.c          # Game Boy-native keybinds.ini [controls] bridge

@@ -142,11 +142,17 @@ static void parse_mapping_line(const RuiPadSpec* spec,
 static int heal_cardinals(const RuiPadSpec* spec,
                           char dest[][RUI_PAD_SRC_CAP]) {
     int changed = 0;
-    int n = spec->cardinal_count;
+    /* The cardinal block need not lead the table: N64's is at index 4 (PSR's
+     * N64Input order puts A/B/Z/Start first). `cardinal_first` is 0 for every
+     * console written before that, so their block is the leading one exactly
+     * as before. */
+    int first = spec->cardinal_first;
+    if (first < 0) first = 0;
+    int n = first + spec->cardinal_count;
     if (n > spec_count(spec)) n = spec_count(spec);
-    for (int i = 0; i < n; ++i) {
+    for (int i = first; i < n; ++i) {
         if (!dest[i][0] || !strcmp(dest[i], spec->defaults[i])) continue;
-        for (int j = 0; j < n; ++j) {
+        for (int j = first; j < n; ++j) {
             if (i == j) continue;
             if (!strcmp(dest[i], spec->defaults[j]) &&
                 !strcmp(dest[j], spec->defaults[j])) {
@@ -568,4 +574,27 @@ int rui_pad_binds_deadzone(const RuiPadSpec* spec, const char* path,
     PadGuidMap* m = find_map(st, guid);
     if (!m) return spec->default_deadzone_pct;
     return clamp_dz(m->deadzone_pct);
+}
+
+/* input.ini lives beside the console's own bind file — the same directory the
+ * runtime resolves, which is the exe directory in every shipped layout. Both
+ * the launcher and the game's host process call this, so there is one rule for
+ * where the file is rather than two that can drift. */
+void rui_pad_binds_sibling_path(const char* ref, const char* file,
+                                char* out, int cap) {
+    if (!out || cap <= 0) return;
+    out[0] = 0;
+    if (!file || !file[0]) return;
+    const char* slash = ref ? strrchr(ref, '/') : NULL;
+#ifdef _WIN32
+    const char* bslash = ref ? strrchr(ref, '\\') : NULL;
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
+    if (!slash) { copy_str(out, (size_t)cap, file); return; }
+    size_t dir_len = (size_t)(slash - ref + 1);
+    if (dir_len >= (size_t)cap) dir_len = (size_t)cap - 1;
+    memcpy(out, ref, dir_len);
+    out[dir_len] = 0;
+    size_t room = (size_t)cap - dir_len - 1;
+    strncat(out, file, room);
 }

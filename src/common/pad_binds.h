@@ -40,8 +40,9 @@ typedef struct RuiPadSpec {
     // Default SDL gamepad source per button ("a", "dpup", "lefty-", ...).
     const char* const* defaults;
     int count;
-    // How many LEADING entries are d-pad cardinals (up/down/left/right).
-    // Those get collision healing; 0 disables it. See heal_cardinals().
+    // How many CONSECUTIVE entries starting at `cardinal_first` are d-pad
+    // cardinals (up/down/left/right). Those get collision healing; 0 disables
+    // it. See heal_cardinals().
     int cardinal_count;
     int default_deadzone_pct;
     // Width of the key column when writing. 0 = derive from the longest key.
@@ -55,6 +56,12 @@ typedef struct RuiPadSpec {
     // disables the check. (PSX uses this to migrate files written before the
     // analog stick keys existed.)
     const char* const* legacy_probe_prefixes;
+    // Index of the FIRST cardinal in key_names[]. Zero (the fill of every
+    // positional initializer written before this existed) keeps PSX and SNES
+    // on their leading Up/Down/Left/Right block. N64's table is PSR's N64Input
+    // order, where the d-pad starts at index 4 — an offset, not a reordering:
+    // that identity order is what n64_binds.c and the host both address by.
+    int cardinal_first;
 } RuiPadSpec;
 
 // Load `path` (or seed defaults). Forces a re-read even if already loaded.
@@ -106,6 +113,14 @@ int  rui_pad_binds_name_is_custom(const RuiPadSpec* spec, const char* path,
 // Deadzone percent (0..100); spec->default_deadzone_pct when unknown.
 int  rui_pad_binds_deadzone(const RuiPadSpec* spec, const char* path,
                             const char* guid);
+
+// Resolve `file` (e.g. "input.ini") in the directory holding `ref` — the
+// console's own bind file, whose path the launcher already owns. Falls back to
+// a bare `file` when `ref` names no directory. One implementation because the
+// host process has to reach the same file the launcher wrote, and a second
+// copy of the path rule is a second place for the two to disagree.
+void rui_pad_binds_sibling_path(const char* ref, const char* file,
+                                char* out, int cap);
 
 #ifdef __cplusplus
 }

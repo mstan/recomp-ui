@@ -167,15 +167,110 @@ const LauncherTheme* volatile g_th = nullptr;
 
 namespace {
 
-// ImGui coordinates are already DPI-independent: the SDL2 platform reports the
-// window in points and the GL backend applies DisplayFramebufferScale when it
-// submits vertices to the (Retina/HiDPI) drawable. Scaling widget geometry here
-// too would DOUBLE every size on HiDPI (and make labels collide with their
-// controls), so keep all layout tokens in logical units. Fonts are logical-
-// sized as well; the renderer scales their atlas with the framebuffer.
+// ImGui coordinates are DPI-independent: the platform layer reports the window
+// in LOGICAL units and the GL backend applies DisplayFramebufferScale when it
+// submits vertices to the (Retina/HiDPI) drawable. Where the OS has no
+// point/pixel split of its own (Windows, X11) that split is synthesized —
+// see apply_logical_display below — so this holds on every platform.
+// Scaling widget geometry here too would DOUBLE every size on HiDPI (and make
+// labels collide with their controls), so keep all layout tokens logical.
+// Font SIZES are logical too; only their raster density follows the display
+// (see apply_scale).
 // (Ported from launcher_ng's "Fix launcher DPI layout and text alignment".)
 float  px(float logical) { return logical; }
 ImVec4 col(const LngColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
+
+/* ---- HiDPI: window coordinates <-> logical units ---------------------------
+ *
+ * The platform layer hands us a logical size and a pixel size (see
+ * launcher_platform_refresh_metrics). Where SDL reports no point/pixel split
+ * of its own — Windows, X11 — it synthesizes one from the display scale, and
+ * p->input_scale is then the number of SDL window coordinates per logical
+ * unit. Everything below is a no-op at input_scale 1.0, which is every
+ * platform that carries its density in the pixel size (macOS retina, Wayland).
+ */
+
+/* SDL2 spells mouse coordinates Sint32 and SDL3 spells them float; one
+ * template covers both without an #if at each field. */
+template <typename T> inline void div_coord(T& v, float s) {
+    v = (T)((float)v / s);
+}
+
+/* Mouse input arrives in window coordinates. Move it into the logical units
+ * the UI is laid out in, before ImGui or the bind-capture path sees it. */
+void scale_mouse_event(SDL_Event& e, float coords) {
+    if (coords == 1.0f) return;
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_MOTION:
+        div_coord(e.motion.x, coords);
+        div_coord(e.motion.y, coords);
+        div_coord(e.motion.xrel, coords);
+        div_coord(e.motion.yrel, coords);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        div_coord(e.button.x, coords);
+        div_coord(e.button.y, coords);
+        break;
+#if defined(LNG_SDL3)
+    case SDL_EVENT_MOUSE_WHEEL:
+        div_coord(e.wheel.mouse_x, coords);
+        div_coord(e.wheel.mouse_y, coords);
+        break;
+#endif
+    default:
+        break;
+    }
+}
+
+/* True where the SDL backend re-asserts the cursor from the global mouse
+ * state every frame (the same driver whitelist it uses). Elsewhere — Wayland —
+ * there is no global cursor and motion events are the only source, so asking
+ * for one would pin the pointer to the window origin. */
+bool sdl_has_global_mouse(void) {
+    const char* drv = SDL_GetCurrentVideoDriver();
+    static const char* kWhitelist[] = {"windows", "cocoa", "x11", "DIVE", "VMAN"};
+    if (!drv) return false;
+    for (const char* w : kWhitelist)
+        if (std::strncmp(drv, w, std::strlen(w)) == 0) return true;
+    return false;
+}
+
+/* Install the logical coordinate space for the frame about to be built.
+ *
+ * Runs after the SDL backend's NewFrame — which fills io.DisplaySize with the
+ * WINDOW size and queues an unscaled cursor position — and before
+ * ImGui::NewFrame(), so the values here are the ones that take effect. The GL
+ * backend multiplies DisplaySize by FramebufferScale for its viewport and
+ * scissor rects, which is what turns a logical-sized layout into a
+ * pixel-resolution frame. */
+void apply_logical_display(const LauncherPlatform* p) {
+    if (!p || !p->window || p->input_scale == 1.0f) return;
+    if (p->logical_w <= 0 || p->logical_h <= 0) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (SDL_GetWindowFlags(p->window) & SDL_WINDOW_MINIMIZED) {
+        io.DisplaySize = ImVec2(0.0f, 0.0f);   // as the backend would have it
+        return;
+    }
+    io.DisplaySize = ImVec2((float)p->logical_w, (float)p->logical_h);
+    io.DisplayFramebufferScale = ImVec2(p->display_scale, p->display_scale);
+
+    if (sdl_has_global_mouse() && SDL_GetKeyboardFocus() == p->window) {
+        int wx = 0, wy = 0;
+        SDL_GetWindowPosition(p->window, &wx, &wy);
+#if defined(LNG_SDL3)
+        float gx = 0.0f, gy = 0.0f;
+        SDL_GetGlobalMouseState(&gx, &gy);
+#else
+        int gxi = 0, gyi = 0;
+        SDL_GetGlobalMouseState(&gxi, &gyi);
+        const float gx = (float)gxi, gy = (float)gyi;
+#endif
+        io.AddMousePosEvent((gx - (float)wx) / p->input_scale,
+                            (gy - (float)wy) / p->input_scale);
+    }
+}
 
 /* Auto Map All run state.
  *
@@ -1076,9 +1171,21 @@ static void emoji_atlas_blit(ImFontAtlas* atlas) {
                         (size_t)(s.w < (int)r->Width ? s.w : (int)r->Width) * 4);
     }
 }
+/* Rasterize glyphs at the display's pixel density while keeping their LOGICAL
+ * point size: the layout stays DPI-independent and text comes out genuinely
+ * sharper instead of a magnified 100% atlas. RasterizerDensity landed in ImGui
+ * 1.90.6; a host reusing an older copy (see the version shims at the top)
+ * still scales, just from a magnified atlas. */
+static void set_raster_density(ImFontConfig& cfg, float density) {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19060
+    cfg.RasterizerDensity = (density > 0.0f) ? density : 1.0f;
+#else
+    (void)cfg; (void)density;
+#endif
+}
 
 // Merge an optional TTF over the active font when the file exists.
-static void merge_font_if_present(const char* path, float size,
+static void merge_font_if_present(const char* path, float size, float density,
                                   const ImWchar* ranges) {
     if (!path || !path[0] || !ranges) return;
     if (FILE* f = fopen(path, "rb")) {
@@ -1088,6 +1195,7 @@ static void merge_font_if_present(const char* path, float size,
         cfg.OversampleV = 2;
         cfg.MergeMode = true;
         cfg.PixelSnapH = true;
+        set_raster_density(cfg, density);
         ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size, &cfg, ranges);
     }
 }
@@ -1099,7 +1207,12 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig cfg; cfg.OversampleH = 2; cfg.OversampleV = 2;
-    (void)scale;   // DPI is handled by the framebuffer scale, not by re-scaling layout/fonts
+    // Glyph SIZES stay logical (the layout is DPI-independent); only the
+    // raster density follows the display, so text is sharp rather than a
+    // magnified 100% atlas. Style is not re-scaled either — the frame is,
+    // via io.DisplayFramebufferScale (see apply_logical_display).
+    const float density = (scale > 0.0f) ? scale : 1.0f;
+    set_raster_density(cfg, density);
     const float body = th.font_body;
     // Cover Basic Latin + Latin-1 AND General Punctuation so em/en dashes and
     // curly quotes used in the game notes render as glyphs, not "?" tofu.
@@ -1123,6 +1236,7 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         if (FILE* jf = fopen(jp_font_path, "rb")) {
             fclose(jf);
             ImFontConfig jcfg; jcfg.OversampleH = 2; jcfg.OversampleV = 2;
+            set_raster_density(jcfg, density);
             jcfg.MergeMode = true;
             io.Fonts->AddFontFromFileTTF(jp_font_path, body, &jcfg,
                                          io.Fonts->GetGlyphRangesJapanese());
@@ -1149,13 +1263,16 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
         0x1F900, 0x1F9FF, // Supplemental Symbols and Pictographs (incl. 🥾)
         0,
     };
-    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
-    merge_font_if_present(emoji_font_path, body, kEmojiRanges);
+    merge_font_if_present(symbols_font_path, body, density, kSymbolRanges);
+    merge_font_if_present(emoji_font_path, body, density, kEmojiRanges);
 #else
-    merge_font_if_present(symbols_font_path, body, kSymbolRanges);
+    merge_font_if_present(symbols_font_path, body, density, kSymbolRanges);
     (void)emoji_font_path;
 #endif
-    /* Color emoji sprites ride in the same atlas as custom glyphs. */
+    /* Color emoji sprites ride in the same atlas as custom glyphs. They stay
+     * at LOGICAL resolution: a custom atlas rect draws at its texel size, so
+     * rendering them denser would make them bigger, not sharper. Correct size,
+     * a little soft on a HiDPI display — the one thing density cannot fix. */
     emoji_atlas_reserve(io.Fonts, base_font, body);
     io.Fonts->Build();
     emoji_atlas_blit(io.Fonts);
@@ -2588,6 +2705,8 @@ void draw_source_selectables(LauncherModel* m, int p) {
     const bool psx = src_prof && src_prof->id && !strcmp(src_prof->id, "psx");
     const bool snes_prof = src_prof && src_prof->id &&
                            !strcmp(src_prof->id, "snes");
+    const bool n64_prof = src_prof && src_prof->id &&
+                          !strcmp(src_prof->id, "n64");
     if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
         launcher_model_set_source(m, p, 0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
@@ -2707,6 +2826,11 @@ void draw_source_selectables(LauncherModel* m, int p) {
                                      opts[i].guid);
             if (psx) {
                 launcher_binds_apply_psx_pad_profile(m, p);
+                launcher_binds_refresh(m);
+            } else if (n64_prof) {
+                /* Per-GUID store: the labels ARE this controller's mapping, so
+                 * selecting a different pad shows a different page. Nothing to
+                 * copy into a live file the way SNES has to. */
                 launcher_binds_refresh(m);
             } else if (snes_prof) {
                 /* Selecting a controller restores the profile saved for it, so
@@ -3039,6 +3163,42 @@ static const char* elide_left(const char* s, float max_w, char* out, size_t cap)
     return out;
 }
 
+static bool has_display_aspect_row(const LauncherModel* m) {
+    return m && ((m->aspect_labels && m->num_aspect_labels > 0) ||
+                 m->aspect_mask != 0);
+}
+
+static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
+    if (!has_display_aspect_row(m)) return;
+    /* px(180) rather than the shared column, for the Screen layout reason:
+     * both the label and the value come from the HOST, not from a vocabulary
+     * this file owns, and a button does not elide.
+     *
+     * The EXPERIMENTAL tag sits AFTER the button on the same line, so it has
+     * to be inside the width reserved here -- right-anchoring aligns the right
+     * edge of what it is told about, and a tag left out of the sum hangs off
+     * the card. */
+    float ctrl_w = px(180);
+    if (m->aspect_experimental)
+        ctrl_w += px(8) + ImGui::CalcTextSize("EXPERIMENTAL").x;
+    row_label_right(m->aspect_setting_label && m->aspect_setting_label[0]
+                        ? m->aspect_setting_label
+                        : "Aspect ratio",
+                    th, ctrl_w);
+    ImGui::PushID("aspect_ratio");
+    if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+        launcher_model_cycle_aspect(m);
+    if (m->aspect_experimental) {
+        ImGui::SameLine(0, px(8));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.warn), "EXPERIMENTAL");
+    }
+    if (m->aspect_setting_help && m->aspect_setting_help[0] &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip("%s", m->aspect_setting_help);
+    ImGui::PopID();
+}
+
 // True when this game exposes ANY of the deeper PSX-style DISPLAY controls.
 // SNES (and any console leaving every has_* flag 0) takes the legacy-only
 // branch below and gets the fixed-band DISPLAY card. Fullscreen is NOT part
@@ -3067,6 +3227,7 @@ bool any_deep_display(const LauncherModel* m) {
 // the fixed height (byte-identical to before this console existed).
 bool video_card_grows(const LauncherModel* m) {
     if (any_deep_display(m)) return true;
+    if (has_display_aspect_row(m)) return true;
     if (m->has_shader) return true;
     if (m->has_sharp_filter || m->has_affine_filter) return true;
     if (m->has_frame_blend || m->has_vsync) return true;
@@ -3165,6 +3326,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 launcher_model_cycle_display_layout(m);
             ImGui::PopID();
         }
+        draw_aspect_row(m, th);
         if (m->has_integer_scale) {   // NES module: snap the image to integer multiples
             row_label_right("Integer scaling", th, cb);
             bool is = m->s.integer_scale != 0;
@@ -3320,6 +3482,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_display_layout(m);
         ImGui::PopID();
     }
+    draw_aspect_row(m, th);
 
     if (m->has_sharp_filter) {
         row_label_right("Scaling filter", th, px(SETTINGS_CTRL_W));
@@ -4437,6 +4600,22 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
     end_panel();
 }
 
+/* Draw a bind row's LABEL and leave the cursor at `label_col_w` from the start
+ * of this table cell, ready for the bind chip.
+ *
+ * Why not ImGui::SameLine(label_col_w): that offset is measured from the
+ * window's content start, not the cell's, so inside a multi-column bind grid
+ * the chip landed short of the reserved label column and the longest labels
+ * ("D-Pad Right", "L-Stick Down") were drawn underneath it. Spacing off the
+ * label just drawn is measured from the right place by construction. */
+static void bind_row_label(const char* label, const ImVec4& colour,
+                           float label_col_w, float min_gap) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(colour, "%s", label);
+    const float pad = label_col_w - ImGui::CalcTextSize(label).x;
+    ImGui::SameLine(0.0f, pad > min_gap ? pad : min_gap);
+}
+
 // CONTROLLER-view rebind page: input source + deadzone, and the keyboard
 // bindings grid — reached from the dashboard CONTROLLER panel's Configure
 // button. The bindings grid walks the ACTIVE SystemProfile's
@@ -4900,10 +5079,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::TableNextColumn();
                             ImGui::PushID(b);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextColored(col(th.text_muted), "%s",
-                                               spec.buttons[b].label);
-                            ImGui::SameLine(label_col_w);
+                            bind_row_label(spec.buttons[b].label,
+                                           col(th.text_muted), label_col_w,
+                                           px(6.0f));
                             const bool cap = m->capturing && !m->capture_pad &&
                                              m->capture_btn == b;
                             const bool cap_alt = cap && m->capture_slot == 1;
@@ -5011,10 +5189,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::TableNextColumn();
                             ImGui::PushID(b);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::TextColored(col(th.text_muted), "%s",
-                                               spec.buttons[b].label);
-                            ImGui::SameLine(label_col_w);
+                            bind_row_label(spec.buttons[b].label,
+                                           col(th.text_muted), label_col_w,
+                                           px(6.0f));
                             const bool cap = m->capturing && m->capture_pad &&
                                              m->capture_btn == b;
                             const bool wait_rel = cap && m->map_all_wait_release;
@@ -5093,41 +5270,38 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         const int bpi = settings_player_binds
             ? 1 : (spec.binds_per_input < 1 ? 1 : spec.binds_per_input);
 
-        // Stores that follow the input SOURCE (N64: one shared table per device
-        // TYPE) must re-read display strings on entry so switching
-        // Keyboard<->pad shows the table actually in effect. Single-bind stores
-        // are per-player and unaffected by the source, so skip the refresh to
-        // keep their behaviour byte-identical.
-        if (bpi >= 2) launcher_binds_refresh(m);
+        // Re-read display strings on entry.
+        //
+        // This used to be done only for bpi>=2 stores, on the reasoning that
+        // single-bind stores are per-player and cannot change behind the page.
+        // That is not true of a store shared across players or across device
+        // types -- N64's keyboard table is one table for every port -- and it
+        // is not true of a per-GUID store either, where selecting a different
+        // controller changes every label on the page. Refreshing is a pure
+        // read of whatever is on disk, so it is correct for every console and
+        // there is no longer a case to special-case.
+        launcher_binds_refresh(m);
 
         // A pad-bind console (Genesis) offers a KEY chip AND a GAMEPAD chip per
         // row — the legacy launcher's "Set key" / "Set pad" pair. Otherwise the
         // grid is keyboard-only, exactly as before.
         const bool has_pad = spec.has_pad_binds != 0 || settings_player_binds;
 
-        // When the player's source is a gamepad the N64 store captures pad
-        // fields, not keys — reflect that in the card title and the capture
-        // placeholder.
-        const bool pad_cap = launcher_binds_wants_pad_capture(m, p + 1) != 0;
-
         // Is this player actually driving the game with a pad?
         //
-        // NOT pad_cap: that helper answers "does the N64's shared device table
-        // capture pad fields", and is `is_n64_profile(m) && ...` -- always 0
-        // anywhere else. Using it to pick which chip is live meant a SNES
+        // player_src == 2 is the gamepad source the Input source selector sets,
+        // and is what the PSX gamepad panel already keys off. This deliberately
+        // does NOT ask a console-specific "which store captures" question: an
+        // earlier version did, and because that question was N64-only, a SNES
         // player on a controller was shown the KEYBOARD row and Auto Map
         // listened for keys, so pressing the controller did nothing at all.
-        //
-        // player_src == 2 is the gamepad source the Input source selector sets,
-        // and is what the PSX gamepad panel already keys off.
         const bool pad_src = has_pad && m->s.player_src[p] == 2;
 
         // Heading uses accent2 so each console's title tints in ITS logo colour
         // (N64 blue; single-accent consoles set accent2 == accent).
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        if (has_pad)      ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
-        else if (pad_cap) ImGui::TextUnformatted("CONTROLLER BINDINGS");
-        else              ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+        if (has_pad) ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
+        else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
 
         // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
@@ -5203,19 +5377,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     : cell;
                 ImGui::TableNextColumn();
                 ImGui::PushID(b);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(col(th.text_muted), "%s", spec.buttons[b].label);
-                ImGui::SameLine(label_col_w);
+                bind_row_label(spec.buttons[b].label, col(th.text_muted),
+                               label_col_w, chip_gap);
                 if (bpi >= 2) {
-                    // N64: two chips per input (slot 0 primary, slot 1 alt); the
-                    // shared store captures a key or pad field per pad_cap.
+                    // Two chips per input: slot 0 primary, slot 1 alternate,
+                    // both keyboard binds in the console's own store. No
+                    // console ships this today — N64 left it when its gamepad
+                    // half moved to the per-GUID store — but the store shape it
+                    // serves (alternates per input) is not N64-specific.
                     for (int slot = 0; slot < bpi; ++slot) {
                         if (slot) ImGui::SameLine(0, chip_gap);
                         ImGui::PushID(slot);
                         const bool cap = m->capturing && m->capture_btn == b
                                                       && m->capture_slot == slot;
                         const char* txt = cap
-                            ? (pad_cap ? "[ press a key / pad... ]" : "[ press a key... ]")
+                            ? "[ press a key... ]"
                             : (slot == 0 ? m->binds[p][b] : m->binds_alt[p][b]);
                         if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
                         if (ImGui::Button(txt, ImVec2(chip_w, 0)))
@@ -12284,26 +12460,14 @@ bool is_modifier_scancode(SDL_Scancode sc) {
 
 // Keyboard capture for the rebind editors. Player buttons persist a SCANCODE to
 // keybinds.ini; system hotkeys persist a KEYCODE+mods to config.ini [KeyMap].
-#if !defined(LNG_SDL3)
-// SDL2 only: is this raw joystick button/axis already part of the pad's
-// SDL_GameController mapping? Raw capture is reserved for inputs the mapping
-// can't express (PSR issue #15: 8BitDo 64 C-buttons) — prefer the clean gamepad
-// event otherwise. Ported from PSR input_bindings.cpp raw_input_is_mapped().
-static bool raw_input_is_mapped(SDL_JoystickID which, bool is_axis, int raw_index) {
-    SDL_GameController* gc = SDL_GameControllerFromInstanceID(which);
-    if (!gc) return false;
-    auto hit = [&](SDL_GameControllerButtonBind b) {
-        if (!is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON) return b.value.button == raw_index;
-        if ( is_axis && b.bindType == SDL_CONTROLLER_BINDTYPE_AXIS)   return b.value.axis   == raw_index;
-        return false;
-    };
-    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i)
-        if (hit(SDL_GameControllerGetBindForButton(gc, (SDL_GameControllerButton)i))) return true;
-    for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i)
-        if (hit(SDL_GameControllerGetBindForAxis(gc, (SDL_GameControllerAxis)i))) return true;
-    return false;
-}
-#endif
+/* The SDL2-only raw_input_is_mapped() helper stood here. Its one caller was
+ * the N64 field-capture path, which bound a raw joystick button or axis for a
+ * pad whose SDL_GameController mapping could not express the input (PSR issue
+ * #15, the 8BitDo 64's C-buttons). N64 gamepad binds now live in the shared
+ * per-GUID store, whose vocabulary is SDL gamepad names, so a raw field can no
+ * longer be captured or written — see consoles/n64/n64_pad_binds.h. Kept as a
+ * note rather than dead code, because "why can I not bind this pad's C-buttons
+ * any more" deserves an answer at the place the answer used to live. */
 
 bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     if (!m->capturing && !m->hk_capturing &&
@@ -12366,6 +12530,11 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         }
         const SystemProfile* cap_prof = (const SystemProfile*)m->profile;
         const bool psx_cap = cap_prof && cap_prof->id && !strcmp(cap_prof->id, "psx");
+        /* Consoles whose gamepad binds are stored per GUID. They must refuse a
+         * bind whose selected device has not resolved to a live pad, or the
+         * mapping lands in some other controller's profile. */
+        const bool guid_store = psx_cap ||
+            (cap_prof && cap_prof->id && !strcmp(cap_prof->id, "n64"));
         /* Which SDL device may bind.
          *
          * player_pad_id is set when the player picks a pad from the Input
@@ -12399,11 +12568,11 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
              *
              * want_id == 0 means no specific device is chosen (the console
              * offers a generic "Gamepad" source), and any pad is accepted --
-             * which is the behaviour Genesis had and keeps. PSX additionally
-             * refuses when its selection has not resolved to a live device,
-             * because its bindings are stored per GUID and would otherwise be
-             * written against the wrong profile. */
-            if (!want_id) return !psx_cap;
+             * which is the behaviour Genesis had and keeps. A per-GUID store
+             * additionally refuses when its selection has not resolved to a
+             * live device, because the binding would otherwise be written
+             * against the wrong profile. */
+            if (!want_id) return !guid_store;
             return which == want_id;
         };
         auto try_clear_release_wait = [&](uint32_t which) {
@@ -12506,45 +12675,6 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
             return true;
         }
         return true;   // swallow all other input while capturing a pad bind
-    }
-
-    // N64 pad capture: when the player being configured has a gamepad source,
-    // the input.cfg store captures pad fields, not keys. Listen for pad
-    // buttons / decisive axis throws / (SDL2) raw joystick fields; swallow the
-    // keyboard entirely so a stray key can't land in a controller bind.
-    if (m->capturing && launcher_binds_wants_pad_capture(m, m->cfg_player + 1)) {
-        const int pl = m->cfg_player + 1, b = m->capture_btn, slot = m->capture_slot;
-        constexpr int kScanThreshold = 20000;   // decisive throw; ignores resting drift
-        if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-            launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_BUTTON, (int)LNG_EVGBTN(ev));
-            launcher_model_cancel_capture(m);
-        } else if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
-            const int v = (int)LNG_EVGAXISVAL(ev);
-            if (v > kScanThreshold) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_P, (int)LNG_EVGAXIS(ev));
-                launcher_model_cancel_capture(m);
-            } else if (v < -kScanThreshold) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_PAD_AXIS_N, (int)LNG_EVGAXIS(ev));
-                launcher_model_cancel_capture(m);
-            }
-        }
-#if !defined(LNG_SDL3)
-        else if (ev.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
-            if (!raw_input_is_mapped(LNG_EVJBTNWHICH(ev), false, (int)LNG_EVJBTN(ev))) {
-                launcher_binds_set_field(m, pl, b, slot, RUI_N64_FIELD_JOY_BUTTON, (int)LNG_EVJBTN(ev));
-                launcher_model_cancel_capture(m);
-            }
-        } else if (ev.type == SDL_EVENT_JOYSTICK_AXIS_MOTION) {
-            const int v = (int)LNG_EVJAXISVAL(ev);
-            if ((v > kScanThreshold || v < -kScanThreshold) &&
-                !raw_input_is_mapped(LNG_EVJAXISWHICH(ev), true, (int)LNG_EVJAXIS(ev))) {
-                launcher_binds_set_field(m, pl, b, slot,
-                    v > 0 ? RUI_N64_FIELD_JOY_AXIS_P : RUI_N64_FIELD_JOY_AXIS_N, (int)LNG_EVJAXIS(ev));
-                launcher_model_cancel_capture(m);
-            }
-        }
-#endif
-        return true;   // swallow all other input (keyboard included) while pad-capturing
     }
 
     /* Mouse buttons are bindable inputs on stores that keep alternates
@@ -12797,13 +12927,11 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     long smoke_frames = 0, frame = 0;
     if (const char* sf = SDL_getenv("LNG_SMOKE_FRAMES")) smoke_frames = SDL_atoi(sf);
 
-    // Test hook: LNG_FORCE_SCALE simulates a HiDPI display (see the platform
-    // layer, which enlarges the window and reports a logical/pixel split). When
-    // active, feed that split to ImGui so it renders at pixel density over a
-    // logical-sized layout — validating the DPI-independent layout on any OS.
-    // Unset => stock ImGui behavior (the SDL/GL backend's own framebuffer scale).
-    const char* force_scale_env = SDL_getenv("LNG_FORCE_SCALE");
-    const bool force_dpi = force_scale_env && force_scale_env[0] && SDL_atof(force_scale_env) > 1.0;
+    // HiDPI is driven by the platform layer's logical/pixel split, which is
+    // real on macOS/Wayland and synthesized from the display scale on Windows
+    // and X11 (see launcher_platform_refresh_metrics). LNG_FORCE_SCALE pins
+    // that scale so the path can be exercised on a 100% display; nothing here
+    // reads the env var any more.
     bool first_present_marked = false;
 
     while (m->action == LNG_ACTION_NONE && !p->should_quit) {
@@ -12811,6 +12939,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
 
         SDL_Event ev;
         if (SDL_WaitEventTimeout(&ev, 16)) do {
+            /* Window coordinates -> logical units, before anything reads the
+             * event. No-op unless the platform layer synthesized the split. */
+            scale_mouse_event(ev, p->input_scale);
             if (ev.type == SDL_EVENT_QUIT) p->should_quit = true;
             if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) p->should_quit = true;
             if (try_capture(m, ev)) continue;
@@ -12940,11 +13071,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         }
         LNG_ImplSDL_NewFrame();
-        if (force_dpi) {   // Windows has no native point/pixel split — inject it
-            ImGuiIO& io = ImGui::GetIO();
-            io.DisplaySize = ImVec2((float)p->logical_w, (float)p->logical_h);
-            io.DisplayFramebufferScale = ImVec2(p->display_scale, p->display_scale);
-        }
+        apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
         draw_ui(m, *th, p->logical_w, p->logical_h);
         ImGui::Render();

@@ -39,6 +39,14 @@ typedef struct LauncherPlatform {
     // font raster sizes and any physical dimensions by this.
     float display_scale;
 
+    // SDL window coordinates per logical unit. 1.0 where SDL reports the
+    // density through the pixel size (macOS retina, Wayland under
+    // HIGH_PIXEL_DENSITY): the window size IS the logical size there. On
+    // Windows and X11 window coordinates ARE pixels, so logical_w/h above is
+    // synthesized as pixels/display_scale and this carries the factor that
+    // mouse input — which always arrives in window coordinates — needs.
+    float input_scale;
+
     bool  scale_changed;   // set for one frame after a DPI/monitor change
     bool  size_changed;    // set for one frame after a resize
     bool  should_quit;     // window close requested

@@ -139,6 +139,21 @@ if(BUILD_TESTING)
     target_include_directories(recomp-runtime-ui-test PRIVATE src)
     add_test(NAME recomp-runtime-ui COMMAND $<TARGET_FILE:recomp-runtime-ui-test>)
 
+    # N64 controller page: the 3-column reading order the page is drawn from,
+    # and the per-GUID gamepad store behind its bind chips.
+    add_executable(recomp-ui-n64-pad-binds-test
+        tests/n64_pad_binds_test.c
+        src/consoles/n64/n64_pad_binds.c
+        src/common/pad_binds.c)
+    target_include_directories(recomp-ui-n64-pad-binds-test PRIVATE
+        src src/common src/consoles/n64)
+    target_link_libraries(recomp-ui-n64-pad-binds-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-n64-pad-binds-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-n64-pad-binds
+        COMMAND $<TARGET_FILE:recomp-ui-n64-pad-binds-test>
+                "${CMAKE_CURRENT_BINARY_DIR}")
+
     add_executable(recomp-ui-psx-binds-test
         tests/psx_binds_test.c
         src/consoles/psx/psx_binds.c)
