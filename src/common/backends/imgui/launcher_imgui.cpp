@@ -3407,7 +3407,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     //
     // Unlike the legacy NES row above, there is no folder picker here: which
     // pack is active is a per-title decision owned by the host's pack manager
-    // (RetComM's Texture Packs modal), which can list installed packs and show
+    // (Retro Launcher's Texture Packs modal), which can list installed packs and show
     // per-pack coverage. A second, blinder picker in this panel could only
     // fight it — so this panel does the one thing it is better placed to do,
     // which is flip the pack off and on without leaving the game.
@@ -10773,7 +10773,7 @@ static const char* generate_disabled_reason(const LauncherModel* m) {
         m->prepare_with_progress_cb != nullptr || m->prepare_disc_cb != nullptr;
     if (!has_prep) {
         return "Generate is unavailable (project/SDK not found).\n"
-               "Launch from RetComM, or run the game from its source tree "
+               "Launch from Retro Launcher, or run the game from its source tree "
                "(src/current).";
     }
     if (!m->rom_present || !m->rom_full[0])
