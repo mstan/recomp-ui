@@ -48,8 +48,10 @@ static int ensure_prev(RecompFrameBlend *blend, int width, int height) {
     return 1;
 }
 
-int recomp_frame_blend_apply(RecompFrameBlend *blend, void *frame,
-                             int width, int height, size_t pitch_bytes) {
+/* One pass for both entry points. `keep` non-zero leaves the kept frame
+ * alone, so several presents can be blended against the same one. */
+static int blend_frame(RecompFrameBlend *blend, void *frame, int width,
+                       int height, size_t pitch_bytes, int keep) {
     unsigned char *base = (unsigned char *)frame;
     int blended;
     int y;
@@ -57,6 +59,9 @@ int recomp_frame_blend_apply(RecompFrameBlend *blend, void *frame,
     if (!blend || !frame || width <= 0 || height <= 0) return 0;
     if (pitch_bytes < (size_t)width * 4u) return 0;
     if (!ensure_prev(blend, width, height)) return 0;
+    /* Nothing kept yet and not allowed to keep: there is no frame to average
+     * with and this call must not become the reference. Present as drawn. */
+    if (keep && !blend->valid) return 0;
 
     /* prev keeps the UNBLENDED frame, so the mix never feeds back on itself
      * and the source buffer the host drew from stays pure for thumbnails and
@@ -75,9 +80,20 @@ int recomp_frame_blend_apply(RecompFrameBlend *blend, void *frame,
             if (blended)
                 row[x] = (cur & prev[x]) +
                          (((cur ^ prev[x]) >> 1) & 0x7F7F7F7Fu);
-            prev[x] = cur;
+            if (!keep) prev[x] = cur;
         }
     }
-    blend->valid = 1;
+    if (!keep) blend->valid = 1;
     return blended;
+}
+
+int recomp_frame_blend_apply(RecompFrameBlend *blend, void *frame,
+                             int width, int height, size_t pitch_bytes) {
+    return blend_frame(blend, frame, width, height, pitch_bytes, 0);
+}
+
+int recomp_frame_blend_apply_holding(RecompFrameBlend *blend, void *frame,
+                                     int width, int height,
+                                     size_t pitch_bytes) {
+    return blend_frame(blend, frame, width, height, pitch_bytes, 1);
 }

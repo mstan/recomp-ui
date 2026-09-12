@@ -42,6 +42,11 @@ extern "C" {
  * this file has no default of its own.
  */
 
+/* Capability probe for hosts built against an unknown pin of this repo: the
+ * holding entry point below arrived after the rest, and a host that wants it
+ * must be able to compile without it. */
+#define RECOMP_FRAME_BLEND_HAS_HOLDING 1
+
 typedef struct RecompFrameBlend RecompFrameBlend;
 
 /* NULL on allocation failure. A NULL handle is legal everywhere below and
@@ -87,6 +92,24 @@ void recomp_frame_blend_reset(RecompFrameBlend *blend);
  */
 int recomp_frame_blend_apply(RecompFrameBlend *blend, void *frame,
                              int width, int height, size_t pitch_bytes);
+
+/*
+ * As above, but WITHOUT replacing the kept frame: the next call still blends
+ * against the same one. Same arguments, same return, and it never captures --
+ * with nothing kept yet it leaves the frame as drawn and returns zero.
+ *
+ * For hosts whose presentation clock is decoupled from the simulation, which
+ * present one guest frame more than once (interpolated, at the display's
+ * rate). The pairing the effect is about is two consecutive GUEST frames, so
+ * the kept frame must advance once per guest frame: `apply` on the present
+ * that carries a new one, this on the presents in between. Blending only the
+ * fresh presents and leaving the others as drawn would make the picture
+ * alternate blended and unblended -- flicker, in a feature whose whole job is
+ * to remove it.
+ */
+int recomp_frame_blend_apply_holding(RecompFrameBlend *blend, void *frame,
+                                     int width, int height,
+                                     size_t pitch_bytes);
 
 #ifdef __cplusplus
 }

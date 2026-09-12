@@ -310,6 +310,17 @@ if(BUILD_TESTING)
         NAME recomp-ui-nds-profile
         COMMAND $<TARGET_FILE:recomp-ui-nds-profile-test>)
 
+    # The shared presentation blend, including the holding variant a host with
+    # a decoupled presentation clock needs. Pure arithmetic on two buffers, so
+    # no SDL and no window.
+    add_executable(recomp-ui-frame-blend-test
+        tests/frame_blend_test.c
+        src/common/recomp_frame_blend.c)
+    target_include_directories(recomp-ui-frame-blend-test PRIVATE
+        src src/common)
+    add_test(NAME recomp-ui-frame-blend
+             COMMAND $<TARGET_FILE:recomp-ui-frame-blend-test>)
+
     # Backspace in a launcher text field must not steal the focus ring: the
     # footer's Back/Start "re-home to PLAY" shortcut fired while an InputText
     # was active. Real ImGui frames, headless, same shape as the runtime-ui
